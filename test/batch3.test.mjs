@@ -72,6 +72,10 @@ test('parseExpense: сумма и категория', () => {
   assert.equal(e2.amount, 300);
   assert.match(e2.category, /кофе/i);
   assert.equal(parseExpense('встреча завтра', 'встреча завтра'), null, 'не трата');
+  // женские формы: окончание не должно уползать в категорию (e2e-находка)
+  const f = parseExpense('потратила 2000 на бензин', 'потратила 2000 на бензин');
+  assert.equal(f.category, 'Бензин', 'без хвоста «А »');
+  assert.equal(parseExpense('заплатила 1500 за маникюр', 'заплатила 1500 за маникюр').category, 'Маникюр');
 });
 
 test('parseMessage: трата не путается с записью', () => {
