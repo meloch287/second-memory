@@ -54,7 +54,7 @@ node src/server.mjs
 
 ### ИИ: саммари и вопросы по базе
 
-Подключите любой OpenAI-совместимый LLM (по умолчанию настроено на [GonkaGate](https://gonkagate.com), модель `minimaxai/minimax-m2.7`) — и появляются два режима:
+Подключите любой OpenAI-совместимый LLM (по умолчанию [polza.ai](https://polza.ai), модель `google/gemini-2.5-flash`) — и появляются два режима:
 
 | Вы пишете | Что происходит |
 |---|---|
@@ -194,8 +194,9 @@ test/             26 тестов на node:test
 | `SM_DATA` | `data/memory.json` | Путь к файлу данных |
 | `TELEGRAM_BOT_TOKEN` | — | Включает Telegram-бота |
 | `AI_API_KEY` | — | Включает ИИ: ответы друга, саммари, факты |
-| `AI_BASE_URL` | `https://api.gonkagate.com/v1` | Любой OpenAI-совместимый провайдер |
-| `AI_MODEL` | `minimaxai/minimax-m2.7` | Текстовая модель |
+| `AI_BASE_URL` | `https://api.polza.ai/v1` | Любой OpenAI-совместимый провайдер |
+| `AI_MODEL` | `google/gemini-2.5-flash` | Текстовая модель |
+| `AI_WORKER_*` | как `AI_*` | Отдельный провайдер для фонового worker фактов |
 | `AI_AUDIO_API_KEY` | — | Включает расшифровку голосовых в Telegram |
 | `AI_AUDIO_BASE_URL` | `https://api.polza.ai/v1` | Мультимодальный провайдер для аудио |
 | `AI_AUDIO_MODEL` | `google/gemini-2.5-flash-lite` | Модель с поддержкой аудио |

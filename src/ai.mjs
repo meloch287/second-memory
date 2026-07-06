@@ -17,6 +17,14 @@ const AUDIO = () => ({
   model: process.env.AI_AUDIO_MODEL || 'google/gemini-2.5-flash-lite',
 });
 
+// Фоновый worker фактов может работать на отдельном провайдере
+// (жёсткий поминутный лимит фону не мешает). По умолчанию - как текстовый.
+const WORKER = () => ({
+  key: process.env.AI_WORKER_API_KEY || TEXT().key,
+  url: process.env.AI_WORKER_BASE_URL || TEXT().url,
+  model: process.env.AI_WORKER_MODEL || TEXT().model,
+});
+
 export function aiEnabled() {
   return Boolean(TEXT().key);
 }
@@ -321,7 +329,8 @@ export async function aiFollowup(store, chatId, kind, now = new Date(), onDelta 
 
 export async function aiExtractFacts(rawItems) {
   const list = rawItems.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
-  const text = await ask(
+  const text = await chatCompletion(
+    WORKER(),
     [
       {
         role: 'user',
