@@ -870,6 +870,16 @@ export function startTelegramBot(store, token, log = console) {
     remember(msg.from);
     remember(msg.reply_to_message?.from);
     (msg.new_chat_members || []).forEach(remember);
+    // @username-ы из текста тоже в реестр («Вот он @pxpusk»): id нет,
+    // но для рабочего тега хватает username; ключ u:<ник>
+    for (const mm of (msg.text || msg.caption || '').matchAll(/@([A-Za-z][A-Za-z0-9_]{3,31})/g)) {
+      const un = mm[1].toLowerCase();
+      if (un === (botUsername || '').toLowerCase()) continue;
+      if (!Object.values(members).some((x) => (x.username || '').toLowerCase() === un)) {
+        members['u:' + un] = { name: mm[1], username: mm[1] };
+        membersChanged = true;
+      }
+    }
     if (membersChanged) g = store.setUser(key, { members });
 
     // бота добавили в группу - представиться
@@ -910,12 +920,26 @@ export function startTelegramBot(store, token, log = console) {
 
     if (!addressed) return; // без обращения молчим, только запоминаем
 
+    // Связка имени с ником: «Никита - это @pxpusk», «запомни Никита = @pxpusk»
+    const link = text.match(/^(?:запомни[:,]?\s*)?([А-Яа-яЁёA-Za-z]{2,20})\s*(?:-|—|–|=|это)\s*(?:это\s+)?@([A-Za-z][A-Za-z0-9_]{3,31})[!.]*$/i);
+    if (link) {
+      const un = link[2];
+      const members2 = { ...(g.members || {}) };
+      const existing = Object.entries(members2).find(([, x]) => (x.username || '').toLowerCase() === un.toLowerCase());
+      if (existing) members2[existing[0]] = { ...existing[1], name: link[1] };
+      else members2['u:' + un.toLowerCase()] = { name: link[1], username: un };
+      g = store.setUser(key, { members: members2 });
+      return send(chatId, `Запомнил: ${esc(link[1])} - это @${esc(un)} 👌`);
+    }
+
     // Тегнуть участника: «тегни Никиту», «позови Сашу». Только реальные
     // участники из реестра; @username пингует сам, без username - ссылка на профиль.
     const tag = text.match(/^(?:тегни|тэгни|пингани|позови|призови)\s+@?(.+?)[!?.\s]*$/i);
     if (tag) {
       const hit = findMember(g.members, tag[1]);
-      if (!hit) return send(chatId, `Не видел, чтобы ${esc(tag[1])} тут писал. Тегаю только тех, кто есть в группе 🙂`);
+      if (!hit) {
+        return send(chatId, `Не видел, чтобы ${esc(tag[1])} тут писал. Пусть черкнёт разок, или скажи «${esc(tag[1])} - это @ник», и я запомню.`);
+      }
       const mention = hit.username ? `@${hit.username}` : `<a href="tg://user?id=${hit.id}">${esc(hit.name)}</a>`;
       return send(chatId, `${mention}, тебя ${esc(fromName)} зовёт 🙂`);
     }
