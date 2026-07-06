@@ -12,6 +12,7 @@ const TYPE_RU = { debt: 'долг', meeting: 'встреча', task: 'задач
 
 // CSV с BOM, чтобы Excel сразу видел кириллицу в UTF-8; разделитель «;» (RU-Excel).
 export function toCsv(store, chatId) {
+  if (!chatId) return '﻿id;тип;название'; // не выгружаем всё при пустом chatId
   const rows = [['id', 'тип', 'название', 'контрагент', 'сумма', 'направление', 'срок', 'статус', 'создано']];
   for (const e of store.list({ chatId })) {
     rows.push([
@@ -27,7 +28,9 @@ export function toCsv(store, chatId) {
     ]);
   }
   const esc = (v) => {
-    const s = String(v);
+    let s = String(v);
+    // защита от формул Excel: значения с =,+,-,@ в начале обезвреживаем
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   return '﻿' + rows.map((r) => r.map(esc).join(';')).join('\r\n');
@@ -35,6 +38,7 @@ export function toCsv(store, chatId) {
 
 // Полный срез памяти пользователя одним JSON.
 export function toJson(store, chatId) {
+  if (!chatId) return '{}';
   const slice = {
     exportedAt: new Date().toISOString(),
     user: store.getUser(chatId),
@@ -49,6 +53,7 @@ export function toJson(store, chatId) {
 
 // Человекочитаемый дневник в Markdown: по дням, с фактами и записями.
 export function toMarkdown(store, chatId) {
+  if (!chatId) return '# Пусто';
   const user = store.getUser(chatId);
   const byDay = new Map();
   const add = (day, line) => {

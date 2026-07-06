@@ -10,6 +10,7 @@ const fmtDay = (iso, off = 180) => {
 };
 
 export function balanceReport(store, chatId, offsetMin = 180, now = Date.now()) {
+  if (!chatId) return 'Долгов нет.'; // без chatId не агрегируем всех
   const debts = store.list({ type: 'debt', status: 'open', chatId });
   const inD = debts.filter((d) => d.direction !== 'out');
   const outD = debts.filter((d) => d.direction === 'out');

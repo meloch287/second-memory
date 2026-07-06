@@ -38,6 +38,30 @@ test('parser: setlead / setcity / settings / balance / export', () => {
   assert.equal(parseMessage('напомни оплатить счёт через 3 дня', NOW).kind, 'entry');
 });
 
+test('parser: команды-настройки не перехватывают дневниковые фразы', () => {
+  // дневниковые предложения, начинающиеся похоже, НЕ должны стать командами
+  assert.notEqual(parseMessage('баланс на работе совсем расшатался, устал', NOW).kind, 'balance');
+  assert.notEqual(parseMessage('выгрузи мне идей на завтра штук пять', NOW).kind, 'export');
+  assert.notEqual(parseMessage('настройки станка сбились на заводе', NOW).kind, 'settings');
+  assert.notEqual(parseMessage('мой город засыпает, а я всё думаю о делах', NOW).kind, 'setcity');
+  assert.notEqual(parseMessage('часовой пояс постоянно мешает созвонам на -5 часов разницы', NOW).kind, 'settz');
+  // но сами команды - срабатывают
+  assert.equal(parseMessage('баланс', NOW).kind, 'balance');
+  assert.equal(parseMessage('покажи баланс', NOW).kind, 'balance');
+  assert.equal(parseMessage('мой город Санкт-Петербург', NOW).kind, 'setcity');
+  assert.equal(parseMessage('мой город Санкт-Петербург', NOW).city, 'Санкт-Петербург');
+});
+
+test('toCsv: обезвреживает формулы Excel', () => {
+  const s = freshStore();
+  s.add({ type: 'note', title: '=СУММ(A1:A9)', chatId: '1' });
+  s.add({ type: 'note', title: '+79001234567', chatId: '1' });
+  const csv = toCsv(s, '1');
+  assert.ok(!/;=СУММ/.test(csv) && /'=СУММ/.test(csv), 'формула обезврежена апострофом');
+  assert.ok(/'\+79001234567/.test(csv), 'плюс-номер обезврежен');
+  assert.equal(toCsv(s, ''), '﻿id;тип;название', 'пустой chatId - не выгружает всех');
+});
+
 /* №6 финсводка */
 test('balanceReport: считает баланс, крупнейшего должника, просрочку', () => {
   const s = freshStore();

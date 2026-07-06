@@ -3,7 +3,7 @@
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 
 import { spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleMessage, captureEntry } from './brain.mjs';
