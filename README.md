@@ -54,7 +54,7 @@ node src/server.mjs
 
 ### ИИ: саммари и вопросы по базе
 
-Подключите любой OpenAI-совместимый LLM (по умолчанию настроено на [GonkaGate](https://gonkagate.com), модель `moonshotai/kimi-k2.6`) — и появляются два режима:
+Подключите любой OpenAI-совместимый LLM (по умолчанию настроено на [GonkaGate](https://gonkagate.com), модель `minimaxai/minimax-m2.7`) — и появляются два режима:
 
 | Вы пишете | Что происходит |
 |---|---|
@@ -193,7 +193,7 @@ test/             26 тестов на node:test
 | `TELEGRAM_BOT_TOKEN` | — | Включает Telegram-бота |
 | `AI_API_KEY` | — | Включает ИИ: ответы друга, саммари, факты |
 | `AI_BASE_URL` | `https://api.gonkagate.com/v1` | Любой OpenAI-совместимый провайдер |
-| `AI_MODEL` | `moonshotai/kimi-k2.6` | Текстовая модель |
+| `AI_MODEL` | `minimaxai/minimax-m2.7` | Текстовая модель |
 | `AI_AUDIO_API_KEY` | — | Включает расшифровку голосовых в Telegram |
 | `AI_AUDIO_BASE_URL` | `https://api.polza.ai/v1` | Мультимодальный провайдер для аудио |
 | `AI_AUDIO_MODEL` | `google/gemini-2.5-flash-lite` | Модель с поддержкой аудио |

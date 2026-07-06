@@ -1,12 +1,14 @@
 // ИИ-слой. Два OpenAI-совместимых провайдера:
-//  - текстовый (по умолчанию GonkaGate, модель kimi-k2.6) - ответы, саммари, факты;
+//  - текстовый (по умолчанию GonkaGate, minimax-m2.7: рассуждения приходят в
+//    <think>-тегах и вырезаются; kimi-k2.6 льёт рассуждения без тегов, не брать) -
+//    ответы, саммари, факты;
 //  - аудио (по умолчанию polza.ai, gemini-2.5-flash-lite) - расшифровка голосовых,
 //    GonkaGate работает только с текстом.
 
 const TEXT = () => ({
   key: process.env.AI_API_KEY,
   url: process.env.AI_BASE_URL || 'https://api.gonkagate.com/v1',
-  model: process.env.AI_MODEL || 'moonshotai/kimi-k2.6',
+  model: process.env.AI_MODEL || 'minimaxai/minimax-m2.7',
 });
 
 const AUDIO = () => ({
@@ -23,12 +25,18 @@ export function audioEnabled() {
   return Boolean(AUDIO().key);
 }
 
-// Убираем служебные блоки размышлений reasoning-моделей.
-const stripThink = (s) => s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+// Убираем служебные блоки размышлений reasoning-моделей,
+// включая незакрытый <think> при обрезке по лимиту токенов.
+const stripThink = (s) =>
+  s
+    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/<think>[\s\S]*$/, '')
+    .replace(/\s[—–]\s/g, ' - ') // модели игнорируют запрет длинного тире - чиним сами
+    .trim();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function chatCompletion(cfg, messages, { maxTokens = 900, timeoutMs = 60000 } = {}) {
+async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 90000 } = {}) {
   // 429/5xx у шлюзов - обычное дело: до двух повторов с паузой.
   // У GonkaGate лимит поминутный, поэтому паузы длинные.
   const delays = [0, 12000, 35000];
@@ -55,7 +63,13 @@ async function chatCompletion(cfg, messages, { maxTokens = 900, timeoutMs = 6000
       const data = await res.json();
       const text = data?.choices?.[0]?.message?.content;
       if (typeof text !== 'string') throw new Error('AI: пустой ответ');
-      return stripThink(text);
+      const cleaned = stripThink(text);
+      if (!cleaned) {
+        // весь лимит ушёл на размышления - пробуем ещё раз
+        lastError = new Error('AI: пустой ответ после reasoning');
+        continue;
+      }
+      return cleaned;
     } catch (e) {
       lastError = e;
       if (e.name === 'AbortError') lastError = new Error('AI: таймаут');
@@ -180,7 +194,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date()) {
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, text, now) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
     ],
-    { maxTokens: 400 }
+    { maxTokens: 1200 }
   );
 }
 
@@ -213,7 +227,7 @@ export async function aiDiarySummary(store, chatId, now = new Date()) {
           '\n\nПодведи итоги дня как друг, не как секретарь. Структура: строка «🕒 Утро», строка «💼 День», строка «🌙 Вечер» - по паре живых фраз о том, что было (пропусти главу, если пусто). В конце «💡 Инсайт» - одна умная мысль или совет по итогам недели. Если сегодня записей не было, скажи об этом тепло и предложи рассказать, как прошёл день.',
       },
     ],
-    { maxTokens: 600 }
+    { maxTokens: 1600 }
   );
 }
 
@@ -228,7 +242,7 @@ export async function aiFollowup(store, chatId, kind, now = new Date()) {
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, '', now) + '\n\n' + prompt },
     ],
-    { maxTokens: 450 }
+    { maxTokens: 1200 }
   );
 }
 
@@ -248,7 +262,7 @@ export async function aiExtractFacts(rawItems) {
           list,
       },
     ],
-    { maxTokens: 800 }
+    { maxTokens: 1600 }
   );
   try {
     const start = text.indexOf('[');
@@ -285,7 +299,7 @@ export async function aiTranscribe(base64, format = 'ogg') {
         ],
       },
     ],
-    { maxTokens: 500 }
+    { maxTokens: 700 }
   );
   if (!text || text.includes('NO_SPEECH')) return null;
   return text;
