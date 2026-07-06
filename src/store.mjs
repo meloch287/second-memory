@@ -103,12 +103,14 @@ export class Store {
     }
     const nt = t.toLowerCase().replace(/ё/g, 'е');
     const words = nt.split(/\s+/).filter((w) => w.length > 2);
+    // лёгкий стемминг: падежи меняют окончания («встречу» vs «встреча»)
+    const hit = (hay, w) => hay.includes(w) || (w.length > 4 && hay.includes(w.slice(0, -2)));
     const open = this.list({ status: 'open', chatId });
     let best = null;
     let bestScore = 0;
     for (const e of open) {
       const hay = [e.counterparty, e.title, e.text].filter(Boolean).join(' ').toLowerCase().replace(/ё/g, 'е');
-      const score = words.reduce((s, w) => s + (hay.includes(w) ? 1 : 0), 0);
+      const score = words.reduce((s, w) => s + (hit(hay, w) ? 1 : 0), 0);
       if (score > bestScore) {
         bestScore = score;
         best = e;

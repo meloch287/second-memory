@@ -279,6 +279,23 @@ export function startTelegramBot(store, token, log = console) {
   async function handleIntent(chatId, user, text) {
     const p = parseMessage(text, wall(user));
 
+    if (p.kind === 'done') {
+      const e = store.findEntry(String(chatId), p.target);
+      if (!e) { await send(chatId, `Не нашёл, что закрыть под «${esc(p.target)}». Скажи точнее?`); return true; }
+      if (e.status === 'done') { await send(chatId, 'Это уже закрыто 🙂'); return true; }
+      store.setStatus(e.id, 'done');
+      await send(chatId, `Готово, закрыл: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» 👍`);
+      return true;
+    }
+
+    if (p.kind === 'delete') {
+      const e = store.findEntry(String(chatId), p.target);
+      if (!e) { await send(chatId, `Не нашёл, что удалить под «${esc(p.target)}».`); return true; }
+      store.remove(e.id);
+      await send(chatId, `Удалил: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}».`);
+      return true;
+    }
+
     if (p.kind === 'edit') {
       const e = store.findEntry(String(chatId), p.target);
       if (!e) { await send(chatId, `Не нашёл, что ты имеешь в виду под «${esc(p.target)}». Скажи точнее?`); return true; }
@@ -291,14 +308,23 @@ export function startTelegramBot(store, token, log = console) {
       const off = userOffset(user);
       const r = resolveWallDate(off, text, new Date());
       if (!r.due) { await send(chatId, 'На когда перенести? Скажи дату или время.'); return true; }
-      // «на 16:00» без дня - сохраняем исходный день, меняем только время
+      // Правильно комбинируем день и время: то, что не задано в фразе,
+      // берём из старой записи. «на 16:00» -> день прежний; «на пятницу» -> время прежнее.
       const hasDayWord = /завтра|послезавтра|сегодня|понедельник|вторник|сред|четверг|пятниц|суббот|воскресень|\d{1,2}[.\/]\d{1,2}|числа|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр|недел/.test(
         text.toLowerCase().replace(/ё/g, 'е')
       );
-      let due = r.due;
-      if (!hasDayWord && r.hasTime && e.due) due = combineDayTime(off, e.due, r.due);
-      store.patch(e.id, { due, hasTime: true, reminded: false });
-      await send(chatId, `Перенёс: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» теперь на ${esc(fmtUser(due, off, true))}.`);
+      let due, hasTime;
+      if (r.hasTime && hasDayWord) {
+        due = r.due; hasTime = true;
+      } else if (r.hasTime && !hasDayWord) {
+        due = e.due ? combineDayTime(off, e.due, r.due) : r.due; hasTime = true; // новое время, день прежний
+      } else if (!r.hasTime && hasDayWord) {
+        due = e.due && e.hasTime ? combineDayTime(off, r.due, e.due) : r.due; hasTime = Boolean(e.hasTime); // новый день, время прежнее
+      } else {
+        due = r.due; hasTime = false;
+      }
+      store.patch(e.id, { due, hasTime, reminded: false });
+      await send(chatId, `Перенёс: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» теперь на ${esc(fmtUser(due, off, hasTime))}.`);
       return true;
     }
 
@@ -314,7 +340,10 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (p.kind === 'search') {
-      if (!aiEnabled()) return false;
+      if (!aiEnabled()) {
+        await send(chatId, 'Поиск по памяти работает через ИИ, а ключ пока не задан. Но всё, что ты пишешь, я исправно храню.');
+        return true;
+      }
       try {
         const answer = await withTyping(chatId, () => aiSearch(store, String(chatId), p.query, wall(user)));
         await send(chatId, esc(answer));

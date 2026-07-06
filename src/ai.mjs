@@ -42,6 +42,8 @@ const stripThink = (s) =>
     .replace(/\s[—–]\s/g, ' - ') // модели игнорируют запрет длинного тире - чиним сами
     .trim();
 
+import { userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Потоковый запрос: SSE-дельты, onDelta получает видимый текст по мере
@@ -167,13 +169,13 @@ function fmtLocal(iso, withTime) {
   return withTime ? `${day} ${pad(d.getHours())}:${pad(d.getMinutes())}` : day;
 }
 
-function fmtEntry(e) {
+function fmtEntry(e, off = DEFAULT_OFFSET) {
   const parts = [`№${e.id} [${e.type}] [${e.status}]`];
   if (e.counterparty) parts.push(`контрагент: ${e.counterparty}`);
   if (e.amount != null) parts.push(`сумма: ${e.amount} руб`);
   if (e.type === 'debt') parts.push(e.direction === 'out' ? 'мы должны' : 'должны нам');
   if (e.title) parts.push(e.title);
-  if (e.due) parts.push(`срок: ${fmtLocal(e.due, e.hasTime)}`);
+  if (e.due) parts.push(`срок: ${fmtUser(e.due, off, e.hasTime)}`);
   parts.push(`создано: ${(e.createdAt || '').slice(0, 10)}`);
   return parts.join(' | ');
 }
@@ -250,22 +252,23 @@ function friendSystem(user) {
 
 function friendContext(store, chatId, query, now, smartFacts = null) {
   const user = store.getUser(chatId);
+  const off = userOffset(user);
   const facts = smartFacts || store.factsFor(chatId, query, 25);
   const open = store.list({ status: 'open', chatId }).slice(0, 30);
   const history = store.recentHistory(12, chatId);
   const personas = store.getPersonas(chatId);
   const personaLines = Object.entries(personas).map(([name, note]) => `- ${name}: ${note}`);
   return [
-    `Сейчас: ${fmtLocal(now.toISOString(), true)}.`,
+    `Сейчас: ${fmtUser(now.toISOString(), off, true)} (время пользователя).`,
     '',
     ...(personaLines.length ? ['ЛЮДИ В ЕГО ЖИЗНИ (досье):', ...personaLines, ''] : []),
     'ПАМЯТЬ (факты из прошлых разговоров):',
     ...(facts.length
-      ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [люди: ${f.people.join(', ')}]` : ''} (${fmtLocal(f.ts, false)})`)
+      ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [люди: ${f.people.join(', ')}]` : ''} (${fmtUser(f.ts, off, false)})`)
       : ['- пока пусто -']),
     '',
     'ДЕЛА И ДОЛГИ (структурированные записи):',
-    ...(open.length ? open.map(fmtEntry) : ['- пока пусто -']),
+    ...(open.length ? open.map((e) => fmtEntry(e, off)) : ['- пока пусто -']),
     '',
     'ПОСЛЕДНИЕ СООБЩЕНИЯ:',
     ...history.map((h) => `${h.role === 'user' ? (user?.name || 'Друг') : 'Ты'}: ${h.text.slice(0, 250)}`),
@@ -287,6 +290,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
 // Поиск по памяти: векторный recall + фокусный ответ строго по найденному.
 export async function aiSearch(store, chatId, query, now = new Date()) {
   const user = store.getUser(chatId);
+  const off = userOffset(user);
   const facts = await smartRecall(store, chatId, query, 20);
   const entries = store.list({ status: 'open', chatId });
   const relEntries = entries.filter((e) => {
@@ -296,10 +300,10 @@ export async function aiSearch(store, chatId, query, now = new Date()) {
   });
   const ctx = [
     'НАЙДЕННЫЕ ФАКТЫ:',
-    ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${fmtLocal(f.ts, false)})`) : ['- ничего -']),
+    ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${fmtUser(f.ts, off, false)})`) : ['- ничего -']),
     '',
     'СВЯЗАННЫЕ ДЕЛА:',
-    ...(relEntries.length ? relEntries.map(fmtEntry) : ['- ничего -']),
+    ...(relEntries.length ? relEntries.map((e) => fmtEntry(e, off)) : ['- ничего -']),
   ].join('\n');
   return ask(
     [
@@ -459,7 +463,7 @@ export async function aiMorningPing(user, eventLines, now = new Date()) {
       {
         role: 'user',
         content:
-          `Сейчас ${fmtLocal(now.toISOString(), true)}. Утро. Вот его дела на сегодня и просроченное:\n` +
+          `Сейчас ${fmtUser(now.toISOString(), userOffset(user), true)}. Утро. Вот его дела на сегодня и просроченное:\n` +
           eventLines.join('\n') +
           '\n\nНапиши одно короткое дружеское утреннее сообщение: поздоровайся и напомни про дела своими словами. Без списков, 2-3 предложения.',
       },

@@ -5,7 +5,7 @@ import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
 import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
 import { memoryStats, questionCoverage } from './ragmeter.mjs';
-import { resolveWallDate } from './tz.mjs';
+import { resolveWallDate, userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
 const RUB = new Intl.NumberFormat('ru-RU');
 const money = (v) => `${RUB.format(v)} ₽`;
@@ -33,10 +33,8 @@ const HELP = [
   'Команды: «готово 3», «удали 5», «очистить чат».',
 ].join('\n');
 
-function fmtDate(iso, hasTime) {
-  const d = new Date(iso);
-  const s = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
-  return hasTime ? `${s} ${pad(d.getHours())}:${pad(d.getMinutes())}` : s;
+function fmtDate(iso, hasTime, off = DEFAULT_OFFSET) {
+  return fmtUser(iso, off, hasTime);
 }
 
 function plural(n, [one, few, many]) {
@@ -81,6 +79,7 @@ export function captureEntry(store, text, now = new Date(), chatId = 'web', offs
 }
 
 async function route(store, text, now, chatId = 'web') {
+  const off = userOffset(store.getUser(chatId));
   const p = parseMessage(text, now);
   switch (p.kind) {
     case 'empty':
@@ -117,27 +116,27 @@ async function route(store, text, now, chatId = 'web') {
           // ИИ недоступен — обрабатываем по правилам ниже
         }
       }
-      return saveEntry(store, { ...p.entry, chatId });
+      return saveEntry(store, { ...p.entry, chatId }, off);
     }
     case 'done':
       return markDone(store, p.target, chatId);
     case 'delete':
       return removeEntry(store, p.target, chatId);
     case 'query':
-      return runQuery(store, p, now, chatId);
+      return runQuery(store, p, now, chatId, off);
     case 'digest':
-      return digest(store, p.range, now, chatId);
+      return digest(store, p.range, now, chatId, off);
     default:
       return { reply: 'Не понял. Напишите «помощь», чтобы увидеть примеры.' };
   }
 }
 
-function saveEntry(store, entry) {
+function saveEntry(store, entry, off = DEFAULT_OFFSET) {
   const e = store.add(entry);
   let reply;
   if (e.type === 'debt') {
     const sum = e.amount != null ? money(e.amount) : 'сумма не указана';
-    const till = e.due ? `, срок до ${fmtDate(e.due, false)}` : '';
+    const till = e.due ? `, срок до ${fmtDate(e.due, false, off)}` : '';
     if (e.direction === 'out') {
       reply = `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
     } else if (e.counterparty) {
@@ -146,9 +145,9 @@ function saveEntry(store, entry) {
       reply = `Записал долг №${e.id}: вам должны ${sum}${till}.`;
     }
   } else if (e.type === 'meeting') {
-    reply = `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime)}` : ', дата не указана'}.`;
+    reply = `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime, off)}` : ', дата не указана'}.`;
   } else if (e.type === 'task') {
-    reply = `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime)}` : ''}.`;
+    reply = `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime, off)}` : ''}.`;
   } else {
     reply = `Сохранил заметку №${e.id}: «${e.title}».`;
   }
@@ -185,8 +184,8 @@ function removeEntry(store, target, chatId = 'web') {
   return { reply: `Удалил: ${TYPE_LABEL[e.type]} №${e.id}.`, entry: e };
 }
 
-function runQuery(store, q, now, chatId = 'web') {
-  if (q.type === 'debt') return debtsReply(store, q, now, chatId);
+function runQuery(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
+  if (q.type === 'debt') return debtsReply(store, q, now, chatId, off);
 
   const open = store.list({ type: q.type, status: 'open', chatId });
   let items = open;
@@ -202,12 +201,12 @@ function runQuery(store, q, now, chatId = 'web') {
   }
   const lines = [`${LIST_LABEL[q.type]} (${items.length}):`];
   for (const e of items) {
-    lines.push(`  №${e.id} ${e.title}${e.due ? ` - ${fmtDate(e.due, e.hasTime)}` : ''}`);
+    lines.push(`  №${e.id} ${e.title}${e.due ? ` - ${fmtDate(e.due, e.hasTime, off)}` : ''}`);
   }
   return { reply: lines.join('\n'), results: items };
 }
 
-function debtsReply(store, q, now, chatId = 'web') {
+function debtsReply(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
   let debts = store.list({ type: 'debt', status: 'open', chatId });
   if (q.direction) debts = debts.filter((d) => (d.direction === 'out') === (q.direction === 'out'));
 
@@ -232,7 +231,7 @@ function debtsReply(store, q, now, chatId = 'web') {
   const line = (d) => {
     const overdue = d.due && Date.parse(d.due) < today ? ' - ПРОСРОЧЕН' : '';
     const sum = d.amount != null ? money(d.amount) : 'сумма не указана';
-    return `  №${d.id} ${d.counterparty || 'без имени'} - ${sum}${d.due ? `, до ${fmtDate(d.due, false)}` : ''}${overdue}`;
+    return `  №${d.id} ${d.counterparty || 'без имени'} - ${sum}${d.due ? `, до ${fmtDate(d.due, false, off)}` : ''}${overdue}`;
   };
 
   const lines = [`Открытые долги (${debts.length}):`];
@@ -249,7 +248,7 @@ function debtsReply(store, q, now, chatId = 'web') {
   return { reply: lines.join('\n'), results: debts };
 }
 
-function digest(store, range, now, chatId = 'web') {
+function digest(store, range, now, chatId = 'web', off = DEFAULT_OFFSET) {
   const open = store.list({ status: 'open', chatId });
   const today = startOfDay(now).getTime();
 
@@ -277,11 +276,11 @@ function digest(store, range, now, chatId = 'web') {
     const upcoming = meetings.filter((e) => e.due && Date.parse(e.due) >= today).sort(byDue).slice(0, 5);
     if (upcoming.length) {
       lines.push('Ближайшие встречи:');
-      upcoming.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime)}`));
+      upcoming.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime, off)}`));
     }
     if (tasks.length) {
       lines.push('Открытые задачи:');
-      tasks.slice(0, 7).forEach((e) => lines.push(`  №${e.id} ${e.title}${e.due ? ` - ${fmtDate(e.due, e.hasTime)}` : ''}`));
+      tasks.slice(0, 7).forEach((e) => lines.push(`  №${e.id} ${e.title}${e.due ? ` - ${fmtDate(e.due, e.hasTime, off)}` : ''}`));
     }
     return { reply: lines.join('\n'), results: open };
   }
@@ -296,28 +295,28 @@ function digest(store, range, now, chatId = 'web') {
   const debtsDue = open.filter((e) => e.type === 'debt' && inRange(e)).sort(byDue);
   const overdue = open.filter((e) => e.type === 'debt' && e.due && Date.parse(e.due) < today).sort(byDue);
 
-  const fmtTs = (ms) => fmtDate(new Date(ms).toISOString(), false);
+  const fmtTs = (ms) => fmtDate(new Date(ms).toISOString(), false, off);
   const title = days > 1 ? `Сводка с ${fmtTs(from)} по ${fmtTs(to - 86400000)}:` : `Сводка на ${fmtTs(from)}:`;
   const lines = [title];
 
   if (meetings.length) {
     lines.push('Встречи:');
-    meetings.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime)}`));
+    meetings.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime, off)}`));
   }
   if (tasks.length) {
     lines.push('Задачи:');
-    tasks.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime)}`));
+    tasks.forEach((e) => lines.push(`  №${e.id} ${e.title} - ${fmtDate(e.due, e.hasTime, off)}`));
   }
   if (debtsDue.length) {
     lines.push('Долги со сроком в этот период:');
     debtsDue.forEach((e) =>
-      lines.push(`  №${e.id} ${e.counterparty || 'без имени'} - ${e.amount != null ? money(e.amount) : 'сумма не указана'}, до ${fmtDate(e.due, false)}`)
+      lines.push(`  №${e.id} ${e.counterparty || 'без имени'} - ${e.amount != null ? money(e.amount) : 'сумма не указана'}, до ${fmtDate(e.due, false, off)}`)
     );
   }
   if (overdue.length) {
     lines.push('Просроченные долги:');
     overdue.forEach((e) =>
-      lines.push(`  №${e.id} ${e.counterparty || 'без имени'} - ${e.amount != null ? money(e.amount) : 'сумма не указана'}, было до ${fmtDate(e.due, false)}`)
+      lines.push(`  №${e.id} ${e.counterparty || 'без имени'} - ${e.amount != null ? money(e.amount) : 'сумма не указана'}, было до ${fmtDate(e.due, false, off)}`)
     );
   }
   if (lines.length === 1) lines.push('Ничего не запланировано.');
