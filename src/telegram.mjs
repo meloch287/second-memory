@@ -17,7 +17,7 @@ import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
-import { parseMessage } from './parser.mjs';
+import { parseMessage, parseGroupCmd } from './parser.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
@@ -737,7 +737,169 @@ export function startTelegramBot(store, token, log = console) {
     return send(chatId, `${line}Буду напоминать в твоё время и показывать погоду 🙂`, { reply_markup: { remove_keyboard: true } });
   }
 
+  /* ---- Групповой режим ---- */
+  // Бот живёт в группе как участник: всё пишет в общую память группы
+  // (chatId группы = отдельное пространство, изоляция как у юзеров),
+  // отвечает по @тегу или reply, управляет группой по командам админов.
+
+  let botUsername = null;
+  let botId = null;
+  async function ensureSelf() {
+    if (botUsername) return;
+    try {
+      const me = await api('getMe', {});
+      botUsername = me.result?.username || null;
+      botId = me.result?.id || null;
+    } catch { /* подхватим на следующем сообщении */ }
+  }
+
+  const isGroupChat = (msg) => ['group', 'supergroup'].includes(msg.chat?.type);
+  const authorName = (msg) => msg.from?.first_name || msg.from?.username || 'Кто-то';
+
+  function mentionsBot(text) {
+    return !!(botUsername && text && new RegExp(`@${botUsername}(?![\\w])`, 'i').test(text));
+  }
+  const stripMention = (text) => text.replace(new RegExp(`@${botUsername}`, 'ig'), '').replace(/\s{2,}/g, ' ').trim();
+
+  async function callerIsAdmin(chatId, userId) {
+    try {
+      const r = await api('getChatMember', { chat_id: chatId, user_id: userId });
+      return ['creator', 'administrator'].includes(r.result?.status);
+    } catch {
+      return false;
+    }
+  }
+
+  async function runGroupCmd(chatId, msg, cmd) {
+    const reply = msg.reply_to_message;
+    if (cmd.needsReply && !reply) {
+      return send(chatId, 'Ответь этой командой на нужное сообщение (reply), иначе не пойму, о ком/о чём речь.');
+    }
+    if (!(await callerIsAdmin(chatId, msg.from.id))) {
+      return send(chatId, `${esc(authorName(msg))}, это только для админов группы 🙂`);
+    }
+    const target = reply?.from;
+    const fail = async (r, what) => {
+      log.error('[telegram] group cmd', cmd.cmd, r.description || '');
+      return send(chatId, `Не смог ${what}: ${esc(r.description || 'нет прав?')}. Проверь, что я админ с нужными правами.`);
+    };
+    let r;
+    switch (cmd.cmd) {
+      case 'pin':
+        r = await api('pinChatMessage', { chat_id: chatId, message_id: reply.message_id });
+        return r.ok ? send(chatId, 'Закрепил 📌') : fail(r, 'закрепить');
+      case 'unpin':
+        r = await api('unpinChatMessage', { chat_id: chatId });
+        return r.ok ? send(chatId, 'Открепил.') : fail(r, 'открепить');
+      case 'title':
+        r = await api('setChatTitle', { chat_id: chatId, title: cmd.arg });
+        return r.ok ? undefined : fail(r, 'переименовать'); // Telegram сам покажет смену названия
+      case 'desc':
+        r = await api('setChatDescription', { chat_id: chatId, description: cmd.arg });
+        return r.ok ? send(chatId, 'Описание обновил.') : fail(r, 'сменить описание');
+      case 'invite':
+        r = await api('createChatInviteLink', { chat_id: chatId });
+        return r.ok ? send(chatId, `Держи ссылку: ${esc(r.result.invite_link)}`) : fail(r, 'создать ссылку');
+      case 'kick': {
+        if (!target) return;
+        r = await api('banChatMember', { chat_id: chatId, user_id: target.id });
+        if (r.ok) await api('unbanChatMember', { chat_id: chatId, user_id: target.id, only_if_banned: true }); // кик, не бан
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} выгнан из группы.`) : fail(r, 'кикнуть');
+      }
+      case 'ban':
+        if (!target) return;
+        r = await api('banChatMember', { chat_id: chatId, user_id: target.id });
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} забанен.`) : fail(r, 'забанить');
+      case 'mute':
+        if (!target) return;
+        r = await api('restrictChatMember', {
+          chat_id: chatId,
+          user_id: target.id,
+          permissions: { can_send_messages: false },
+          until_date: Math.floor(Date.now() / 1000) + cmd.minutes * 60,
+        });
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} помолчит ${cmd.minutes >= 60 ? Math.round(cmd.minutes / 60) + ' ч' : cmd.minutes + ' мин'} 🤐`) : fail(r, 'замутить');
+      case 'unmute':
+        if (!target) return;
+        r = await api('restrictChatMember', {
+          chat_id: chatId,
+          user_id: target.id,
+          permissions: { can_send_messages: true, can_send_audios: true, can_send_documents: true, can_send_photos: true, can_send_videos: true, can_send_video_notes: true, can_send_voice_notes: true, can_send_polls: true, can_send_other_messages: true, can_add_web_page_previews: true },
+        });
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} снова в эфире.`) : fail(r, 'размутить');
+      case 'del':
+        r = await api('deleteMessage', { chat_id: chatId, message_id: reply.message_id });
+        return r.ok ? undefined : fail(r, 'удалить сообщение');
+      case 'promote':
+        if (!target) return;
+        r = await api('promoteChatMember', { chat_id: chatId, user_id: target.id, can_pin_messages: true, can_delete_messages: true, can_invite_users: true, can_restrict_members: true, can_change_info: true });
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} теперь админ.`) : fail(r, 'назначить админом');
+      case 'demote':
+        if (!target) return;
+        r = await api('promoteChatMember', { chat_id: chatId, user_id: target.id, can_pin_messages: false, can_delete_messages: false, can_invite_users: false, can_restrict_members: false, can_change_info: false, can_manage_video_chats: false, can_promote_members: false });
+        return r.ok ? send(chatId, `${esc(target.first_name || 'Участник')} больше не админ.`) : fail(r, 'снять админа');
+    }
+  }
+
+  async function groupFlow(msg) {
+    await ensureSelf();
+    const chatId = msg.chat.id;
+    const key = String(chatId);
+
+    // профиль группы: общая память, без онбординга, пинги отключены флагом isGroup
+    let g = store.getUser(key);
+    if (!g || !g.isGroup) {
+      g = store.setUser(key, { isGroup: true, name: msg.chat.title || 'Группа', botName: g?.botName || 'Помощник', tzOffset: g?.tzOffset ?? DEFAULT_OFFSET, step: null });
+    }
+
+    // бота добавили в группу - представиться
+    if (msg.new_chat_members?.some((u) => u.id === botId)) {
+      return send(
+        chatId,
+        `Привет! Я общая память этой группы 🙂\n\nЗапоминаю всё, что тут пишут: дела, долги, договорённости. Спросить меня - тегни @${botUsername} (например «@${botUsername} что мы решили по бюджету?»).\n\nАдмины могут через меня управлять группой: «закрепи» (ответом на сообщение), «кикни», «замуть на час», «переименуй в ...», «дай ссылку».\n\nСделайте меня админом, чтобы я видел все сообщения и мог управлять.`
+      );
+    }
+
+    const rawText = msg.text || msg.caption || '';
+    if (!rawText) return; // медиа в группах пока не разбираем - только текст
+
+    const fromName = authorName(msg);
+    const addressed = mentionsBot(rawText) || msg.reply_to_message?.from?.id === botId;
+    const text = addressed ? stripMention(rawText) : rawText;
+
+    // всё в общую память группы (с автором), тихий захват дел/долгов
+    store.addRaw(key, `${fromName}: ${text}`);
+    captureEntry(store, text, new Date(), key, userOffset(g));
+
+    if (!addressed) return; // без обращения молчим, только запоминаем
+
+    // 1) команды управления группой
+    const gc = parseGroupCmd(text.toLowerCase().replace(/ё/g, 'е').trim());
+    if (gc) return runGroupCmd(chatId, msg, gc);
+
+    // 2) общие интенты (траты, баланс, поиск, календарь...) на памяти группы
+    if (await handleIntent(key, g, text)) return;
+
+    // 3) разговор по общей памяти группы
+    if (!aiEnabled()) {
+      const out = await handleMessage(store, text, new Date(), key);
+      return send(chatId, esc(out.reply || 'Записал.'));
+    }
+    let reply;
+    try {
+      reply = await withTyping(chatId, () => aiFriendReply(store, key, `${fromName}: ${text}`));
+    } catch (e) {
+      log.error('[telegram] group friend', e.message);
+    }
+    if (!reply) return send(chatId, esc(sleepyText(key)));
+    store.pushHistory('user', `${fromName}: ${text}`, key);
+    store.pushHistory('assistant', reply, key);
+    return send(chatId, esc(reply));
+  }
+
   async function onMessage(msg) {
+    if (isGroupChat(msg)) return groupFlow(msg);
+
     const chatId = msg.chat.id;
     const user = store.getUser(String(chatId));
 

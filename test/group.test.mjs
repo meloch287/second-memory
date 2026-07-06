@@ -1,0 +1,31 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseGroupCmd } from '../src/parser.mjs';
+
+const norm = (s) => s.toLowerCase().replace(/ё/g, 'е').trim();
+
+test('parseGroupCmd: команды управления группой', () => {
+  assert.deepEqual(parseGroupCmd(norm('закрепи')), { cmd: 'pin', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('открепи')), { cmd: 'unpin' });
+  assert.deepEqual(parseGroupCmd(norm('переименуй группу в Наши дела')), { cmd: 'title', arg: 'наши дела' });
+  assert.deepEqual(parseGroupCmd(norm('переименуй в Проект X')), { cmd: 'title', arg: 'проект x' });
+  assert.equal(parseGroupCmd(norm('описание группы: тут решаем всё')).cmd, 'desc');
+  assert.deepEqual(parseGroupCmd(norm('дай ссылку')), { cmd: 'invite' });
+  assert.deepEqual(parseGroupCmd(norm('кикни')), { cmd: 'kick', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('забань')), { cmd: 'ban', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('замуть')), { cmd: 'mute', minutes: 60, needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('замуть на 2 часа')), { cmd: 'mute', minutes: 120, needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('мут на 30 минут')), { cmd: 'mute', minutes: 30, needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('размуть')), { cmd: 'unmute', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('удали это')), { cmd: 'del', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('сделай админом')), { cmd: 'promote', needsReply: true });
+  assert.deepEqual(parseGroupCmd(norm('сними админа')), { cmd: 'demote', needsReply: true });
+});
+
+test('parseGroupCmd: обычные фразы - не команды', () => {
+  assert.equal(parseGroupCmd(norm('что мы решили по бюджету?')), null);
+  assert.equal(parseGroupCmd(norm('напомни завтра про созвон')), null);
+  assert.equal(parseGroupCmd(norm('Дима должен за квартиру 15000')), null);
+  // «удали 5» - это личный интент удаления записи, не группа: у del жёсткий конец строки
+  assert.equal(parseGroupCmd(norm('удали 5')), null);
+});

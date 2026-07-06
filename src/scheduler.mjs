@@ -144,6 +144,7 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
     }
 
     if (!aiEnabled()) return;
+    if (user.isGroup) return; // группам - только напоминания, без личных пингов
 
     // 3) Утренний план + погода (если знаем город). В тихий час не пингуем.
     if (!quiet && hour === morningHour(user.rhythm) && user.lastMorningPing !== today) {

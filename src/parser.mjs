@@ -233,6 +233,32 @@ function entry(type, fields) {
   return { kind: 'entry', entry: { type, ...fields } };
 }
 
+// Команды управления группой (текст уже нормализован: lower, е вместо ё).
+// needsReply - команду надо отправлять ответом (reply) на целевое сообщение.
+export function parseGroupCmd(t) {
+  let m;
+  if (/^(?:закрепи|запинь)/.test(t)) return { cmd: 'pin', needsReply: true };
+  if (/^открепи/.test(t)) return { cmd: 'unpin' };
+  if ((m = t.match(/^переименуй(?:\s+(?:группу|чат))?\s+в\s+(.+)$/))) return { cmd: 'title', arg: m[1].trim().slice(0, 128) };
+  if ((m = t.match(/^описание(?:\s+(?:группы|чата))?[:\s]\s*(.+)$/))) return { cmd: 'desc', arg: m[1].trim().slice(0, 255) };
+  if (/^(?:дай|создай|скинь|сделай)\s+(?:инвайт|ссылку|приглашение)/.test(t) || /^(?:инвайт|ссылка)[!?.]*$/.test(t)) return { cmd: 'invite' };
+  if (/^(?:кикни|выгони|удали из группы)/.test(t)) return { cmd: 'kick', needsReply: true };
+  if (/^(?:забань|заблокируй)/.test(t)) return { cmd: 'ban', needsReply: true };
+  if ((m = t.match(/^(?:замуть|мут)(?:\s+на\s+(\d+)\s*(минут|мин|час[а-я]*|дн[а-я]*))?/))) {
+    let mins = 60;
+    if (m[1]) {
+      const n = +m[1];
+      mins = /час/.test(m[2]) ? n * 60 : /дн/.test(m[2]) ? n * 1440 : n;
+    }
+    return { cmd: 'mute', minutes: Math.min(mins, 366 * 1440), needsReply: true };
+  }
+  if (/^размуть/.test(t)) return { cmd: 'unmute', needsReply: true };
+  if (/^удали(?:\s+(?:это|сообщение))?[!?.]*$/.test(t)) return { cmd: 'del', needsReply: true };
+  if (/^(?:сделай|назначь)\s+админ/.test(t)) return { cmd: 'promote', needsReply: true };
+  if (/^(?:сними|разжалуй)\s*(?:с\s+)?админ/.test(t)) return { cmd: 'demote', needsReply: true };
+  return null;
+}
+
 // Трата (№7): «потратил 2000 на бензин», «купил кофе за 300», «минус 500 такси».
 // Окончание съедается вместе с глаголом ([аи]?), иначе «потратила» матчится
 // по мужской форме и хвост «а» уползает в категорию.
