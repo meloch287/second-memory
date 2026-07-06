@@ -126,10 +126,12 @@ export class Store {
       .sort((a, b) => Date.parse(b.due) - Date.parse(a.due));
   }
 
-  // Записи со сроком-временем, которым пора напомнить (в окне и ещё не напомнено).
-  dueReminders(chatId, now = Date.now(), windowMs = 6 * 3600000) {
+  // Записи со сроком-временем, которым пора напомнить: срабатывают за
+  // leadMin до срока и до конца окна после; не напомненные.
+  dueReminders(chatId, now = Date.now(), leadMin = 0, windowMs = 6 * 3600000) {
+    const lead = leadMin * 60000;
     return this.list({ status: 'open', chatId }).filter(
-      (e) => e.hasTime && e.due && !e.reminded && Date.parse(e.due) <= now && Date.parse(e.due) >= now - windowMs
+      (e) => e.hasTime && e.due && !e.reminded && Date.parse(e.due) - lead <= now && Date.parse(e.due) >= now - windowMs
     );
   }
 

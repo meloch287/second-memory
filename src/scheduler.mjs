@@ -9,6 +9,9 @@ import { join, dirname } from 'node:path';
 import { aiEnabled, aiMorningPing, aiConsolidate } from './ai.mjs';
 import { exportVault } from './obsidian.mjs';
 import { wall, userDayBounds, userOffset, fmtUser } from './tz.mjs';
+import { todayWeather, weatherLine } from './weather.mjs';
+
+const DEFAULT_LEAD = 15; // напоминать за 15 минут по умолчанию
 
 const DAY_MS = 86400000;
 
@@ -118,11 +121,14 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
     const hour = w.getUTCHours();
     const today = userDayKey(user, now);
 
-    // 1) Точные напоминания по времени
-    for (const e of store.dueReminders(chatId, now.getTime())) {
+    // 1) Точные напоминания по времени (за lead минут до срока)
+    const lead = Number.isFinite(user.remindLead) ? user.remindLead : DEFAULT_LEAD;
+    for (const e of store.dueReminders(chatId, now.getTime(), lead)) {
       store.patch(e.id, { reminded: true });
-      const when = e.hasTime ? ` (${fmtUser(e.due, off, true).slice(-5)})` : '';
-      await bot.sendButtons(chatId, `🔔 Напоминаю${when}: ${e.title || e.counterparty || 'дело'}`, [
+      const t = fmtUser(e.due, off, true).slice(-5);
+      const early = Date.parse(e.due) > now.getTime();
+      const head = early ? `🔔 Через ${Math.max(1, Math.round((Date.parse(e.due) - now.getTime()) / 60000))} мин (${t})` : `🔔 Пора (${t})`;
+      await bot.sendButtons(chatId, `${head}: ${e.title || e.counterparty || 'дело'}`, [
         [{ text: '✅ Сделал', callback_data: `done_${e.id}` }, { text: 'Ещё нет', callback_data: `keep_${e.id}` }],
       ]);
     }
@@ -137,12 +143,15 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
 
     if (!aiEnabled()) return;
 
-    // 3) Утренний план
+    // 3) Утренний план + погода (если знаем город)
     if (hour === morningHour(user.rhythm) && user.lastMorningPing !== today) {
       store.setUser(chatId, { lastMorningPing: today });
       const events = todayEvents(store, chatId, now);
-      if (events.length) {
-        const text = await aiMorningPing(user, events, now).catch(() => null);
+      const wl = user.city ? weatherLine(await todayWeather(user.city)) : null;
+      if (events.length || wl) {
+        const ctx = [...events];
+        if (wl) ctx.push(wl);
+        const text = await aiMorningPing(user, ctx, now).catch(() => null);
         if (text) {
           await bot.sendText(chatId, text);
           store.pushHistory('assistant', text, chatId);

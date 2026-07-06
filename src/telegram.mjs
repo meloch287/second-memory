@@ -17,6 +17,8 @@ import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage } from './parser.mjs';
+import { balanceReport } from './finance.mjs';
+import { toCsv, toJson, toMarkdown } from './export.mjs';
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
 const hasFfmpeg = (() => {
@@ -198,7 +200,9 @@ export function startTelegramBot(store, token, log = console) {
     }
     if (user.step === 'tz') {
       const off = parseTz(value);
-      const u = store.setUser(chatId, { tzOffset: off ?? DEFAULT_OFFSET, step: null });
+      // если ввели город (буквы, не сдвиг) - запомним для погоды
+      const looksLikeCity = /[а-яa-z]/i.test(value) && !/[+\-−]\s*\d/.test(value) && value.length <= 40;
+      const u = store.setUser(chatId, { tzOffset: off ?? DEFAULT_OFFSET, city: looksLikeCity ? value : null, step: null });
       const tzNote = off == null ? ' Часовой пояс не понял, поставил московский - потом поправим, если что.' : '';
       return send(
         chatId,
@@ -239,9 +243,11 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>⏰ Напоминания: «напомни в 15:00 позвонить маме» - и я звякну ровно в это время. «Каждый понедельник созвон в 10:00» - буду напоминать регулярно. «Перенеси встречу на 16:00» или «отмени звонок» - подвину или уберу.</blockquote>',
       '',
-      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «кто мне должен?». А «найди про Петрова» или «что я говорил про отпуск» - поищу в памяти. «Скинь в календарь» - пришлю файл для календаря телефона.</blockquote>',
+      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (сводка по долгам), «найди про Петрова». «Скинь в календарь» - пришлю файл для календаря телефона. «Экспорт» - выгружу всю память (CSV, дневник, JSON).</blockquote>',
       '',
-      '<blockquote>🎙 Лень печатать? Отправь голосовое, кружок или mp3 - расшифрую и отвечу голосом. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
+      '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и отвечу голосом. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
+      '',
+      '<blockquote>⚙️ «Настройки» покажут всё про тебя. «Напоминай за 30 минут», «мой город Казань» - подстрою под себя. По утрам расскажу про дела и погоду.</blockquote>',
       '',
       '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
@@ -274,6 +280,32 @@ export function startTelegramBot(store, token, log = console) {
   /* ---- Спец-намерения: правки, повторы, поиск, календарь ---- */
 
   const kindOf = (t) => { const w = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' }; return w[t] || 'запись'; };
+
+  function settingsText(user) {
+    const lead = Number.isFinite(user?.remindLead) ? user.remindLead : 15;
+    const offH = userOffset(user) / 60;
+    return [
+      '⚙️ Твои настройки:',
+      '',
+      `Имя: ${esc(user?.name || '-')}`,
+      `Моё имя: ${esc(user?.botName || '-')}`,
+      `Ритм: ${esc(user?.rhythm || '-')}`,
+      `Город: ${esc(user?.city || 'не задан')}`,
+      `Часовой пояс: UTC${offH >= 0 ? '+' : ''}${offH}`,
+      `Напоминаю за: ${lead} мин до дела`,
+      '',
+      'Поменять: «напоминай за 30 минут», «мой город Казань», «часовой пояс +5», /start - сменить имя.',
+    ].join('\n');
+  }
+
+  async function sendDocumentText(chatId, content, filename, mime, caption) {
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('document', new Blob([content], { type: mime }), filename);
+    if (caption) form.append('caption', caption);
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
+    return res.json();
+  }
 
   // Возвращает true, если сообщение обработано как спец-намерение.
   async function handleIntent(chatId, user, text) {
@@ -351,6 +383,46 @@ export function startTelegramBot(store, token, log = console) {
         log.error('[telegram] search', e.message);
         await send(chatId, esc(sleepyText(chatId)));
       }
+      return true;
+    }
+
+    if (p.kind === 'balance') {
+      await send(chatId, esc(balanceReport(store, String(chatId), userOffset(user))));
+      return true;
+    }
+
+    if (p.kind === 'export') {
+      await send(chatId, 'В каком виде выгрузить твою память?', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📊 CSV (для Excel)', callback_data: 'exp_csv' }, { text: '📝 Дневник (Markdown)', callback_data: 'exp_md' }],
+            [{ text: '🗄 Всё (JSON)', callback_data: 'exp_json' }, { text: 'Не надо', callback_data: 'exp_no' }],
+          ],
+        },
+      });
+      return true;
+    }
+
+    if (p.kind === 'settings') {
+      await send(chatId, settingsText(user));
+      return true;
+    }
+    if (p.kind === 'setlead') {
+      store.setUser(chatId, { remindLead: p.minutes });
+      await send(chatId, `Готово, буду напоминать за ${p.minutes} мин до дела.`);
+      return true;
+    }
+    if (p.kind === 'setcity') {
+      const off = parseTz(p.city);
+      store.setUser(chatId, { city: p.city, ...(off != null ? { tzOffset: off } : {}) });
+      await send(chatId, `Запомнил город: ${esc(p.city)}. Буду показывать погоду по утрам${off != null ? ' и подстрою часовой пояс' : ''}.`);
+      return true;
+    }
+    if (p.kind === 'settz') {
+      const off = parseTz(p.text);
+      if (off == null) { await send(chatId, 'Не понял пояс. Напиши город или сдвиг вроде «+3».'); return true; }
+      store.setUser(chatId, { tzOffset: off });
+      await send(chatId, `Поставил часовой пояс. Теперь напоминания в твоё время.`);
       return true;
     }
 
@@ -475,24 +547,59 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Роутинг сообщений ---- */
 
+  // Длинное аудио режем ffmpeg на куски по 150 сек и расшифровываем по частям.
+  async function transcribeLong(b64, format) {
+    if (!hasFfmpeg) return null;
+    const stamp = Date.now();
+    const inFile = join(tmpdir(), `long-${stamp}.${format === 'mp3' ? 'mp3' : 'ogg'}`);
+    const outPat = join(tmpdir(), `long-${stamp}-%03d.ogg`);
+    const parts = [];
+    try {
+      writeFileSync(inFile, Buffer.from(b64, 'base64'));
+      const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-f', 'segment', '-segment_time', '150', '-c:a', 'libopus', '-b:a', '32k', outPat], {
+        stdio: 'ignore',
+        timeout: 120000,
+      });
+      if (r.status !== 0) return null;
+      for (let i = 0; i < 20; i++) {
+        const f = join(tmpdir(), `long-${stamp}-${String(i).padStart(3, '0')}.ogg`);
+        if (!existsSync(f)) break;
+        parts.push(f);
+      }
+      const texts = [];
+      for (const f of parts) {
+        const t = await aiTranscribe(readFileSync(f).toString('base64'), 'ogg').catch(() => null);
+        if (t) texts.push(t);
+      }
+      return texts.join(' ').trim() || null;
+    } finally {
+      rmSync(inFile, { force: true });
+      for (const f of parts) rmSync(f, { force: true });
+    }
+  }
+
   // Аудио любого вида: голосовое, mp3, аудиофайл документом.
   async function audioFlow(chatId, user, fileId, format, durationSec) {
     if (!audioEnabled()) {
       return send(chatId, 'Голосовые пока не разбираю: нет ключа для расшифровки. Напиши текстом, я всё пойму.');
     }
-    if ((durationSec || 0) > 180) {
-      return send(chatId, 'Ого, длинная запись. Дольше трёх минут не осилю. Можно покороче?');
+    const long = (durationSec || 0) > 170;
+    if (long && !hasFfmpeg) {
+      return send(chatId, 'Запись длинновата, а без ffmpeg на сервере длинное не осилю. Скажи покороче?');
+    }
+    if ((durationSec || 0) > 20 * 60) {
+      return send(chatId, 'Ого, больше двадцати минут - это уже подкаст 🙂 Давай частями?');
     }
     const transcript = await withTyping(chatId, async () => {
       const b64 = await downloadBase64(fileId);
-      return aiTranscribe(b64, format);
+      return long ? transcribeLong(b64, format) : aiTranscribe(b64, format);
     });
     if (!transcript) {
       return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
     }
     if (user?.step) return onboardingStep(chatId, user, transcript);
-    await send(chatId, `🎙 «${esc(transcript)}»`);
-    return friendFlow(String(chatId), transcript, { asVoice: true });
+    await send(chatId, `🎙 «${esc(transcript.slice(0, 500))}${transcript.length > 500 ? '…' : ''}»`);
+    return friendFlow(String(chatId), transcript, { asVoice: !long }); // длинное - ответим текстом
   }
 
   // Картинка (фото, статичный стикер, превью гифки): описываем и запоминаем.
@@ -686,6 +793,20 @@ export function startTelegramBot(store, token, log = console) {
         return;
       } catch (e) {
         log.error('[telegram] ics', e.message);
+        return send(chatId, 'Не смог собрать файл. Попробуем позже?');
+      }
+    }
+
+    // Экспорт памяти в выбранном формате
+    if (cb.data === 'exp_no') return send(chatId, 'Ок. Скажешь «экспорт» - выгружу.');
+    if (cb.data === 'exp_csv' || cb.data === 'exp_md' || cb.data === 'exp_json') {
+      try {
+        if (cb.data === 'exp_csv') await sendDocumentText(chatId, toCsv(store, chatId), 'pamyat.csv', 'text/csv', 'Таблица дел и долгов. Открывается в Excel 📊');
+        else if (cb.data === 'exp_md') await sendDocumentText(chatId, toMarkdown(store, chatId), 'dnevnik.md', 'text/markdown', 'Твой дневник по дням 📝');
+        else await sendDocumentText(chatId, toJson(store, chatId), 'pamyat.json', 'application/json', 'Вся память одним файлом 🗄');
+        return;
+      } catch (e) {
+        log.error('[telegram] export', e.message);
         return send(chatId, 'Не смог собрать файл. Попробуем позже?');
       }
     }
