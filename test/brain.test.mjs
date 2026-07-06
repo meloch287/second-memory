@@ -106,20 +106,35 @@ test('шкала памяти: пустая база даёт 0, записи н
   assert.ok(covCase.matched >= 1, 'винительный падеж должен матчиться по основе');
 });
 
-test('/reset бота: clearChatData стирает профиль и память чата, но не записи', async () => {
+test('mp3 и другие аудиоформаты Telegram корректно маппятся', async () => {
+  const { audioFormatFromMime } = await import('../src/ai.mjs');
+  assert.equal(audioFormatFromMime('audio/mpeg'), 'mp3');
+  assert.equal(audioFormatFromMime('audio/mp3'), 'mp3');
+  assert.equal(audioFormatFromMime('audio/ogg'), 'ogg');
+  assert.equal(audioFormatFromMime('audio/x-wav'), 'wav');
+  assert.equal(audioFormatFromMime('audio/mp4'), 'aac');
+  assert.equal(audioFormatFromMime(''), 'ogg');
+});
+
+test('/reset бота: clearChatData стирает ВСЁ по пользователю, чужое не трогает', async () => {
+  const { captureEntry } = await import('../src/brain.mjs');
   const s = freshStore();
   s.setUser('42', { botName: 'Барни', name: 'Саша', step: null });
   s.addRaw('42', 'сырая заметка');
   s.addFacts([{ chatId: '42', text: 'факт', people: [], tags: [] }]);
   s.pushHistory('user', 'привет', '42');
+  captureEntry(s, 'Петров должен 30 000 до пятницы', NOW, '42'); // запись бота
   await handleMessage(s, 'Ромашка должна 120 000 до конца месяца', NOW); // веб-запись
+  assert.equal(s.list({ type: 'debt' }).length, 2);
 
   s.clearChatData('42');
   assert.equal(s.getUser('42'), null);
   assert.equal(s.data.raw.filter((r) => r.chatId === '42').length, 0);
   assert.equal(s.data.facts.filter((f) => f.chatId === '42').length, 0);
   assert.equal(s.recentHistory(50, '42').length, 0);
-  assert.equal(s.list({ type: 'debt' }).length, 1, 'деловые записи не стираются');
+  const debts = s.list({ type: 'debt' });
+  assert.equal(debts.length, 1, 'долг юзера 42 стёрт полностью');
+  assert.equal(debts[0].counterparty, 'Ромашка', 'веб-запись осталась');
   assert.equal(s.recentHistory(50, 'web').length, 2, 'веб-история не тронута');
 });
 

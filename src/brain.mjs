@@ -51,7 +51,7 @@ const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const byDue = (a, b) => Date.parse(a.due || '9999-01-01') - Date.parse(b.due || '9999-01-01') || a.id - b.id;
 
 export async function handleMessage(store, text, now = new Date(), chatId = 'web') {
-  const result = await route(store, text, now);
+  const result = await route(store, text, now, chatId);
   const t = String(text || '').trim();
   if (t && !result.cleared) {
     store.pushHistory('user', t, chatId);
@@ -62,13 +62,14 @@ export async function handleMessage(store, text, now = new Date(), chatId = 'web
 
 // Тихая запись для бота-друга: структурируем долги, встречи и задачи,
 // не подменяя живой ответ ИИ. Заметки не дублируем, они уже в сырой базе.
-export function captureEntry(store, text, now = new Date()) {
+// chatId привязывает запись к пользователю - /reset стирает и их.
+export function captureEntry(store, text, now = new Date(), chatId = 'web') {
   const p = parseMessage(text, now);
   if (p.kind !== 'entry' || p.entry.type === 'note') return null;
-  return store.add(p.entry);
+  return store.add({ ...p.entry, chatId });
 }
 
-async function route(store, text, now) {
+async function route(store, text, now, chatId = 'web') {
   const p = parseMessage(text, now);
   switch (p.kind) {
     case 'empty':
@@ -105,7 +106,7 @@ async function route(store, text, now) {
           // ИИ недоступен — обрабатываем по правилам ниже
         }
       }
-      return saveEntry(store, p.entry);
+      return saveEntry(store, { ...p.entry, chatId });
     }
     case 'done':
       return markDone(store, p.target);

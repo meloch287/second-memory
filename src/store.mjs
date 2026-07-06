@@ -139,13 +139,14 @@ export class Store {
     this.save();
   }
 
-  // Полный сброс личности и памяти одного чата (/reset у бота).
-  // Общие деловые записи (entries) не трогаем - они видны и из веба.
+  // Полный сброс по пользователю (/reset у бота): профиль, сырые записи,
+  // факты, история И все его деловые записи (долги, встречи, задачи).
   clearChatData(chatId) {
     delete this.data.users[chatId];
     this.data.raw = this.data.raw.filter((r) => r.chatId !== chatId);
     this.data.facts = this.data.facts.filter((f) => f.chatId !== chatId);
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
+    this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
     this.save();
   }
 

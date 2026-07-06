@@ -285,6 +285,39 @@ export async function aiExtractFacts(rawItems) {
   }
 }
 
+/* ---------- Медиа (мультимодальный провайдер) ---------- */
+
+// Формат аудио для input_audio по mime-типу Telegram.
+export function audioFormatFromMime(mime = '') {
+  const m = String(mime).toLowerCase();
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('flac')) return 'flac';
+  if (m.includes('aac') || m.includes('mp4') || m.includes('m4a')) return 'aac';
+  return 'ogg';
+}
+
+export async function aiDescribeImage(base64, mime = 'image/jpeg', hint = '') {
+  return chatCompletion(
+    AUDIO(),
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'Опиши по-русски одним-двумя простыми предложениями, что на этом изображении.' +
+              (hint ? ` Подпись отправителя: «${hint}».` : ''),
+          },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 300 }
+  );
+}
+
 /* ---------- Расшифровка аудио (мультимодальный провайдер) ---------- */
 
 export async function aiTranscribe(base64, format = 'ogg') {

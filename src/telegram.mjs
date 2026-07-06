@@ -3,7 +3,10 @@
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 
 import { handleMessage, captureEntry } from './brain.mjs';
-import { aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup, aiTranscribe } from './ai.mjs';
+import {
+  aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup,
+  aiTranscribe, aiDescribeImage, audioFormatFromMime,
+} from './ai.mjs';
 
 const COMMANDS = [
   { command: 'summary', description: 'Итоги дня' },
@@ -64,7 +67,32 @@ export function startTelegramBot(store, token, log = console) {
       ...extra,
     });
 
-  const typing = (chat_id) => api('sendChatAction', { chat_id, action: 'typing' }).catch(() => {});
+  // «Печатает…» держится, пока готовим ответ: Telegram гасит статус через
+  // ~5 секунд, поэтому шлём его циклом до самой отправки сообщения.
+  function typingLoop(chat_id) {
+    const ping = () => api('sendChatAction', { chat_id, action: 'typing' }).catch(() => {});
+    ping();
+    const interval = setInterval(ping, 4500);
+    return () => clearInterval(interval);
+  }
+
+  // Обёртка: держим «печатает…» на время асинхронной работы.
+  async function withTyping(chat_id, work) {
+    const stop = typingLoop(chat_id);
+    try {
+      return await work();
+    } finally {
+      stop();
+    }
+  }
+
+  async function downloadBase64(file_id) {
+    const info = await api('getFile', { file_id });
+    if (!info.ok) throw new Error('getFile failed');
+    const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
+    if (!res.ok) throw new Error('file download failed');
+    return Buffer.from(await res.arrayBuffer()).toString('base64');
+  }
 
   /* ---- Онбординг: знакомство как с человеком ---- */
 
@@ -111,7 +139,7 @@ export function startTelegramBot(store, token, log = console) {
     const name = esc(user?.name || 'дружище');
     return send(
       chatId,
-      `${name}, уверен, что хочешь убить меня?(( Сотрётся всё: моё имя, наше знакомство и вся память наших разговоров. Появится новый друг, который тебя не знает.\n\nДела и долги останутся - они живут отдельно.`,
+      `${name}, уверен, что хочешь убить меня?(( Сотрётся ВСЁ: моё имя, наше знакомство, вся память разговоров и все твои записи - долги, встречи, задачи. Появится новый друг, который тебя не знает.`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -137,7 +165,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>💬 Спрашивай о чём угодно: «что у меня завтра?», «кто мне должен?», «о чём я писал в понедельник?». Отвечу по твоим записям.</blockquote>',
       '',
-      '<blockquote>🎙 Лень печатать? Отправь голосовое. Я расшифрую и пойму.</blockquote>',
+      '<blockquote>🎙 Лень печатать? Отправь голосовое или mp3 - расшифрую и пойму. Фото и стикеры тоже разгляжу.</blockquote>',
       '',
       '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
@@ -149,9 +177,8 @@ export function startTelegramBot(store, token, log = console) {
     if (!aiEnabled()) {
       return send(chatId, 'Мне нужен ключ ИИ для итогов (AI_API_KEY в .env). Пока могу просто слушать и запоминать.');
     }
-    await typing(chatId);
     try {
-      const text = await aiDiarySummary(store, chatId);
+      const text = await withTyping(chatId, () => aiDiarySummary(store, chatId));
       return send(chatId, esc(text), {
         reply_markup: {
           inline_keyboard: [
@@ -172,13 +199,12 @@ export function startTelegramBot(store, token, log = console) {
 
   async function friendFlow(chatId, text) {
     store.addRaw(chatId, text);
-    captureEntry(store, text); // долги, встречи и задачи тихо ложатся в структурированную базу
+    captureEntry(store, text, new Date(), chatId); // долги, встречи и задачи тихо ложатся в структурированную базу
 
     let reply;
     if (aiEnabled()) {
-      await typing(chatId);
       try {
-        reply = await aiFriendReply(store, chatId, text);
+        reply = await withTyping(chatId, () => aiFriendReply(store, chatId, text));
       } catch (e) {
         log.error('[telegram] friend', e.message);
       }
@@ -196,30 +222,77 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Роутинг сообщений ---- */
 
+  // Аудио любого вида: голосовое, mp3, аудиофайл документом.
+  async function audioFlow(chatId, user, fileId, format, durationSec) {
+    if (!audioEnabled()) {
+      return send(chatId, 'Голосовые пока не разбираю: нет ключа для расшифровки. Напиши текстом, я всё пойму.');
+    }
+    if ((durationSec || 0) > 180) {
+      return send(chatId, 'Ого, длинная запись. Дольше трёх минут не осилю. Можно покороче?');
+    }
+    const transcript = await withTyping(chatId, async () => {
+      const b64 = await downloadBase64(fileId);
+      return aiTranscribe(b64, format);
+    });
+    if (!transcript) {
+      return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
+    }
+    if (user?.step) return onboardingStep(chatId, user, transcript);
+    await send(chatId, `🎙 «${esc(transcript)}»`);
+    return friendFlow(String(chatId), transcript);
+  }
+
+  // Картинка (фото, статичный стикер, превью гифки): описываем и запоминаем.
+  async function imageFlow(chatId, fileId, label, caption, mime = 'image/jpeg') {
+    if (!audioEnabled()) {
+      return send(chatId, 'Картинки пока не разглядываю: нет ключа мультимодального ИИ. Расскажи словами?');
+    }
+    let description;
+    try {
+      description = await withTyping(chatId, async () => {
+        const b64 = await downloadBase64(fileId);
+        return aiDescribeImage(b64, mime, caption || '');
+      });
+    } catch (e) {
+      log.error('[telegram] image', e.message);
+      return send(chatId, 'Разглядывал-разглядывал, но так и не понял, что там. Расскажешь словами?');
+    }
+    const text = `${label}: ${description}${caption ? `. Моя подпись: ${caption}` : ''}`;
+    return friendFlow(String(chatId), text);
+  }
+
   async function onMessage(msg) {
     const chatId = msg.chat.id;
     const user = store.getUser(String(chatId));
 
-    if (msg.voice || msg.audio) {
-      if (!audioEnabled()) {
-        return send(chatId, 'Голосовые пока не разбираю: нет ключа для расшифровки. Напиши текстом, я всё пойму.');
+    if (msg.voice) {
+      return audioFlow(chatId, user, msg.voice.file_id, 'ogg', msg.voice.duration);
+    }
+    if (msg.audio) {
+      return audioFlow(chatId, user, msg.audio.file_id, audioFormatFromMime(msg.audio.mime_type), msg.audio.duration);
+    }
+    if (msg.document && String(msg.document.mime_type || '').startsWith('audio/')) {
+      return audioFlow(chatId, user, msg.document.file_id, audioFormatFromMime(msg.document.mime_type), 0);
+    }
+
+    if (msg.photo && msg.photo.length) {
+      const largest = msg.photo[msg.photo.length - 1];
+      return imageFlow(chatId, largest.file_id, '[Прислал фото]', msg.caption);
+    }
+
+    if (msg.animation) {
+      const thumb = msg.animation.thumbnail || msg.animation.thumb;
+      if (thumb) return imageFlow(chatId, thumb.file_id, '[Прислал гифку]', msg.caption);
+      return send(chatId, 'Гифку получил, но разглядеть не смог 😅 Что там было?');
+    }
+
+    if (msg.sticker) {
+      const s = msg.sticker;
+      if (!s.is_animated && !s.is_video) {
+        return imageFlow(chatId, s.file_id, '[Прислал стикер]', s.emoji || '', 'image/webp');
       }
-      const voice = msg.voice || msg.audio;
-      if ((voice.duration || 0) > 180) {
-        return send(chatId, 'Ого, длинное голосовое. Дольше трёх минут не осилю. Скажи покороче?');
-      }
-      await typing(chatId);
-      const info = await api('getFile', { file_id: voice.file_id });
-      if (!info.ok) throw new Error('getFile failed');
-      const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
-      if (!fileRes.ok) throw new Error('file download failed');
-      const b64 = Buffer.from(await fileRes.arrayBuffer()).toString('base64');
-      const transcript = await aiTranscribe(b64, 'ogg');
-      if (!transcript) {
-        return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
-      }
-      if (user?.step) return onboardingStep(chatId, user, transcript);
-      return friendFlow(String(chatId), transcript);
+      // анимированные стикеры не разглядеть - реагируем на эмоцию
+      return friendFlow(String(chatId), `[Прислал стикер с эмоцией ${s.emoji || 'без подписи'}]`);
     }
 
     if (typeof msg.text !== 'string') return;
@@ -257,9 +330,10 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (!aiEnabled()) return;
-    await typing(chatId);
     try {
-      const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more');
+      const text = await withTyping(chatId, () =>
+        aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more')
+      );
       await send(chatId, esc(text));
     } catch (e) {
       log.error('[telegram] callback', e.message);
