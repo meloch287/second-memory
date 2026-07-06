@@ -27,6 +27,29 @@ async function fetchJson(url, timeoutMs = 8000) {
   }
 }
 
+// Часовой пояс (смещение в минутах) из координат - через Open-Meteo.
+export async function tzFromCoords(lat, lon) {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&timezone=auto&forecast_days=1`;
+    const data = await fetchJson(url);
+    return Number.isFinite(data?.utc_offset_seconds) ? Math.round(data.utc_offset_seconds / 60) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Название города из координат - через BigDataCloud (без ключа).
+export async function cityFromCoords(lat, lon) {
+  try {
+    const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=ru`;
+    const data = await fetchJson(url);
+    const c = data?.city || data?.locality || data?.principalSubdivision;
+    return c ? String(c).replace(/^город\s+/i, '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function geocode(city) {
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=ru&format=json`;
   const data = await fetchJson(url);

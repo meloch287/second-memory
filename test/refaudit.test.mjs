@@ -23,7 +23,7 @@ test('telegram.mjs: критичные хелперы на месте', () => {
     'sendIcs', 'upcomingEvents', 'settingsText', 'sendDocumentText', 'transcribeLong',
     'audioFlow', 'imageFlow', 'onMessage', 'onCallback', 'sendVoice', 'startOnboarding',
     'onboardingStep', 'helloAgain', 'askReset', 'helpText', 'sendSummary', 'typingLoop',
-    'withTyping', 'downloadBase64', 'enqueue', 'kindOf',
+    'withTyping', 'downloadBase64', 'enqueue', 'kindOf', 'locationFlow', 'askLocation',
   ];
   const missing = definesAll('telegram.mjs', need);
   assert.deepEqual(missing, [], `не определены: ${missing.join(', ')}`);

@@ -15,6 +15,7 @@ import {
 import { extractDocxText } from './docx.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
+import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage } from './parser.mjs';
 import { balanceReport } from './finance.mjs';
@@ -77,11 +78,9 @@ const STEP_EXPLAIN = {
   botname:
     'А, это я про имя для себя 🙂 Ты будешь так ко мне обращаться, а я - подписываться. Подойдёт любое: Барни, Джарвис, Братан, хоть Пельмень.\n\nТак как меня назовёшь?',
   name: 'Всё просто: скажи, как к тебе обращаться. Имя или прозвище, как удобно.\n\nТак как тебя называть?',
-  rhythm:
-    'Жаворонок - это кто рано встаёт и с утра полон сил. Сова - кто оживает к вечеру и сидит допоздна. Мне это нужно, чтобы понимать твой день.\n\nТак ты кто: жаворонок или сова?',
   goal:
     'Я спрашиваю, что сейчас занимает большую часть твоей жизни: работа, учёба, семья, спорт, отдых. Так мне проще понимать твои записи.\n\nЧто у тебя сейчас главное?',
-  tz: 'Часовой пояс нужен, чтобы будить и напоминать в твоё время, а не в моё. Напиши свой город (Москва, Екатеринбург, Новосибирск...) или сдвиг вроде «+3», «мск+2».\n\nВ каком ты поясе?',
+  tz: 'Мне нужен твой часовой пояс, чтобы напоминать вовремя, а не среди ночи. Нажми кнопку «📍 Отправить геолокацию» - определю сам. Или напиши город (Москва, Екатеринбург...) либо сдвиг вроде «+3».',
 };
 
 const FALLBACKS = [
@@ -210,28 +209,41 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, `${esc(value)} - звучит! Так меня ещё никто не называл 😄\n\nА тебя как называть?`);
     }
     if (user.step === 'name') {
-      store.setUser(chatId, { name: value, step: 'rhythm' });
-      return send(chatId, `${esc(value)}, отличное имя 😊\n\nТы жаворонок или сова? Мне важно понимать твой ритм.`);
-    }
-    if (user.step === 'rhythm') {
-      store.setUser(chatId, { rhythm: value, step: 'goal' });
-      return send(chatId, 'Запомнил. Что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?');
-    }
-    if (user.step === 'goal') {
-      store.setUser(chatId, { goal: value, step: 'tz' });
-      return send(chatId, 'И последнее: в каком ты часовом поясе? Напиши город (например, Москва или Новосибирск) или сдвиг вроде «+3». Это чтобы напоминания приходили вовремя.');
+      store.setUser(chatId, { name: value, step: 'tz' });
+      return askLocation(chatId);
     }
     if (user.step === 'tz') {
+      // ответ текстом (город или сдвиг); геолокация ловится отдельно (locationFlow)
       const off = parseTz(value);
-      // если ввели город (буквы, не сдвиг) - запомним для погоды
       const looksLikeCity = /[а-яa-z]/i.test(value) && !/[+\-−]\s*\d/.test(value) && value.length <= 40;
-      const u = store.setUser(chatId, { tzOffset: off ?? DEFAULT_OFFSET, city: looksLikeCity ? value : null, step: null });
-      const tzNote = off == null ? ' Часовой пояс не понял, поставил московский - потом поправим, если что.' : '';
+      store.setUser(chatId, { tzOffset: off ?? DEFAULT_OFFSET, city: looksLikeCity ? value : null, step: 'goal' });
+      const tzNote = off == null ? ' Пояс не понял, поставил московский - потом поправим.' : '';
+      return send(chatId, `Принял.${tzNote}\n\nИ последнее: что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?`, {
+        reply_markup: { remove_keyboard: true },
+      });
+    }
+    if (user.step === 'goal') {
+      const u = store.setUser(chatId, { goal: value, step: null });
       return send(
         chatId,
-        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}${tzNote}\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
+        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}\n\nПросто пиши мне как в дневник. Как прошёл твой день?`,
+        { reply_markup: { remove_keyboard: true } }
       );
     }
+  }
+
+  function askLocation(chatId) {
+    return send(
+      chatId,
+      `${''}Чтобы напоминать в твоё время и показывать погоду - нажми «📍 Отправить геолокацию» (определю пояс и город сам). Или просто напиши город / сдвиг вроде «+3».`,
+      {
+        reply_markup: {
+          keyboard: [[{ text: '📍 Отправить геолокацию', request_location: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      }
+    );
   }
 
   /* ---- /reset: стереть личность и память ---- */
@@ -270,7 +282,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и сразу отвечу. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
       '',
-      '<blockquote>⚙️ «Настройки» покажут всё про тебя. «Напоминай за 30 минут», «мой город Казань» - подстрою под себя. По утрам расскажу про дела и погоду.</blockquote>',
+      '<blockquote>⚙️ «Настройки» покажут всё про тебя. Пришли геолокацию - сам определю часовой пояс и город. «Напоминай за 30 минут», «мой город Казань» - тоже подстрою. По утрам расскажу про дела и погоду.</blockquote>',
       '',
       '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
@@ -317,7 +329,7 @@ export function startTelegramBot(store, token, log = console) {
       `Часовой пояс: UTC${offH >= 0 ? '+' : ''}${offH}`,
       `Напоминаю за: ${lead} мин до дела`,
       '',
-      'Поменять: «напоминай за 30 минут», «мой город Казань», «часовой пояс +5», /start - сменить имя.',
+      'Поменять: пришли геолокацию (определю пояс и город сам), «напоминай за 30 минут», «мой город Казань», «часовой пояс +5», /start - сменить имя.',
     ].join('\n');
   }
 
@@ -618,9 +630,35 @@ export function startTelegramBot(store, token, log = console) {
     return friendFlow(String(chatId), text);
   }
 
+  // Геолокация -> часовой пояс и город (для напоминаний и погоды).
+  async function locationFlow(chatId, user, loc) {
+    const [off, city] = await Promise.all([tzFromCoords(loc.latitude, loc.longitude), cityFromCoords(loc.latitude, loc.longitude)]);
+    const patch = {};
+    if (Number.isFinite(off)) patch.tzOffset = off;
+    if (city) patch.city = city;
+    const wasOnboarding = user?.step === 'tz';
+    if (wasOnboarding) patch.step = 'goal'; // после локации спросим про цель
+    store.setUser(String(chatId), patch);
+    const parts = [];
+    if (city) parts.push(`Город: ${esc(city)}`);
+    if (Number.isFinite(off)) parts.push(`пояс UTC${off >= 0 ? '+' : ''}${off / 60}`);
+    const line = parts.length ? `Поймал: ${parts.join(', ')}. ` : 'Не смог разобрать локацию, ну да ладно. ';
+    if (wasOnboarding) {
+      return send(chatId, `${line}И последнее: что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?`, {
+        reply_markup: { remove_keyboard: true },
+      });
+    }
+    return send(chatId, `${line}Буду напоминать в твоё время и показывать погоду 🙂`, { reply_markup: { remove_keyboard: true } });
+  }
+
   async function onMessage(msg) {
     const chatId = msg.chat.id;
     const user = store.getUser(String(chatId));
+
+    if (msg.location) {
+      if (!user) return startOnboarding(String(chatId));
+      return locationFlow(chatId, user, msg.location);
+    }
 
     if (msg.voice) {
       return audioFlow(chatId, user, msg.voice.file_id, 'ogg', msg.voice.duration);
