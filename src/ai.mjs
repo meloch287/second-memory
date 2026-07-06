@@ -85,10 +85,10 @@ async function streamOnce(cfg, messages, maxTokens, timeoutMs, onDelta) {
   }
 }
 
-async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 90000, onDelta = null } = {}) {
+async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 90000, onDelta = null, retryDelays = null } = {}) {
   if (onDelta) {
-    // Стрим с теми же паузами на 429; при любой ошибке стрима - обычный запрос
-    const delays = [0, 12000, 35000];
+    // Стрим с паузами на 429; при любой ошибке стрима - обычный запрос
+    const delays = retryDelays || [0, 12000, 35000];
     let lastError;
     for (const delay of delays) {
       if (delay) await sleep(delay);
@@ -100,14 +100,14 @@ async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 900
       }
     }
     try {
-      return await chatCompletion(cfg, messages, { maxTokens, timeoutMs });
+      return await chatCompletion(cfg, messages, { maxTokens, timeoutMs, retryDelays });
     } catch {
       throw lastError;
     }
   }
-  // 429/5xx у шлюзов - обычное дело: до двух повторов с паузой.
-  // У GonkaGate лимит поминутный, поэтому паузы длинные.
-  const delays = [0, 12000, 35000];
+  // 429/5xx у шлюзов - обычное дело. Интерактивные ответы передают короткие
+  // паузы (бот не должен висеть минутами), фоновый worker - длинные.
+  const delays = retryDelays || [0, 12000, 35000];
   let lastError;
   for (const delay of delays) {
     if (delay) await sleep(delay);
@@ -265,7 +265,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, text, now) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
     ],
-    { maxTokens: 1200, onDelta }
+    { maxTokens: 1200, onDelta, timeoutMs: 45000, retryDelays: [0, 8000] }
   );
 }
 
@@ -298,7 +298,7 @@ export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = 
           '\n\nПодведи итоги дня как друг, не как секретарь. Структура: строка «🕒 Утро», строка «💼 День», строка «🌙 Вечер» - по паре живых фраз о том, что было (пропусти главу, если пусто). В конце «💡 Инсайт» - одна умная мысль или совет по итогам недели. Если сегодня записей не было, скажи об этом тепло и предложи рассказать, как прошёл день.',
       },
     ],
-    { maxTokens: 1600, onDelta }
+    { maxTokens: 1600, onDelta, timeoutMs: 60000, retryDelays: [0, 8000] }
   );
 }
 
@@ -313,7 +313,7 @@ export async function aiFollowup(store, chatId, kind, now = new Date(), onDelta 
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, '', now) + '\n\n' + prompt },
     ],
-    { maxTokens: 1200, onDelta }
+    { maxTokens: 1200, onDelta, timeoutMs: 45000, retryDelays: [0, 8000] }
   );
 }
 
@@ -382,7 +382,7 @@ export async function aiDescribeImage(base64, mime = 'image/jpeg', hint = '') {
         ],
       },
     ],
-    { maxTokens: 300 }
+    { maxTokens: 300, timeoutMs: 45000, retryDelays: [0, 8000] }
   );
 }
 
@@ -403,7 +403,7 @@ export async function aiTranscribe(base64, format = 'ogg') {
         ],
       },
     ],
-    { maxTokens: 700 }
+    { maxTokens: 700, timeoutMs: 45000, retryDelays: [0, 8000] }
   );
   if (!text || text.includes('NO_SPEECH')) return null;
   return text;

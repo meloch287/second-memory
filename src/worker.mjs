@@ -3,7 +3,7 @@
 
 import { aiEnabled, aiExtractFacts } from './ai.mjs';
 
-export function startFactWorker(store, log = console, intervalMs = 180000) {
+export function startFactWorker(store, log = console, intervalMs = 600000) {
   if (!aiEnabled()) return null;
 
   let busy = false;
@@ -34,7 +34,7 @@ export function startFactWorker(store, log = console, intervalMs = 180000) {
   };
 
   const interval = setInterval(tick, intervalMs);
-  const kickoff = setTimeout(tick, 20000);
+  const kickoff = setTimeout(tick, 90000);
 
   return {
     tick,

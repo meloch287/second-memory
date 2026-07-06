@@ -488,6 +488,20 @@ export function startTelegramBot(store, token, log = console) {
   let running = true;
   let offset = 0;
 
+  // Очередь на каждый чат: внутри чата сообщения обрабатываются по порядку,
+  // но один зависший ответ не блокирует остальные чаты и приём апдейтов.
+  const chatQueues = new Map();
+  function enqueue(chatKey, work) {
+    const prev = chatQueues.get(chatKey) || Promise.resolve();
+    const next = prev
+      .then(work)
+      .catch((e) => log.error('[telegram] flow', chatKey, e.message))
+      .finally(() => {
+        if (chatQueues.get(chatKey) === next) chatQueues.delete(chatKey);
+      });
+    chatQueues.set(chatKey, next);
+  }
+
   (async () => {
     log.log('[telegram] бот запущен (long polling)');
     api('setMyCommands', { commands: COMMANDS }).catch(() => {});
@@ -501,13 +515,11 @@ export function startTelegramBot(store, token, log = console) {
         if (!res.ok) throw new Error(res.description || 'getUpdates failed');
         for (const update of res.result) {
           offset = update.update_id + 1;
-          // Ошибка одного update не должна ронять обработку остальных в пачке
-          try {
-            if (update.message) await onMessage(update.message);
-            else if (update.callback_query) await onCallback(update.callback_query);
-          } catch (e) {
-            log.error('[telegram] update', update.update_id, e.message);
-          }
+          const chatKey = String(
+            update.message?.chat?.id ?? update.callback_query?.message?.chat?.id ?? 'unknown'
+          );
+          if (update.message) enqueue(chatKey, () => onMessage(update.message));
+          else if (update.callback_query) enqueue(chatKey, () => onCallback(update.callback_query));
         }
       } catch (e) {
         log.error('[telegram]', e.message);
