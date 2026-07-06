@@ -33,7 +33,14 @@ const HELP = [
   'Команды: «готово 3», «удали 5», «очистить чат».',
 ].join('\n');
 
-function fmtDate(iso, hasTime, off = DEFAULT_OFFSET) {
+// off=null (веб/без tz-профиля) - рендерим в server-local, как и хранили;
+// off=число (юзер бота) - в его часовом поясе (записи хранятся в реальном UTC).
+function fmtDate(iso, hasTime, off = null) {
+  if (off == null) {
+    const d = new Date(iso);
+    const s = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    return hasTime ? `${s} ${pad(d.getHours())}:${pad(d.getMinutes())}` : s;
+  }
   return fmtUser(iso, off, hasTime);
 }
 
@@ -79,7 +86,8 @@ export function captureEntry(store, text, now = new Date(), chatId = 'web', offs
 }
 
 async function route(store, text, now, chatId = 'web') {
-  const off = userOffset(store.getUser(chatId));
+  const u = store.getUser(chatId);
+  const off = u ? userOffset(u) : null;
   const p = parseMessage(text, now);
   switch (p.kind) {
     case 'empty':
@@ -131,7 +139,7 @@ async function route(store, text, now, chatId = 'web') {
   }
 }
 
-function saveEntry(store, entry, off = DEFAULT_OFFSET) {
+function saveEntry(store, entry, off = null) {
   const e = store.add(entry);
   let reply;
   if (e.type === 'debt') {
@@ -184,7 +192,7 @@ function removeEntry(store, target, chatId = 'web') {
   return { reply: `Удалил: ${TYPE_LABEL[e.type]} №${e.id}.`, entry: e };
 }
 
-function runQuery(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
+function runQuery(store, q, now, chatId = 'web', off = null) {
   if (q.type === 'debt') return debtsReply(store, q, now, chatId, off);
 
   const open = store.list({ type: q.type, status: 'open', chatId });
@@ -206,7 +214,7 @@ function runQuery(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
   return { reply: lines.join('\n'), results: items };
 }
 
-function debtsReply(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
+function debtsReply(store, q, now, chatId = 'web', off = null) {
   let debts = store.list({ type: 'debt', status: 'open', chatId });
   if (q.direction) debts = debts.filter((d) => (d.direction === 'out') === (q.direction === 'out'));
 
@@ -248,7 +256,7 @@ function debtsReply(store, q, now, chatId = 'web', off = DEFAULT_OFFSET) {
   return { reply: lines.join('\n'), results: debts };
 }
 
-function digest(store, range, now, chatId = 'web', off = DEFAULT_OFFSET) {
+function digest(store, range, now, chatId = 'web', off = null) {
   const open = store.list({ status: 'open', chatId });
   const today = startOfDay(now).getTime();
 
