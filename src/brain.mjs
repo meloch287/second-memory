@@ -109,13 +109,13 @@ async function route(store, text, now, chatId = 'web') {
       return saveEntry(store, { ...p.entry, chatId });
     }
     case 'done':
-      return markDone(store, p.target);
+      return markDone(store, p.target, chatId);
     case 'delete':
-      return removeEntry(store, p.target);
+      return removeEntry(store, p.target, chatId);
     case 'query':
-      return runQuery(store, p, now);
+      return runQuery(store, p, now, chatId);
     case 'digest':
-      return digest(store, p.range, now);
+      return digest(store, p.range, now, chatId);
     default:
       return { reply: 'Не понял. Напишите «помощь», чтобы увидеть примеры.' };
   }
@@ -144,36 +144,40 @@ function saveEntry(store, entry) {
   return { reply, entry: e };
 }
 
-function findTarget(store, target) {
+// Пользователь видит и закрывает только СВОИ записи (мультиюзер).
+function findTarget(store, target, chatId = 'web') {
   const t = target.replace(/^№\s*/, '').trim();
-  if (/^\d+$/.test(t)) return store.byId(+t);
+  if (/^\d+$/.test(t)) {
+    const e = store.byId(+t);
+    return e && (e.chatId || 'web') === chatId ? e : null;
+  }
   const nt = normText(t);
   return (
     store
-      .list({ status: 'open' })
+      .list({ status: 'open', chatId })
       .find((x) => [x.counterparty, x.title, x.text].some((f) => f && normText(f).includes(nt))) || null
   );
 }
 
-function markDone(store, target) {
-  const e = findTarget(store, target);
+function markDone(store, target, chatId = 'web') {
+  const e = findTarget(store, target, chatId);
   if (!e) return { reply: `Не нашёл запись «${target}».` };
   if (e.status === 'done') return { reply: `Запись №${e.id} уже закрыта.` };
   store.setStatus(e.id, 'done');
   return { reply: `Готово: ${TYPE_LABEL[e.type]} №${e.id} закрыта.`, entry: e };
 }
 
-function removeEntry(store, target) {
-  const e = findTarget(store, target);
+function removeEntry(store, target, chatId = 'web') {
+  const e = findTarget(store, target, chatId);
   if (!e) return { reply: `Не нашёл запись «${target}».` };
   store.remove(e.id);
   return { reply: `Удалил: ${TYPE_LABEL[e.type]} №${e.id}.`, entry: e };
 }
 
-function runQuery(store, q, now) {
-  if (q.type === 'debt') return debtsReply(store, q, now);
+function runQuery(store, q, now, chatId = 'web') {
+  if (q.type === 'debt') return debtsReply(store, q, now, chatId);
 
-  const open = store.list({ type: q.type, status: 'open' });
+  const open = store.list({ type: q.type, status: 'open', chatId });
   let items = open;
   if (q.range) {
     const from = startOfDay(q.range.from).getTime();
@@ -192,8 +196,8 @@ function runQuery(store, q, now) {
   return { reply: lines.join('\n'), results: items };
 }
 
-function debtsReply(store, q, now) {
-  let debts = store.list({ type: 'debt', status: 'open' });
+function debtsReply(store, q, now, chatId = 'web') {
+  let debts = store.list({ type: 'debt', status: 'open', chatId });
   if (q.direction) debts = debts.filter((d) => (d.direction === 'out') === (q.direction === 'out'));
 
   const inD = debts.filter((d) => d.direction !== 'out').sort(byDue);
@@ -234,8 +238,8 @@ function debtsReply(store, q, now) {
   return { reply: lines.join('\n'), results: debts };
 }
 
-function digest(store, range, now) {
-  const open = store.list({ status: 'open' });
+function digest(store, range, now, chatId = 'web') {
+  const open = store.list({ status: 'open', chatId });
   const today = startOfDay(now).getTime();
 
   if (!range) {

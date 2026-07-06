@@ -112,9 +112,14 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Вторая память: http://localhost:${PORT}`);
-});
+// WEB_DISABLED=1: работает только бот со своей обвязкой, HTTP не поднимается
+if (process.env.WEB_DISABLED === '1') {
+  console.log('Веб-интерфейс выключен (WEB_DISABLED=1), работает только бот');
+} else {
+  server.listen(PORT, () => {
+    console.log(`Вторая память: http://localhost:${PORT}`);
+  });
+}
 
 const bot = startTelegramBot(store, process.env.TELEGRAM_BOT_TOKEN);
 startFactWorker(store);
