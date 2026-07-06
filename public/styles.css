@@ -137,6 +137,11 @@ h1::after {
   padding: 2px 0 2px 14px;
 }
 
+.message--assistant {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .message--user { justify-content: flex-end; }
 
 .message--user p {
@@ -428,45 +433,60 @@ h1::after {
 }
 
 .panel h2 {
-  margin: 0 0 4px;
+  margin: 0 0 12px;
   font-size: 1.1rem;
 }
 
-.panel-section + .panel-section {
-  border-top: 1px solid var(--border-soft);
-  margin-top: 12px;
-}
-
-.panel h3 {
-  margin: 12px 0 6px;
-  font-size: 0.95rem;
-}
-
-.panel .count {
-  display: inline-block;
-  min-width: 22px;
-  padding: 1px 8px;
-  margin-left: 4px;
+.meter-track {
+  height: 10px;
+  background: var(--pill-bg);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--pill-bg);
-  color: var(--ink);
-  font-size: 0.8rem;
-  text-align: center;
+  overflow: hidden;
 }
 
-.panel ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 300ms ease;
 }
 
-.panel li {
-  padding: 4px 0;
+.status-line {
+  margin: 12px 0 4px;
   font-size: 0.92rem;
 }
 
-.panel .empty-state { color: var(--text-muted); }
+.counters-line {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Мини-шкала «опора на память» в ответах ИИ */
+.memory-reliance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0 17px; /* в линию с текстом ассистента (линия 3px + отступ 14px) */
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.memory-reliance .bar {
+  display: inline-block;
+  width: 90px;
+  height: 6px;
+  background: var(--pill-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.memory-reliance .bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
 
 /* ---- Мобильная адаптация ---- */
 

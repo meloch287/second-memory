@@ -7,6 +7,7 @@ import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
 import { handleMessage } from './brain.mjs';
+import { memoryStats } from './ragmeter.mjs';
 import { startTelegramBot } from './telegram.mjs';
 import { startFactWorker } from './worker.mjs';
 
@@ -69,6 +70,10 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: 'Поле text должно быть строкой' });
       }
       return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000)));
+    }
+
+    if (url.pathname === '/api/memory-stats' && req.method === 'GET') {
+      return json(res, 200, memoryStats(store));
     }
 
     if (url.pathname === '/api/history/clear' && req.method === 'POST') {

@@ -94,25 +94,16 @@
     <aside class="panel" aria-labelledby="memory-heading">
       <h2 id="memory-heading" tabindex="-1">Память</h2>
 
-      <section class="panel-section" aria-labelledby="h-debt">
-        <h3 id="h-debt">Долги <span class="count">0</span></h3>
-        <ul id="list-debt"><li class="empty-state">Пока нет долгов</li></ul>
-      </section>
+      <div id="memory-meter" class="meter" role="meter"
+           aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"
+           aria-valuetext="0 процентов, пусто" aria-labelledby="memory-heading">
+        <div class="meter-track">
+          <div class="meter-fill" id="meter-fill" style="width:0%"></div>
+        </div>
+      </div>
 
-      <section class="panel-section" aria-labelledby="h-meeting">
-        <h3 id="h-meeting">Встречи <span class="count">0</span></h3>
-        <ul id="list-meeting"><li class="empty-state">Пока нет встреч</li></ul>
-      </section>
-
-      <section class="panel-section" aria-labelledby="h-task">
-        <h3 id="h-task">Задачи <span class="count">0</span></h3>
-        <ul id="list-task"><li class="empty-state">Пока нет задач</li></ul>
-      </section>
-
-      <section class="panel-section" aria-labelledby="h-note">
-        <h3 id="h-note">Заметки <span class="count">0</span></h3>
-        <ul id="list-note"><li class="empty-state">Пока нет заметок</li></ul>
-      </section>
+      <p id="memory-status" class="status-line">Память пуста. Расскажите о делах - я начну запоминать.</p>
+      <p id="memory-counters" class="counters-line">Записей: 0 · Фактов: 0 · Дней: 0</p>
     </aside>
   </div>
 

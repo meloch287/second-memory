@@ -16,9 +16,7 @@ const recCanvas = document.getElementById('rec-waveform');
 const recCancel = document.getElementById('rec-cancel');
 const recSend = document.getElementById('rec-send');
 const micErrorEl = document.getElementById('mic-error');
-const aside = document.querySelector('.panel');
 
-const RUB = new Intl.NumberFormat('ru-RU');
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MAX_REC_SEC = 120;
 
@@ -87,11 +85,11 @@ async function deliver(text) {
     if (data.cleared) {
       clearChatLog();
     } else if (data.ai) {
-      appendSummaryMessage(data.reply || '…');
+      appendSummaryMessage(data.reply || '…', data.rag);
     } else {
       appendMessage('assistant', data.reply || '…');
     }
-    setTimeout(refreshMemory, 50);
+    setTimeout(refreshStats, 50);
   } catch {
     clearTimeout(typingTimer);
     statusEl.textContent = '';
@@ -136,9 +134,28 @@ document.querySelectorAll('.chip[data-msg]').forEach((chip) => {
   chip.addEventListener('click', () => sendCanned(chip.dataset.msg));
 });
 
+// Мини-шкала «опора на память»: значение несёт текст, полоска декоративна.
+function relianceFooter(rag) {
+  const footer = document.createElement('div');
+  footer.className = 'memory-reliance';
+  const bar = document.createElement('span');
+  bar.className = 'bar';
+  bar.setAttribute('aria-hidden', 'true');
+  const fill = document.createElement('span');
+  fill.className = 'bar-fill';
+  fill.style.width = Math.max(0, Math.min(100, rag.score)) + '%';
+  bar.appendChild(fill);
+  const label = document.createElement('span');
+  label.className = 'reliance-text';
+  label.textContent = `Опора на память: ${rag.score}%${rag.label ? ' - ' + rag.label : ''}`;
+  footer.append(bar, label);
+  return footer;
+}
+
 // Длинные ответы ИИ — настоящими абзацами (навигация скринридера по <p>),
 // без автозачитывания всего текста: короткий анонс через #chat-status.
-function appendSummaryMessage(text) {
+// Всё сообщение собирается до вставки в лог — одно объявление, не два.
+function appendSummaryMessage(text, rag) {
   const wrap = document.createElement('div');
   wrap.className = 'message message--assistant';
   wrap.setAttribute('aria-live', 'off');
@@ -154,6 +171,7 @@ function appendSummaryMessage(text) {
     body.append(p);
   });
   wrap.append(body);
+  if (rag && typeof rag.score === 'number') wrap.append(relianceFooter(rag));
   addToLog(wrap);
   announce('Получен ответ ИИ');
 }
@@ -244,81 +262,30 @@ document.addEventListener('pointerdown', (e) => {
   closeMenu(!focusable);
 });
 
-/* ---- Панель «Память» ---- */
+/* ---- Панель «Память»: шкала наполненности для RAG ---- */
 
-const CATEGORIES = [
-  ['debt', 'Долги', 'Пока нет долгов'],
-  ['meeting', 'Встречи', 'Пока нет встреч'],
-  ['task', 'Задачи', 'Пока нет задач'],
-  ['note', 'Заметки', 'Пока нет заметок'],
-];
+const METER_LABELS = {
+  empty: 'пусто',
+  low: 'мало данных',
+  ok: 'немного данных',
+  good: 'достаточно данных',
+};
 
-function fmtDue(e) {
-  const d = new Date(e.due);
-  const pad = (n) => String(n).padStart(2, '0');
-  let s = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
-  if (e.hasTime) s += ` ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return s;
-}
-
-function itemLabel(e) {
-  const parts = [`№${e.id}`];
-  if (e.type === 'debt') {
-    parts.push(e.counterparty || 'Без имени');
-    if (e.amount != null) parts.push('- ' + RUB.format(e.amount) + ' ₽');
-    if (e.direction === 'out') parts.push('(вы должны)');
-  } else {
-    parts.push(e.title || e.text || '');
-  }
-  if (e.due) parts.push('· ' + fmtDue(e));
-  return parts.join(' ');
-}
-
-async function refreshMemory() {
-  let entries;
+// Обновление тихое: метр вне live-регионов, только атрибуты и ширина.
+async function refreshStats() {
+  let s;
   try {
-    const res = await fetch('/api/entries?status=open');
-    ({ entries } = await res.json());
+    s = await fetch('/api/memory-stats').then((r) => r.json());
   } catch {
     return; // панель просто не обновится, чат продолжает работать
   }
-
-  const hadFocusInAside = aside.contains(document.activeElement);
-
-  for (const [type, label, emptyText] of CATEGORIES) {
-    const items = entries.filter((e) => e.type === type);
-    const heading = document.getElementById('h-' + type);
-    heading.textContent = label + ' ';
-    const badge = document.createElement('span');
-    badge.className = 'count';
-    badge.textContent = items.length;
-    heading.appendChild(badge);
-
-    const ul = document.getElementById('list-' + type);
-    ul.textContent = '';
-    if (!items.length) {
-      const li = document.createElement('li');
-      li.className = 'empty-state';
-      li.textContent = emptyText;
-      ul.appendChild(li);
-    } else {
-      for (const e of items.slice(0, 8)) {
-        const li = document.createElement('li');
-        li.textContent = itemLabel(e);
-        ul.appendChild(li);
-      }
-      if (items.length > 8) {
-        const li = document.createElement('li');
-        li.className = 'empty-state';
-        li.textContent = `…и ещё ${items.length - 8}`;
-        ul.appendChild(li);
-      }
-    }
-  }
-
-  if (hadFocusInAside && !aside.contains(document.activeElement)) {
-    document.getElementById('memory-heading').focus();
-  }
+  const meter = document.getElementById('memory-meter');
+  meter.setAttribute('aria-valuenow', String(s.score));
+  meter.setAttribute('aria-valuetext', `${s.score} процентов, ${METER_LABELS[s.level] || ''}`.trim());
+  document.getElementById('meter-fill').style.width = s.score + '%';
+  document.getElementById('memory-status').textContent = s.label;
+  document.getElementById('memory-counters').textContent =
+    `Записей: ${s.counts.entries} · Фактов: ${s.counts.facts} · Дней: ${s.counts.days}`;
 }
 
 /* ---- Запись голосового сообщения ---- */
@@ -667,4 +634,4 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.Medi
   micBtn.hidden = false;
 }
 
-refreshMemory();
+refreshStats();

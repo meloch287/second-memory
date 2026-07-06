@@ -4,6 +4,7 @@
 import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
 import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
+import { memoryStats, questionCoverage } from './ragmeter.mjs';
 
 const RUB = new Intl.NumberFormat('ru-RU');
 const money = (v) => `${RUB.format(v)} ₽`;
@@ -84,7 +85,8 @@ async function route(store, text, now) {
         };
       }
       try {
-        return { reply: await aiSummary(store, now), ai: true };
+        const stats = memoryStats(store);
+        return { reply: await aiSummary(store, now), ai: true, rag: { score: stats.score, label: stats.label } };
       } catch (e) {
         return { reply: `Не получилось связаться с ИИ (${e.message}). Попробуйте ещё раз.` };
       }
@@ -97,7 +99,8 @@ async function route(store, text, now) {
       // базы (иначе «у кого из должников горит срок?» станет мусорным долгом).
       if (aiEnabled() && /\?\s*$/.test(String(text).trim())) {
         try {
-          return { reply: await aiAnswer(store, text, now), ai: true };
+          const rag = questionCoverage(store, text);
+          return { reply: await aiAnswer(store, text, now), ai: true, rag };
         } catch {
           // ИИ недоступен — обрабатываем по правилам ниже
         }
