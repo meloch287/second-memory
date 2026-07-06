@@ -1,12 +1,12 @@
 // Файловое JSON-хранилище с атомарной записью (tmp + rename).
 
-import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [] };
+    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {} };
     this.load();
   }
 
@@ -19,6 +19,8 @@ export class Store {
         if (!parsed.users || typeof parsed.users !== 'object') parsed.users = {};
         if (!Array.isArray(parsed.raw)) parsed.raw = [];
         if (!Array.isArray(parsed.facts)) parsed.facts = [];
+        if (!parsed.personas || typeof parsed.personas !== 'object') parsed.personas = {};
+        if (!parsed.meta || typeof parsed.meta !== 'object') parsed.meta = {};
         this.data = parsed;
       }
     } catch {
@@ -50,9 +52,14 @@ export class Store {
     return this.data.entries.find((e) => e.id === id) || null;
   }
 
-  list({ type, status } = {}) {
+  list({ type, status, chatId } = {}) {
     return this.data.entries
-      .filter((e) => (!type || e.type === type) && (!status || e.status === status))
+      .filter(
+        (e) =>
+          (!type || e.type === type) &&
+          (!status || e.status === status) &&
+          (!chatId || (e.chatId || 'web') === chatId)
+      )
       .slice()
       .sort((a, b) => {
         if (a.due && b.due) return Date.parse(a.due) - Date.parse(b.due) || a.id - b.id;
@@ -148,6 +155,68 @@ export class Store {
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
     this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
     this.save();
+  }
+
+  // Досье людей (обновляет ночная консолидация).
+  getPersonas(chatId) {
+    return this.data.personas[chatId] || {};
+  }
+
+  setPersonas(chatId, map) {
+    this.data.personas[chatId] = map;
+    this.save();
+  }
+
+  // Замена старых фактов чата консолидированными (свежие остаются как есть).
+  replaceOldFacts(chatId, olderThanMs, newFacts) {
+    const cutoff = Date.now() - olderThanMs;
+    const fresh = this.data.facts.filter((f) => f.chatId !== chatId || Date.parse(f.ts) >= cutoff);
+    const consolidated = newFacts.map((f) => ({
+      id: ++this.data.seq,
+      chatId,
+      ts: new Date().toISOString(),
+      people: [],
+      tags: [],
+      ...f,
+    }));
+    this.data.facts = [...consolidated, ...fresh];
+    this.save();
+  }
+
+  hasEmbeddings(chatId) {
+    return this.data.facts.some((f) => (!chatId || f.chatId === chatId) && Array.isArray(f.embedding));
+  }
+
+  // Косинусная близость: вектора нормированы у OpenAI-эмбеддингов,
+  // поэтому достаточно скалярного произведения.
+  factsByVector(chatId, queryVector, limit = 25) {
+    const scored = [];
+    for (const f of this.data.facts) {
+      if (chatId && f.chatId !== chatId) continue;
+      if (!Array.isArray(f.embedding)) continue;
+      let dot = 0;
+      const n = Math.min(queryVector.length, f.embedding.length);
+      for (let i = 0; i < n; i++) dot += queryVector[i] * f.embedding[i];
+      scored.push({ f, dot });
+    }
+    return scored
+      .sort((a, b) => b.dot - a.dot)
+      .slice(0, limit)
+      .filter((x) => x.dot > 0.2)
+      .map((x) => x.f);
+  }
+
+  // Резервная копия файла данных, храним последние 14.
+  backup() {
+    if (!existsSync(this.file)) return null;
+    const dir = join(dirname(this.file), 'backups');
+    mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const dest = join(dir, `memory-${stamp}.json`);
+    copyFileSync(this.file, dest);
+    const old = readdirSync(dir).filter((f) => f.startsWith('memory-')).sort();
+    for (const f of old.slice(0, Math.max(0, old.length - 14))) rmSync(join(dir, f), { force: true });
+    return dest;
   }
 
   // Простой keyword-RAG: свежие факты + совпадения по словам запроса.

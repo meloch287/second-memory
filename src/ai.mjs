@@ -236,7 +236,10 @@ function friendSystem(user) {
   return (
     `Ты близкий друг и живой личный дневник одного человека. ${botName} ${name} ${rhythm} ${goal} ` +
     'Общайся на «ты», тепло, неформально, с лёгким юмором, как настоящий друг в переписке. ' +
-    'Реагируй на эмоции, сочувствуй, радуйся, иногда задавай один короткий встречный вопрос. ' +
+    'Реагируй по смыслу сообщения: не преувеличивай эмоции, не поздравляй и не восторгайся без причины. ' +
+    'Никаких клише вроде «дай пять». Если не понял, о чём речь, коротко переспроси вместо бурной реакции. ' +
+    'Если человек удивился твоему ответу или поправил тебя, признай это просто и по-человечески, без оправданий на абзац. ' +
+    'Реагируй на эмоции, сочувствуй, иногда задавай один короткий встречный вопрос. ' +
     'Никогда не говори, что ты бот, ИИ или ассистент. Не предлагай «чем могу помочь». ' +
     'Если человек рассказал про дело, долг, встречу или план, подтверди одной фразой, что запомнил. ' +
     'Если спрашивает про прошлое, отвечай по фактам из памяти. Если в памяти пусто, честно скажи по-дружески. ' +
@@ -245,14 +248,17 @@ function friendSystem(user) {
   );
 }
 
-function friendContext(store, chatId, query, now) {
+function friendContext(store, chatId, query, now, smartFacts = null) {
   const user = store.getUser(chatId);
-  const facts = store.factsFor(chatId, query, 25);
-  const open = store.list({ status: 'open' }).slice(0, 30);
+  const facts = smartFacts || store.factsFor(chatId, query, 25);
+  const open = store.list({ status: 'open', chatId }).slice(0, 30);
   const history = store.recentHistory(12, chatId);
+  const personas = store.getPersonas(chatId);
+  const personaLines = Object.entries(personas).map(([name, note]) => `- ${name}: ${note}`);
   return [
     `Сейчас: ${fmtLocal(now.toISOString(), true)}.`,
     '',
+    ...(personaLines.length ? ['ЛЮДИ В ЕГО ЖИЗНИ (досье):', ...personaLines, ''] : []),
     'ПАМЯТЬ (факты из прошлых разговоров):',
     ...(facts.length
       ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [люди: ${f.people.join(', ')}]` : ''} (${fmtLocal(f.ts, false)})`)
@@ -268,10 +274,11 @@ function friendContext(store, chatId, query, now) {
 
 export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
+  const smartFacts = await smartRecall(store, chatId, text);
   return ask(
     [
       { role: 'system', content: friendSystem(user) },
-      { role: 'user', content: friendContext(store, chatId, text, now) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
+      { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
     ],
     { maxTokens: 1200, onDelta, timeoutMs: 45000, retryDelays: [0, 8000] }
   );
@@ -282,7 +289,7 @@ export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = 
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const todayRaw = store.rawForDay(chatId, dayStart, dayStart + 86400000);
   const weekFacts = store.factsFor(chatId, '', 40);
-  const open = store.list({ status: 'open' }).slice(0, 30);
+  const open = store.list({ status: 'open', chatId }).slice(0, 30);
   const context = [
     `Сейчас: ${fmtLocal(now.toISOString(), true)}.`,
     '',
@@ -325,8 +332,175 @@ export async function aiFollowup(store, chatId, kind, now = new Date(), onDelta 
   );
 }
 
-/* ---------- Worker: сырые записи -> факты (БД №2) ---------- */
+/* ---------- Векторная память (эмбеддинги) ---------- */
 
+const EMBED_MODEL = () => process.env.AI_EMBED_MODEL || 'openai/text-embedding-3-small';
+export const EMBED_DIMS = 256;
+
+// Эмбеддинги через текстового провайдера (polza). Округляем до 5 знаков,
+// чтобы JSON-хранилище не распухало.
+export async function aiEmbed(texts) {
+  const cfg = TEXT();
+  const res = await fetch(`${cfg.url}/embeddings`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: EMBED_MODEL(), input: texts, dimensions: EMBED_DIMS }),
+  });
+  if (!res.ok) throw new Error(`Embed HTTP ${res.status}`);
+  const data = await res.json();
+  return data.data
+    .sort((a, b) => a.index - b.index)
+    .map((d) => d.embedding.map((x) => Math.round(x * 1e5) / 1e5));
+}
+
+// Семантический поиск фактов под вопрос: эмбеддинг запроса + косинус
+// в хранилище, keyword-поиск как дополнение и фолбэк.
+export async function smartRecall(store, chatId, query, limit = 25) {
+  const keyword = store.factsFor(chatId, query, limit);
+  try {
+    if (!store.hasEmbeddings(chatId)) return keyword;
+    const [qv] = await aiEmbed([String(query).slice(0, 500)]);
+    const byVector = store.factsByVector(chatId, qv, limit);
+    const seen = new Set();
+    const out = [];
+    for (const f of [...byVector, ...keyword]) {
+      if (seen.has(f.id)) continue;
+      seen.add(f.id);
+      out.push(f);
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return keyword; // эмбеддинги недоступны - обычный keyword-поиск
+  }
+}
+
+/* ---------- Ночная консолидация памяти ---------- */
+
+// Сжимает старые факты: дубли склеиваются, отработанное уходит,
+// по людям собираются короткие досье.
+export async function aiConsolidate(oldFacts, personasNow = {}) {
+  const list = oldFacts.map((f, i) => `${i + 1}. ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${(f.ts || '').slice(0, 10)})`).join('\n');
+  const personaList = Object.entries(personasNow).map(([n, t]) => `- ${n}: ${t}`).join('\n') || '- пока нет -';
+  const text = await chatCompletion(
+    WORKER(),
+    [
+      {
+        role: 'user',
+        content:
+          'Ты ведёшь долгосрочную память личного дневника. Ниже старые факты и текущие досье людей. ' +
+          'Сожми факты: склей дубли, убери отработанное и неважное, сохрани всё значимое (люди, суммы, договорённости, эмоции, даты словами). ' +
+          'Обнови досье людей (1-2 предложения на человека: кто это, характер отношений, важное). ' +
+          'Верни ТОЛЬКО JSON: {"facts":[{"text":"...","people":["Имя"],"tags":["тема"]}],"personas":{"Имя":"досье"}}.\n\n' +
+          'СТАРЫЕ ФАКТЫ:\n' + list + '\n\nТЕКУЩИЕ ДОСЬЕ:\n' + personaList,
+      },
+    ],
+    { maxTokens: 2000 }
+  );
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('consolidate: не JSON');
+  const parsed = JSON.parse(text.slice(start, end + 1));
+  const facts = Array.isArray(parsed.facts)
+    ? parsed.facts
+        .filter((f) => f && typeof f.text === 'string' && f.text.trim())
+        .map((f) => ({
+          text: f.text.trim().slice(0, 400),
+          people: Array.isArray(f.people) ? f.people.map(String).slice(0, 6) : [],
+          tags: Array.isArray(f.tags) ? f.tags.map(String).slice(0, 6) : [],
+        }))
+    : [];
+  const personas = parsed.personas && typeof parsed.personas === 'object' ? parsed.personas : {};
+  const cleanPersonas = {};
+  for (const [name, note] of Object.entries(personas)) {
+    if (typeof note === 'string' && note.trim()) cleanPersonas[String(name).slice(0, 60)] = note.trim().slice(0, 300);
+  }
+  return { facts, personas: cleanPersonas };
+}
+
+/* ---------- Утреннее напоминание ---------- */
+
+export async function aiMorningPing(user, eventLines, now = new Date()) {
+  return ask(
+    [
+      { role: 'system', content: friendSystem(user) },
+      {
+        role: 'user',
+        content:
+          `Сейчас ${fmtLocal(now.toISOString(), true)}. Утро. Вот его дела на сегодня и просроченное:\n` +
+          eventLines.join('\n') +
+          '\n\nНапиши одно короткое дружеское утреннее сообщение: поздоровайся и напомни про дела своими словами. Без списков, 2-3 предложения.',
+      },
+    ],
+    { maxTokens: 400, timeoutMs: 45000, retryDelays: [0, 8000] }
+  );
+}
+
+/* ---------- Озвучка ответа (TTS) ---------- */
+
+// polza возвращает JSON {"audio": base64}; на всякий случай понимаем и бинарь.
+export async function aiTts(text) {
+  const cfg = AUDIO();
+  const res = await fetch(`${cfg.url}/audio/speech`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: process.env.AI_TTS_MODEL || 'openai/gpt-4o-mini-tts',
+      input: String(text).slice(0, 1500),
+      voice: process.env.AI_TTS_VOICE || 'alloy',
+      response_format: 'opus',
+    }),
+  });
+  if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('json')) {
+    const data = await res.json();
+    if (!data.audio) throw new Error('TTS: нет аудио в ответе');
+    return Buffer.from(data.audio, 'base64');
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/* ---------- Документы ---------- */
+
+// PDF уходит мультимодальной модели файлом; текстовые - обычным текстом.
+export async function aiSummarizeDoc(base64, mime, filename) {
+  return chatCompletion(
+    AUDIO(),
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Перескажи по-русски суть документа в 3-6 предложениях: о чём он, ключевые суммы, сроки, обязательства, имена. Просто и без разметки.',
+          },
+          { type: 'file', file: { filename: filename || 'document.pdf', file_data: `data:${mime};base64,${base64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 700, timeoutMs: 60000, retryDelays: [0, 8000] }
+  );
+}
+
+export async function aiSummarizeText(text, filename) {
+  return ask(
+    [
+      {
+        role: 'user',
+        content:
+          `Документ «${filename || 'без имени'}». Перескажи по-русски суть в 3-6 предложениях: о чём, ключевые суммы, сроки, обязательства, имена. Просто и без разметки.\n\n` +
+          String(text).slice(0, 12000),
+      },
+    ],
+    { maxTokens: 700, timeoutMs: 45000, retryDelays: [0, 8000] }
+  );
+}
+
+/* ---------- Worker: сырые записи -> факты и записи (БД №2) ---------- */
+
+// Из потока дневника извлекаются и факты для памяти, и структурные
+// записи (долги, задачи, встречи), которые мог упустить быстрый парсер.
 export async function aiExtractFacts(rawItems) {
   const list = rawItems.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
   const text = await chatCompletion(
@@ -335,32 +509,70 @@ export async function aiExtractFacts(rawItems) {
       {
         role: 'user',
         content:
-          'Преврати сырые дневниковые записи в короткие структурированные факты для базы памяти. ' +
-          'Каждый факт - одно законченное утверждение с деталями (кто, что, когда, эмоция, если есть). ' +
-          'Верни ТОЛЬКО JSON-массив без пояснений, формат: ' +
-          '[{"text":"...","people":["Имя"],"tags":["тема"]}]. Пустой массив [], если фактов нет.\n\nЗАПИСИ:\n' +
+          'Преврати сырые дневниковые записи в память. Верни ТОЛЬКО JSON-объект:\n' +
+          '{"facts":[{"text":"короткий факт: кто, что, когда, эмоция","people":["Имя"],"tags":["тема"]}],' +
+          '"entries":[{"type":"debt|task|meeting","title":"...","counterparty":"Имя или null","amount":числоИлиNull,' +
+          '"direction":"in|out","due":"YYYY-MM-DD или null"}]}\n' +
+          'В entries клади ТОЛЬКО явные дела: долг с суммой, задачу с действием, встречу. Болтовню и эмоции - только в facts. ' +
+          'Пустые массивы, если ничего нет.\n\nЗАПИСИ:\n' +
           list,
       },
     ],
     { maxTokens: 1600 }
   );
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  const empty = { facts: [], entries: [] };
+  if (start < 0 || end <= start) {
+    // совместимость: модель могла вернуть голый массив фактов
+    const as = text.indexOf('[');
+    const ae = text.lastIndexOf(']');
+    if (as < 0 || ae <= as) return empty;
+    try {
+      const arr = JSON.parse(text.slice(as, ae + 1));
+      return { facts: cleanFacts(arr), entries: [] };
+    } catch {
+      return empty;
+    }
+  }
   try {
-    const start = text.indexOf('[');
-    const end = text.lastIndexOf(']');
-    if (start < 0 || end <= start) return [];
     const parsed = JSON.parse(text.slice(start, end + 1));
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((f) => f && typeof f.text === 'string' && f.text.trim())
-      .map((f) => ({
-        text: f.text.trim().slice(0, 400),
-        people: Array.isArray(f.people) ? f.people.map(String).slice(0, 6) : [],
-        tags: Array.isArray(f.tags) ? f.tags.map(String).slice(0, 6) : [],
-      }));
+    return { facts: cleanFacts(parsed.facts), entries: cleanEntries(parsed.entries) };
   } catch {
-    return [];
+    return empty;
   }
 }
+
+function cleanFacts(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((f) => f && typeof f.text === 'string' && f.text.trim())
+    .map((f) => ({
+      text: f.text.trim().slice(0, 400),
+      people: Array.isArray(f.people) ? f.people.map(String).slice(0, 6) : [],
+      tags: Array.isArray(f.tags) ? f.tags.map(String).slice(0, 6) : [],
+    }));
+}
+
+function cleanEntries(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const e of arr) {
+    if (!e || !['debt', 'task', 'meeting'].includes(e.type)) continue;
+    const due = typeof e.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.due) ? new Date(e.due + 'T00:00:00').toISOString() : null;
+    out.push({
+      type: e.type,
+      title: String(e.title || '').slice(0, 120) || (e.type === 'debt' ? 'Долг' : e.type === 'task' ? 'Задача' : 'Встреча'),
+      counterparty: e.counterparty ? String(e.counterparty).slice(0, 60) : null,
+      amount: typeof e.amount === 'number' && isFinite(e.amount) ? e.amount : null,
+      direction: e.direction === 'out' ? 'out' : 'in',
+      due,
+      hasTime: false,
+    });
+  }
+  return out;
+}
+
 
 /* ---------- Медиа (мультимодальный провайдер) ---------- */
 

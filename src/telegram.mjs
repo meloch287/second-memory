@@ -2,11 +2,26 @@
 // Всё остальное - живой разговор: сообщения падают в сырую базу,
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 
+import { spawnSync } from 'node:child_process';
+import { writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { handleMessage, captureEntry } from './brain.mjs';
 import {
   aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup,
-  aiTranscribe, aiDescribeImage, audioFormatFromMime,
+  aiTranscribe, aiDescribeImage, audioFormatFromMime, aiTts,
+  aiSummarizeDoc, aiSummarizeText,
 } from './ai.mjs';
+import { extractDocxText } from './docx.mjs';
+
+// ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
+const hasFfmpeg = (() => {
+  try {
+    return spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+})();
 
 const COMMANDS = [
   { command: 'summary', description: 'Итоги дня' },
@@ -94,11 +109,21 @@ export function startTelegramBot(store, token, log = console) {
 
   // «Печатает…» держится, пока готовим ответ: Telegram гасит статус через
   // ~5 секунд, поэтому шлём его циклом до самой отправки сообщения.
-  function typingLoop(chat_id) {
-    const ping = () => api('sendChatAction', { chat_id, action: 'typing' }).catch(() => {});
+  function typingLoop(chat_id, action = 'typing') {
+    const ping = () => api('sendChatAction', { chat_id, action }).catch(() => {});
     ping();
     const interval = setInterval(ping, 4500);
     return () => clearInterval(interval);
+  }
+
+  // Отправка голосового: multipart, JSON тут не работает.
+  async function sendVoice(chat_id, oggBuffer, caption) {
+    const form = new FormData();
+    form.append('chat_id', String(chat_id));
+    form.append('voice', new Blob([oggBuffer], { type: 'audio/ogg' }), 'reply.ogg');
+    if (caption) form.append('caption', String(caption).slice(0, 1000));
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: form });
+    return res.json();
   }
 
   // Обёртка: держим «печатает…» на время асинхронной работы.
@@ -137,16 +162,24 @@ export function startTelegramBot(store, token, log = console) {
       }
     };
 
+    // Все запросы драфта идут строго по цепочке: параллельные апдейты
+    // приходили в Telegram вразнобой, и кадр драфта мог прилететь ПОСЛЕ
+    // финального sendMessage - на телефоне зависал пузырь-призрак поверх
+    // ленты. finish() ждёт всю цепочку перед отправкой сообщения.
+    let chain = Promise.resolve();
+
     const push = (text) => {
-      if (!supported || closed) return Promise.resolve();
+      if (!supported || closed) return chain;
       if (text) stopTyping();
       lastText = text;
       lastSentAt = Date.now();
-      return api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text })
+      chain = chain
+        .then(() => api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text }))
         .then((r) => {
-          if (!r.ok) supported = false; // старый сервер/клиент - тихо выключаемся
+          if (r && !r.ok) supported = false; // старый сервер/клиент - тихо выключаемся
         })
         .catch(() => {});
+      return chain;
     };
 
     push(''); // сразу «Thinking…», пока модель размышляет
@@ -182,10 +215,11 @@ export function startTelegramBot(store, token, log = console) {
       if (timer) clearTimeout(timer);
       clearInterval(keepalive);
       const full = String(rawText).slice(0, 4000);
-      // Последний кадр драфта = финальный текст: пузырь уже нужной высоты,
-      // и замена драфта настоящим сообщением проходит без скачка.
-      if (supported && lastText !== full) await push(full);
+      // Последний кадр драфта = финальный текст, затем ЖДЁМ доставку всех
+      // кадров и только потом шлём настоящее сообщение - никакой гонки.
+      if (supported && lastText !== full) push(full);
       closed = true;
+      await chain;
       stopTyping();
       return send(chat_id, esc(full), extra);
     };
@@ -333,7 +367,7 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Обычный разговор ---- */
 
-  async function friendFlow(chatId, text) {
+  async function friendFlow(chatId, text, { asVoice = false } = {}) {
     store.addRaw(chatId, text);
     captureEntry(store, text, new Date(), chatId); // долги, встречи и задачи тихо ложатся в структурированную базу
 
@@ -342,6 +376,30 @@ export function startTelegramBot(store, token, log = console) {
       const out = await handleMessage(store, text, new Date(), String(chatId));
       const reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
       return send(chatId, esc(reply));
+    }
+
+    // На голосовое отвечаем голосом: вместо драфта - статус «записывает
+    // голосовое», ответ озвучивается TTS, текст уходит подписью.
+    if (asVoice) {
+      const stopAction = typingLoop(chatId, 'record_voice');
+      try {
+        const reply = withWake(chatId, await aiFriendReply(store, chatId, text));
+        store.pushHistory('user', text, String(chatId));
+        store.pushHistory('assistant', reply, String(chatId));
+        try {
+          const ogg = await aiTts(reply);
+          const sent = await sendVoice(chatId, ogg, reply);
+          if (sent.ok) return sent;
+        } catch (e) {
+          log.error('[telegram] tts', e.message); // голос не вышел - ответим текстом
+        }
+        return send(chatId, esc(reply));
+      } catch (e) {
+        log.error('[telegram] friend-voice', e.message);
+        return send(chatId, esc(sleepyText(chatId)));
+      } finally {
+        stopAction();
+      }
     }
 
     const draft = createDraft(chatId);
@@ -380,7 +438,7 @@ export function startTelegramBot(store, token, log = console) {
     }
     if (user?.step) return onboardingStep(chatId, user, transcript);
     await send(chatId, `🎙 «${esc(transcript)}»`);
-    return friendFlow(String(chatId), transcript);
+    return friendFlow(String(chatId), transcript, { asVoice: true });
   }
 
   // Картинка (фото, статичный стикер, превью гифки): описываем и запоминаем.
@@ -427,6 +485,69 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, 'Гифку получил, но разглядеть не смог 😅 Что там было?');
     }
 
+    if (msg.video_note) {
+      if (!audioEnabled()) return send(chatId, 'Кружки пока не разбираю: нет ключа для расшифровки.');
+      if (!hasFfmpeg) return send(chatId, 'Кружок получил, но без ffmpeg на сервере не разберу его звук. Скажи голосовым или текстом?');
+      if ((msg.video_note.duration || 0) > 180) return send(chatId, 'Ого, длинный кружок. Давай покороче?');
+      const transcript = await withTyping(chatId, async () => {
+        const b64 = await downloadBase64(msg.video_note.file_id);
+        const stamp = Date.now();
+        const inFile = join(tmpdir(), `vn-${stamp}.mp4`);
+        const outFile = join(tmpdir(), `vn-${stamp}.ogg`);
+        try {
+          writeFileSync(inFile, Buffer.from(b64, 'base64'));
+          const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-vn', '-acodec', 'libopus', '-b:a', '32k', outFile], {
+            stdio: 'ignore',
+            timeout: 30000,
+          });
+          if (r.status !== 0) throw new Error('ffmpeg failed');
+          return aiTranscribe(readFileSync(outFile).toString('base64'), 'ogg');
+        } finally {
+          rmSync(inFile, { force: true });
+          rmSync(outFile, { force: true });
+        }
+      }).catch((e) => {
+        log.error('[telegram] video_note', e.message);
+        return null;
+      });
+      if (!transcript) return send(chatId, 'Кружок посмотрел, но слов не разобрал. Повтори?');
+      if (user?.step) return onboardingStep(chatId, user, transcript);
+      await send(chatId, `🎥 «${esc(transcript)}»`);
+      return friendFlow(String(chatId), transcript, { asVoice: true });
+    }
+
+    if (msg.document) {
+      const doc = msg.document;
+      const mime = String(doc.mime_type || '');
+      const name = doc.file_name || 'документ';
+      if ((doc.file_size || 0) > 15 * 1024 * 1024) {
+        return send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли что-нибудь полегче?');
+      }
+      if (!mime.startsWith('audio/')) {
+        if (!audioEnabled()) return send(chatId, 'Документы пока не читаю: нет ключа ИИ.');
+        const summary = await withTyping(chatId, async () => {
+          const b64 = await downloadBase64(doc.file_id);
+          if (mime === 'application/pdf') return aiSummarizeDoc(b64, mime, name);
+          if (name.toLowerCase().endsWith('.docx')) {
+            const text = extractDocxText(Buffer.from(b64, 'base64'));
+            if (!text) throw new Error('docx: пустой текст');
+            return aiSummarizeText(text, name);
+          }
+          if (mime.startsWith('text/')) {
+            return aiSummarizeText(Buffer.from(b64, 'base64').toString('utf8'), name);
+          }
+          return null;
+        }).catch((e) => {
+          log.error('[telegram] document', e.message);
+          return null;
+        });
+        if (summary === null) {
+          return send(chatId, `«${esc(name)}» - такой формат пока не читаю. Понимаю PDF, DOCX и текстовые файлы.`);
+        }
+        return friendFlow(String(chatId), `[Прислал документ «${name}»] Суть: ${summary}`);
+      }
+    }
+
     if (msg.sticker) {
       const s = msg.sticker;
       if (!s.is_animated && !s.is_video) {
@@ -437,8 +558,24 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (typeof msg.text !== 'string') return;
-    const text = msg.text.trim();
+    let text = msg.text.trim();
     if (!text) return;
+
+    // Пересланное сообщение: запоминаем, от кого оно
+    const fwd = msg.forward_origin;
+    if (fwd || msg.forward_from || msg.forward_sender_name) {
+      const who =
+        fwd?.sender_user?.first_name ||
+        fwd?.sender_user_name ||
+        fwd?.chat?.title ||
+        msg.forward_from?.first_name ||
+        msg.forward_sender_name ||
+        'кого-то';
+      if (!text.startsWith('/')) {
+        if (user?.step) return onboardingStep(String(chatId), user, text);
+        return friendFlow(String(chatId), `[Переслал сообщение от ${who}]: ${text}`);
+      }
+    }
 
     const cmd = text.split(/[\s@]/)[0];
     if (cmd === '/start') {
@@ -531,6 +668,9 @@ export function startTelegramBot(store, token, log = console) {
   return {
     stop() {
       running = false;
+    },
+    sendText(chatId, text) {
+      return send(chatId, esc(text));
     },
   };
 }

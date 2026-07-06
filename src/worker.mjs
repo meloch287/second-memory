@@ -1,7 +1,30 @@
-// Фоновый worker: сырые записи (БД №1) -> ИИ-суммаризация -> факты (БД №2).
-// Факты потом читает RAG-контекст бота-друга.
+// Фоновый worker: сырые записи (БД №1) -> ИИ-суммаризация -> факты с
+// эмбеддингами (БД №2) + структурные записи (долги/задачи/встречи),
+// которые мог упустить быстрый парсер. Факты читает RAG бота-друга.
 
-import { aiEnabled, aiExtractFacts } from './ai.mjs';
+import { aiEnabled, aiExtractFacts, aiEmbed } from './ai.mjs';
+
+const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');
+
+// ИИ-запись считается дублем, если у пользователя уже есть похожая
+// открытая запись: тот же тип и совпадающая сумма или похожее название.
+export function isDuplicateEntry(candidate, existing) {
+  for (const e of existing) {
+    if (e.type !== candidate.type) continue;
+    if (candidate.amount != null && e.amount === candidate.amount) return true;
+    const a = norm(candidate.title);
+    const b = norm(e.title);
+    if (a && b && (a.includes(b) || b.includes(a))) return true;
+    if (
+      candidate.counterparty &&
+      e.counterparty &&
+      norm(candidate.counterparty).slice(0, 5) === norm(e.counterparty).slice(0, 5)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function startFactWorker(store, log = console, intervalMs = 600000) {
   if (!aiEnabled()) return null;
@@ -21,10 +44,30 @@ export function startFactWorker(store, log = console, intervalMs = 600000) {
           byChat.get(r.chatId).push(r);
         }
         for (const [chatId, items] of byChat) {
-          const facts = await aiExtractFacts(items);
-          if (facts.length) store.addFacts(facts.map((f) => ({ ...f, chatId })));
+          const { facts, entries } = await aiExtractFacts(items);
+
+          if (facts.length) {
+            let embeddings = [];
+            try {
+              embeddings = await aiEmbed(facts.map((f) => f.text));
+            } catch (e) {
+              log.error('[worker] embed', e.message); // факты сохраняем и без векторов
+            }
+            store.addFacts(facts.map((f, i) => ({ ...f, chatId, embedding: embeddings[i] || undefined })));
+          }
+
+          const existing = store.list({ status: 'open', chatId });
+          let added = 0;
+          for (const entry of entries) {
+            if (isDuplicateEntry(entry, existing)) continue;
+            store.add({ ...entry, chatId, text: entry.title, source: 'ai' });
+            added++;
+          }
+
           store.markRawProcessed(items.map((i) => i.id));
-          if (facts.length) log.log(`[worker] чат ${chatId}: +${facts.length} фактов из ${items.length} записей`);
+          if (facts.length || added) {
+            log.log(`[worker] чат ${chatId}: +${facts.length} фактов, +${added} записей из ${items.length} заметок`);
+          }
         }
       }
     } catch (e) {

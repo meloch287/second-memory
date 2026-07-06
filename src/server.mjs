@@ -10,6 +10,7 @@ import { handleMessage } from './brain.mjs';
 import { memoryStats } from './ragmeter.mjs';
 import { startTelegramBot } from './telegram.mjs';
 import { startFactWorker } from './worker.mjs';
+import { startScheduler } from './scheduler.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -115,5 +116,6 @@ server.listen(PORT, () => {
   console.log(`Вторая память: http://localhost:${PORT}`);
 });
 
-startTelegramBot(store, process.env.TELEGRAM_BOT_TOKEN);
+const bot = startTelegramBot(store, process.env.TELEGRAM_BOT_TOKEN);
 startFactWorker(store);
+startScheduler(store, bot);
