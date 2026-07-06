@@ -68,6 +68,10 @@ const FALLBACKS = [
   'У меня сейчас туман в голове. Напиши ещё раз, я соберусь.',
 ];
 
+const SLEEP_FIRST = 'Я устал... Пойду прилягу, поэтому пока не буду отвечать 😴';
+const SLEEP_AGAIN = 'Всё ещё сплю... 😴';
+const WAKE_PREFIX = 'Так, я выспался! 😄\n\n';
+
 export function startTelegramBot(store, token, log = console) {
   if (!token) return null;
 
@@ -122,8 +126,20 @@ export function startTelegramBot(store, token, log = console) {
     let closed = false;
     let supported = true;
 
+    // Плашка «печатает…» висит, пока модель думает, и гаснет,
+    // как только в драфте появляется первое слово.
+    const stopTypingLoop = typingLoop(chat_id);
+    let typingStopped = false;
+    const stopTyping = () => {
+      if (!typingStopped) {
+        typingStopped = true;
+        stopTypingLoop();
+      }
+    };
+
     const push = (text) => {
       if (!supported || closed) return Promise.resolve();
+      if (text) stopTyping();
       lastText = text;
       lastSentAt = Date.now();
       return api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text })
@@ -170,10 +186,26 @@ export function startTelegramBot(store, token, log = console) {
       // и замена драфта настоящим сообщением проходит без скачка.
       if (supported && lastText !== full) await push(full);
       closed = true;
+      stopTyping();
       return send(chat_id, esc(full), extra);
     };
 
     return { update, finish };
+  }
+
+  /* ---- «Сон» при недоступном ИИ ---- */
+
+  const sleepAnnounced = new Set();
+
+  function sleepyText(chatId) {
+    const key = String(chatId);
+    if (sleepAnnounced.has(key)) return SLEEP_AGAIN;
+    sleepAnnounced.add(key);
+    return SLEEP_FIRST;
+  }
+
+  function withWake(chatId, reply) {
+    return sleepAnnounced.delete(String(chatId)) ? WAKE_PREFIX + reply : reply;
   }
 
   async function downloadBase64(file_id) {
@@ -282,7 +314,7 @@ export function startTelegramBot(store, token, log = console) {
     }
     const draft = createDraft(chatId);
     try {
-      const text = await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(t));
+      const text = withWake(chatId, await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(t)));
       return draft.finish(text, {
         reply_markup: {
           inline_keyboard: [
@@ -295,7 +327,7 @@ export function startTelegramBot(store, token, log = console) {
       });
     } catch (e) {
       log.error('[telegram] summary', e.message);
-      return draft.finish('Что-то я завис с итогами. Дай мне минуту и спроси ещё раз?');
+      return draft.finish(sleepyText(chatId));
     }
   }
 
@@ -305,22 +337,25 @@ export function startTelegramBot(store, token, log = console) {
     store.addRaw(chatId, text);
     captureEntry(store, text, new Date(), chatId); // долги, встречи и задачи тихо ложатся в структурированную базу
 
+    if (!aiEnabled()) {
+      // Без ключа ИИ отвечают правила, без потери данных
+      const out = await handleMessage(store, text, new Date(), String(chatId));
+      const reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
+      return send(chatId, esc(reply));
+    }
+
+    const draft = createDraft(chatId);
     let reply;
-    let draft = null;
-    if (aiEnabled()) {
-      draft = createDraft(chatId);
-      try {
-        reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(t));
-      } catch (e) {
-        log.error('[telegram] friend', e.message);
-      }
+    try {
+      reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(t));
+    } catch (e) {
+      log.error('[telegram] friend', e.message);
     }
     if (!reply) {
-      // Без ИИ отвечают правила, без потери данных
-      const out = await handleMessage(store, text, new Date(), String(chatId));
-      reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
-      return draft ? draft.finish(reply) : send(chatId, esc(reply));
+      // ИИ отлетел: записи уже сохранены, а бот идёт спать
+      return draft.finish(sleepyText(chatId));
     }
+    reply = withWake(chatId, reply);
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
     return draft.finish(reply);
@@ -441,10 +476,10 @@ export function startTelegramBot(store, token, log = console) {
       const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more', new Date(), (t) =>
         draft.update(t)
       );
-      await draft.finish(text);
+      await draft.finish(withWake(chatId, text));
     } catch (e) {
       log.error('[telegram] callback', e.message);
-      await draft.finish('Завис. Спроси меня текстом, так надёжнее 🙂');
+      await draft.finish(sleepyText(chatId));
     }
   }
 
