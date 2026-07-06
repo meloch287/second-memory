@@ -120,6 +120,18 @@ node src/server.mjs
 
 Без ключа ИИ бот честно отвечает правилами и ничего не теряет.
 
+## Деплой 24/7
+
+Бот живёт на сервере как systemd-сервис (`node src/server.mjs`). Если сервер в России, Telegram API недоступен напрямую - решение: xray-клиент с vless-узлом за границей отдаёт локальный HTTP-прокси, а Node 24 умеет ходить через него нативно:
+
+```ini
+Environment=NODE_USE_ENV_PROXY=1
+Environment=HTTPS_PROXY=http://127.0.0.1:10809
+Environment=NO_PROXY=api.polza.ai,api.gonkagate.com,localhost,127.0.0.1
+```
+
+Так к Telegram бот ходит через прокси, а к ИИ-провайдерам - напрямую. Кода это не касается вообще.
+
 ## Obsidian: карта памяти
 
 ```bash
