@@ -136,112 +136,6 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
-  // Нативная «печать по словам»: sendMessageDraft (Bot API 9.5+).
-  // Пустой text показывает «Thinking…», обновления с одним draft_id
-  // анимируются, финал - обычный sendMessage (драфт эфемерный, 30 сек).
-  // update() и finish() принимают СЫРОЙ текст: в драфт он уходит как есть,
-  // финальное сообщение экранируется здесь же.
-  let draftSeq = 1;
-  function createDraft(chat_id) {
-    const draft_id = ((Date.now() % 1000000000) * 1000 + (draftSeq++ % 1000)) % 2147483647 || 1;
-    let lastText = '';
-    let lastSentAt = 0;
-    let pending = null;
-    let timer = null;
-    let closed = false;
-    let supported = true;
-
-    // Плашка «печатает…» висит, пока модель думает, и гаснет,
-    // как только в драфте появляется первое слово.
-    const stopTypingLoop = typingLoop(chat_id);
-    let typingStopped = false;
-    const stopTyping = () => {
-      if (!typingStopped) {
-        typingStopped = true;
-        stopTypingLoop();
-      }
-    };
-
-    // Все запросы драфта идут строго по цепочке: параллельные апдейты
-    // приходили в Telegram вразнобой, и кадр драфта мог прилететь ПОСЛЕ
-    // финального sendMessage - на телефоне зависал пузырь-призрак поверх
-    // ленты. finish() ждёт всю цепочку перед отправкой сообщения.
-    let chain = Promise.resolve();
-
-    const push = (text) => {
-      if (!supported || closed) return chain;
-      if (text) stopTyping();
-      lastText = text;
-      lastSentAt = Date.now();
-      chain = chain
-        .then(() => api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text }))
-        .then((r) => {
-          if (r && !r.ok) supported = false; // старый сервер/клиент - тихо выключаемся
-        })
-        .catch(() => {});
-      return chain;
-    };
-
-    push(''); // сразу «Thinking…», пока модель размышляет
-
-    // Драфт живёт 30 секунд: во время пауз (ретраи лимитов, долгий
-    // reasoning) переотправляем последний кадр, чтобы пузырь не исчезал
-    // и лента не прыгала.
-    const keepalive = setInterval(() => {
-      if (!closed && supported && Date.now() - lastSentAt > 8000) push(lastText);
-    }, 4000);
-
-    const update = (text) => {
-      if (closed) return;
-      pending = String(text).slice(0, 4000);
-      const now = Date.now();
-      const dueIn = 300 - (now - lastSentAt);
-      if (dueIn <= 0) {
-        push(pending);
-        pending = null;
-      } else if (!timer) {
-        timer = setTimeout(() => {
-          timer = null;
-          if (pending != null && !closed) {
-            push(pending);
-            pending = null;
-          }
-        }, dueIn);
-      }
-    };
-
-    const finish = async (rawText, extra = {}) => {
-      if (closed) return;
-      if (timer) clearTimeout(timer);
-      clearInterval(keepalive);
-      const full = String(rawText).slice(0, 4000);
-      // Последний кадр драфта = финальный текст, затем ЖДЁМ доставку всех
-      // кадров и только потом шлём настоящее сообщение - никакой гонки.
-      if (supported && lastText !== full) push(full);
-      closed = true;
-      await chain;
-      stopTyping();
-      return send(chat_id, esc(full), extra);
-    };
-
-    return { update, finish };
-  }
-
-  /* ---- «Сон» при недоступном ИИ ---- */
-
-  const sleepAnnounced = new Set();
-
-  function sleepyText(chatId) {
-    const key = String(chatId);
-    if (sleepAnnounced.has(key)) return SLEEP_AGAIN;
-    sleepAnnounced.add(key);
-    return SLEEP_FIRST;
-  }
-
-  function withWake(chatId, reply) {
-    return sleepAnnounced.delete(String(chatId)) ? WAKE_PREFIX + reply : reply;
-  }
-
   async function downloadBase64(file_id) {
     const info = await api('getFile', { file_id });
     if (!info.ok) throw new Error('getFile failed');
@@ -346,10 +240,9 @@ export function startTelegramBot(store, token, log = console) {
     if (!aiEnabled()) {
       return send(chatId, 'Мне нужен ключ ИИ для итогов (AI_API_KEY в .env). Пока могу просто слушать и запоминать.');
     }
-    const draft = createDraft(chatId);
     try {
-      const text = withWake(chatId, await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(t)));
-      return draft.finish(text, {
+      const text = withWake(chatId, await withTyping(chatId, () => aiDiarySummary(store, chatId)));
+      return send(chatId, esc(text), {
         reply_markup: {
           inline_keyboard: [
             [
@@ -361,7 +254,7 @@ export function startTelegramBot(store, token, log = console) {
       });
     } catch (e) {
       log.error('[telegram] summary', e.message);
-      return draft.finish(sleepyText(chatId));
+      return send(chatId, esc(sleepyText(chatId)));
     }
   }
 
@@ -402,21 +295,20 @@ export function startTelegramBot(store, token, log = console) {
       }
     }
 
-    const draft = createDraft(chatId);
     let reply;
     try {
-      reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(t));
+      reply = await withTyping(chatId, () => aiFriendReply(store, chatId, text));
     } catch (e) {
       log.error('[telegram] friend', e.message);
     }
     if (!reply) {
       // ИИ отлетел: записи уже сохранены, а бот идёт спать
-      return draft.finish(sleepyText(chatId));
+      return send(chatId, esc(sleepyText(chatId)));
     }
     reply = withWake(chatId, reply);
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
-    return draft.finish(reply);
+    return send(chatId, esc(reply));
   }
 
   /* ---- Роутинг сообщений ---- */
@@ -608,15 +500,14 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (!aiEnabled()) return;
-    const draft = createDraft(chatId);
     try {
-      const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more', new Date(), (t) =>
-        draft.update(t)
+      const text = await withTyping(chatId, () =>
+        aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more')
       );
-      await draft.finish(withWake(chatId, text));
+      await send(chatId, esc(withWake(chatId, text)));
     } catch (e) {
       log.error('[telegram] callback', e.message);
-      await draft.finish(sleepyText(chatId));
+      await send(chatId, esc(sleepyText(chatId)));
     }
   }
 
