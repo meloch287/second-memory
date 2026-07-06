@@ -5,6 +5,7 @@ import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
 import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
 import { memoryStats, questionCoverage } from './ragmeter.mjs';
+import { resolveWallDate } from './tz.mjs';
 
 const RUB = new Intl.NumberFormat('ru-RU');
 const money = (v) => `${RUB.format(v)} ₽`;
@@ -63,10 +64,20 @@ export async function handleMessage(store, text, now = new Date(), chatId = 'web
 // Тихая запись для бота-друга: структурируем долги, встречи и задачи,
 // не подменяя живой ответ ИИ. Заметки не дублируем, они уже в сырой базе.
 // chatId привязывает запись к пользователю - /reset стирает и их.
-export function captureEntry(store, text, now = new Date(), chatId = 'web') {
+// offsetMin - часовой пояс пользователя: срок из фразы («в 15:00») считаем
+// в его времени и храним в реальном UTC.
+export function captureEntry(store, text, now = new Date(), chatId = 'web', offsetMin = 180) {
   const p = parseMessage(text, now);
   if (p.kind !== 'entry' || p.entry.type === 'note') return null;
-  return store.add({ ...p.entry, chatId });
+  const entry = { ...p.entry, chatId };
+  if (entry.due) {
+    const r = resolveWallDate(offsetMin, text, now); // срок в часовом поясе пользователя
+    if (r.due) {
+      entry.due = r.due;
+      entry.hasTime = r.hasTime;
+    }
+  }
+  return store.add(entry);
 }
 
 async function route(store, text, now, chatId = 'web') {

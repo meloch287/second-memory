@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {} };
+    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [] };
     this.load();
   }
 
@@ -21,6 +21,7 @@ export class Store {
         if (!Array.isArray(parsed.facts)) parsed.facts = [];
         if (!parsed.personas || typeof parsed.personas !== 'object') parsed.personas = {};
         if (!parsed.meta || typeof parsed.meta !== 'object') parsed.meta = {};
+        if (!Array.isArray(parsed.recurring)) parsed.recurring = [];
         this.data = parsed;
       }
     } catch {
@@ -83,6 +84,71 @@ export class Store {
     const [e] = this.data.entries.splice(i, 1);
     this.save();
     return e;
+  }
+
+  patch(id, fields) {
+    const e = this.byId(id);
+    if (!e) return null;
+    Object.assign(e, fields);
+    this.save();
+    return e;
+  }
+
+  // Нечёткий поиск открытой записи пользователя по номеру/имени/тексту.
+  findEntry(chatId, target) {
+    const t = String(target).replace(/^№\s*/, '').trim();
+    if (/^\d+$/.test(t)) {
+      const e = this.byId(+t);
+      return e && (e.chatId || 'web') === chatId ? e : null;
+    }
+    const nt = t.toLowerCase().replace(/ё/g, 'е');
+    const words = nt.split(/\s+/).filter((w) => w.length > 2);
+    const open = this.list({ status: 'open', chatId });
+    let best = null;
+    let bestScore = 0;
+    for (const e of open) {
+      const hay = [e.counterparty, e.title, e.text].filter(Boolean).join(' ').toLowerCase().replace(/ё/g, 'е');
+      const score = words.reduce((s, w) => s + (hay.includes(w) ? 1 : 0), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = e;
+      }
+    }
+    return bestScore > 0 ? best : null;
+  }
+
+  // Просроченные дела пользователя (со сроком в прошлом), свежие первыми.
+  overdue(chatId, now = Date.now()) {
+    return this.list({ status: 'open', chatId })
+      .filter((e) => e.due && Date.parse(e.due) < now)
+      .sort((a, b) => Date.parse(b.due) - Date.parse(a.due));
+  }
+
+  // Записи со сроком-временем, которым пора напомнить (в окне и ещё не напомнено).
+  dueReminders(chatId, now = Date.now(), windowMs = 6 * 3600000) {
+    return this.list({ status: 'open', chatId }).filter(
+      (e) => e.hasTime && e.due && !e.reminded && Date.parse(e.due) <= now && Date.parse(e.due) >= now - windowMs
+    );
+  }
+
+  // --- Повторяющиеся напоминания ---
+  addRecurring(rec) {
+    const r = { id: ++this.data.seq, createdAt: new Date().toISOString(), lastFired: null, ...rec };
+    this.data.recurring.push(r);
+    this.save();
+    return r;
+  }
+
+  recurringFor(chatId) {
+    return this.data.recurring.filter((r) => r.chatId === chatId);
+  }
+
+  markRecurringFired(id, dayKey) {
+    const r = this.data.recurring.find((x) => x.id === id);
+    if (r) {
+      r.lastFired = dayKey;
+      this.save();
+    }
   }
 
   // История диалога — контекст для ИИ. chatId разделяет веб ('web') и телеграм-чаты.

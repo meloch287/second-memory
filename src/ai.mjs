@@ -284,6 +284,38 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
   );
 }
 
+// Поиск по памяти: векторный recall + фокусный ответ строго по найденному.
+export async function aiSearch(store, chatId, query, now = new Date()) {
+  const user = store.getUser(chatId);
+  const facts = await smartRecall(store, chatId, query, 20);
+  const entries = store.list({ status: 'open', chatId });
+  const relEntries = entries.filter((e) => {
+    const hay = [e.title, e.counterparty, e.text].filter(Boolean).join(' ').toLowerCase().replace(/\u0451/g, 'е');
+    const q = String(query).toLowerCase().replace(/\u0451/g, 'е');
+    return q.split(/[^а-яa-z0-9]+/).filter((w) => w.length > 3).some((w) => hay.includes(w) || hay.includes(w.slice(0, -2)));
+  });
+  const ctx = [
+    'НАЙДЕННЫЕ ФАКТЫ:',
+    ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${fmtLocal(f.ts, false)})`) : ['- ничего -']),
+    '',
+    'СВЯЗАННЫЕ ДЕЛА:',
+    ...(relEntries.length ? relEntries.map(fmtEntry) : ['- ничего -']),
+  ].join('\n');
+  return ask(
+    [
+      { role: 'system', content: friendSystem(user) },
+      {
+        role: 'user',
+        content:
+          ctx +
+          `\n\nВопрос: «${query}». Ответь строго по найденному выше, как друг. ` +
+          'Если ничего не нашлось - честно скажи, что не помнишь такого, и не выдумывай.',
+      },
+    ],
+    { maxTokens: 500, timeoutMs: 45000, retryDelays: [0, 8000] }
+  );
+}
+
 export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();

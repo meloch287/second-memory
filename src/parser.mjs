@@ -32,10 +32,116 @@ export function parseMessage(text, now = new Date()) {
     return { kind: 'clearchat' };
   }
 
+  // Календарь: «скинь в календарь», «расписание в календарь», «экспорт .ics»
+  if (/(?:в календар|скинь календар|экспорт.*календар|календарь.*телефон|\.ics)/.test(t)) {
+    return { kind: 'calendar' };
+  }
+
+  // Правка записи: «перенеси встречу на 16:00», «отмени звонок маме»
+  const edit = parseEdit(raw, t, now);
+  if (edit) return edit;
+
+  // Повтор: «каждый понедельник созвон в 10:00», «каждый день зарядка в 8»
+  const recur = parseRecurring(raw, t, now);
+  if (recur) return recur;
+
+  // Поиск по памяти: «что я говорил про Петрова», «найди про отпуск», «вспомни…»
+  const search = parseSearch(raw, t);
+  if (search) return search;
+
   if (QUERY_STARTS.some((s) => t.startsWith(s)) || t.includes('что у меня')) {
     return parseQuery(raw, t, now);
   }
   return parseEntry(raw, t, now);
+}
+
+const WEEKDAYS = {
+  понедельник: 1, пн: 1, вторник: 2, вт: 2, сред: 3, ср: 3, четверг: 4, чт: 4,
+  пятниц: 5, пт: 5, суббот: 6, сб: 6, воскресень: 0, вс: 0,
+};
+
+function findWeekday(t) {
+  for (const [word, wd] of Object.entries(WEEKDAYS)) {
+    if (word.length > 2 && t.includes(word)) return wd;
+    if (word.length <= 2 && new RegExp('(?<![а-я])' + word + '(?![а-я])').test(t)) return wd;
+  }
+  return null;
+}
+
+function extractHm(t) {
+  let m = t.match(/(?:в|к)?\s*(\d{1,2}):(\d{2})/);
+  if (m && +m[1] <= 23 && +m[2] <= 59) return { hour: +m[1], min: +m[2] };
+  m = t.match(/(?<![\d.,:])в\s+(\d{1,2})(?:\s*час[а-я]*)?(?![\d.,:])/);
+  if (m && +m[1] <= 23) return { hour: +m[1], min: 0 };
+  return null;
+}
+
+// «каждый …» -> правило повтора. title = что напомнить.
+export function parseRecurring(raw, t) {
+  if (!/кажд(?:ый|ую|ое|ые)|ежедневн|по (?:пн|вт|ср|чт|пт|сб|вс|понедельник|вторник|сред|четверг|пятниц|суббот|воскресень)/.test(t)) {
+    return null;
+  }
+  const hm = extractHm(t) || { hour: 9, min: 0 };
+  let rule = null;
+
+  const dom = t.match(/(\d{1,2})[- ]?(?:го)?\s*числа/);
+  if (/ежемесячн|кажд(?:ый|ое)\s+месяц/.test(t) || dom) {
+    rule = { kind: 'monthly', day: dom ? Math.min(28, +dom[1]) : 1, hour: hm.hour, min: hm.min };
+  } else if (/ежедневн|кажд(?:ый|ое)\s+(?:день|утро|вечер)/.test(t)) {
+    rule = { kind: 'daily', hour: hm.hour, min: hm.min };
+  } else {
+    const wd = findWeekday(t);
+    if (wd != null) rule = { kind: 'weekly', weekday: wd, hour: hm.hour, min: hm.min };
+  }
+  if (!rule) return null;
+
+  // Заголовок: убираем «каждый …», «по …», время
+  let title = raw
+    .replace(/кажд(?:ый|ую|ое|ые)\s+\S+/gi, '')
+    .replace(/по\s+(?:пн|вт|ср|чт|пт|сб|вс|понедельник\S*|вторник\S*|сред\S*|четверг\S*|пятниц\S*|суббот\S*|воскресень\S*)/gi, '')
+    .replace(/ежедневн\S*|ежемесячн\S*/gi, '')
+    .replace(/\d{1,2}[- ]?(?:го)?\s*числа/gi, '')
+    .replace(/(?:в|к)\s*\d{1,2}(?::\d{2})?(?:\s*час[а-я]*)?/gi, '')
+    .replace(/напомни(?:ть)?(?:\s+мне)?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, '');
+  title = cap(title) || 'Напоминание';
+  return { kind: 'recurring', rule, title, text: raw };
+}
+
+// «перенеси/отмени …» -> правка существующей записи.
+export function parseEdit(raw, t, now) {
+  let m;
+  if ((m = t.match(/^(?:отмени(?:ть)?|отмена)\s+(.+)$/))) {
+    return { kind: 'edit', op: 'cancel', target: m[1].trim() };
+  }
+  if ((m = t.match(/^(?:перенеси|передвинь|перенести|подвинь|измени|поменяй)\s+(.+)$/))) {
+    // цель — до предлога «на», новое время — после
+    const body = m[1];
+    const split = body.match(/^(.*?)\s+на\s+(.+)$/);
+    const targetPart = split ? split[1] : body;
+    const dt = extractDate(split ? 'на ' + split[2] : body, now);
+    return { kind: 'edit', op: 'reschedule', target: targetPart.trim(), when: dt.when ? dt.when.toISOString() : null, hasTime: dt.hasTime };
+  }
+  return null;
+}
+
+const SEARCH_STARTS = ['найди', 'вспомни', 'поищи', 'что я говорил', 'что я писал', 'что я рассказывал', 'что там с', 'что там про', 'что известно про', 'помнишь'];
+
+export function parseSearch(raw, t) {
+  if (!SEARCH_STARTS.some((s) => t.startsWith(s) || t.includes(s))) return null;
+  // не перехватываем расписание/дела на период — это digest/query
+  if (/что у меня (?:завтра|сегодня|на недел|на этой недел)/.test(t)) return null;
+  const query = raw
+    .replace(/^(?:найди|вспомни|поищи)\s+(?:мне\s+)?(?:про|о|об)?\s*/i, '')
+    .replace(/^(?:что\s+я\s+(?:говорил|писал|рассказывал))\s*(?:про|о|об)?\s*/i, '')
+    .replace(/^(?:что\s+там\s+(?:с|про))\s*/i, '')
+    .replace(/^(?:что\s+известно\s+про)\s*/i, '')
+    .replace(/^помнишь\s*/i, '')
+    .replace(/[?!.]+$/, '')
+    .trim();
+  return { kind: 'search', query: query || raw };
 }
 
 function parseQuery(raw, t, now) {

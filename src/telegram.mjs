@@ -13,6 +13,10 @@ import {
   aiSummarizeDoc, aiSummarizeText,
 } from './ai.mjs';
 import { extractDocxText } from './docx.mjs';
+import { buildIcs } from './ics.mjs';
+import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
+import { aiSearch } from './ai.mjs';
+import { parseMessage } from './parser.mjs';
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
 const hasFfmpeg = (() => {
@@ -75,6 +79,7 @@ const STEP_EXPLAIN = {
     'Жаворонок - это кто рано встаёт и с утра полон сил. Сова - кто оживает к вечеру и сидит допоздна. Мне это нужно, чтобы понимать твой день.\n\nТак ты кто: жаворонок или сова?',
   goal:
     'Я спрашиваю, что сейчас занимает большую часть твоей жизни: работа, учёба, семья, спорт, отдых. Так мне проще понимать твои записи.\n\nЧто у тебя сейчас главное?',
+  tz: 'Часовой пояс нужен, чтобы будить и напоминать в твоё время, а не в моё. Напиши свой город (Москва, Екатеринбург, Новосибирск...) или сдвиг вроде «+3», «мск+2».\n\nВ каком ты поясе?',
 };
 
 const FALLBACKS = [
@@ -185,13 +190,19 @@ export function startTelegramBot(store, token, log = console) {
     }
     if (user.step === 'rhythm') {
       store.setUser(chatId, { rhythm: value, step: 'goal' });
-      return send(chatId, 'Запомнил. И последний вопрос: что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?');
+      return send(chatId, 'Запомнил. Что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?');
     }
     if (user.step === 'goal') {
-      const u = store.setUser(chatId, { goal: value, step: null });
+      store.setUser(chatId, { goal: value, step: 'tz' });
+      return send(chatId, 'И последнее: в каком ты часовом поясе? Напиши город (например, Москва или Новосибирск) или сдвиг вроде «+3». Это чтобы напоминания приходили вовремя.');
+    }
+    if (user.step === 'tz') {
+      const off = parseTz(value);
+      const u = store.setUser(chatId, { tzOffset: off ?? DEFAULT_OFFSET, step: null });
+      const tzNote = off == null ? ' Часовой пояс не понял, поставил московский - потом поправим, если что.' : '';
       return send(
         chatId,
-        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
+        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}${tzNote}\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
       );
     }
   }
@@ -226,9 +237,11 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>📖 Пиши мне как в личный дневник. «Планёрка прошла жёстко», «клиент должен 50 000 до пятницы», «завтра созвон в 10:00». Я всё запомню и разложу сам.</blockquote>',
       '',
-      '<blockquote>💬 Спрашивай о чём угодно: «что у меня завтра?», «кто мне должен?», «о чём я писал в понедельник?». Отвечу по твоим записям.</blockquote>',
+      '<blockquote>⏰ Напоминания: «напомни в 15:00 позвонить маме» - и я звякну ровно в это время. «Каждый понедельник созвон в 10:00» - буду напоминать регулярно. «Перенеси встречу на 16:00» или «отмени звонок» - подвину или уберу.</blockquote>',
       '',
-      '<blockquote>🎙 Лень печатать? Отправь голосовое или mp3 - расшифрую и пойму. Фото и стикеры тоже разгляжу.</blockquote>',
+      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «кто мне должен?». А «найди про Петрова» или «что я говорил про отпуск» - поищу в памяти. «Скинь в календарь» - пришлю файл для календаря телефона.</blockquote>',
+      '',
+      '<blockquote>🎙 Лень печатать? Отправь голосовое, кружок или mp3 - расшифрую и отвечу голосом. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
       '',
       '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
@@ -258,11 +271,97 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
+  /* ---- Спец-намерения: правки, повторы, поиск, календарь ---- */
+
+  const kindOf = (t) => { const w = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' }; return w[t] || 'запись'; };
+
+  // Возвращает true, если сообщение обработано как спец-намерение.
+  async function handleIntent(chatId, user, text) {
+    const p = parseMessage(text, wall(user));
+
+    if (p.kind === 'edit') {
+      const e = store.findEntry(String(chatId), p.target);
+      if (!e) { await send(chatId, `Не нашёл, что ты имеешь в виду под «${esc(p.target)}». Скажи точнее?`); return true; }
+      if (p.op === 'cancel') {
+        store.setStatus(e.id, 'done');
+        await send(chatId, `Отменил: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}». Убрал из дел.`);
+        return true;
+      }
+      // reschedule: пересчитываем время из фразы в tz пользователя
+      const off = userOffset(user);
+      const r = resolveWallDate(off, text, new Date());
+      if (!r.due) { await send(chatId, 'На когда перенести? Скажи дату или время.'); return true; }
+      // «на 16:00» без дня - сохраняем исходный день, меняем только время
+      const hasDayWord = /завтра|послезавтра|сегодня|понедельник|вторник|сред|четверг|пятниц|суббот|воскресень|\d{1,2}[.\/]\d{1,2}|числа|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр|недел/.test(
+        text.toLowerCase().replace(/ё/g, 'е')
+      );
+      let due = r.due;
+      if (!hasDayWord && r.hasTime && e.due) due = combineDayTime(off, e.due, r.due);
+      store.patch(e.id, { due, hasTime: true, reminded: false });
+      await send(chatId, `Перенёс: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» теперь на ${esc(fmtUser(due, off, true))}.`);
+      return true;
+    }
+
+    if (p.kind === 'recurring') {
+      store.addRecurring({ chatId: String(chatId), title: p.title, ...p.rule });
+      const when =
+        p.rule.kind === 'daily' ? `каждый день в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`
+        : p.rule.kind === 'weekly' ? `каждую неделю (${['вс','пн','вт','ср','чт','пт','сб'][p.rule.weekday]}) в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`
+        : `каждый месяц ${p.rule.day} числа в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`;
+      store.addRaw(chatId, text);
+      await send(chatId, `Запомнил повтор: «${esc(p.title)}» - ${when}. Буду напоминать 🔁`);
+      return true;
+    }
+
+    if (p.kind === 'search') {
+      if (!aiEnabled()) return false;
+      try {
+        const answer = await withTyping(chatId, () => aiSearch(store, String(chatId), p.query, wall(user)));
+        await send(chatId, esc(answer));
+      } catch (e) {
+        log.error('[telegram] search', e.message);
+        await send(chatId, esc(sleepyText(chatId)));
+      }
+      return true;
+    }
+
+    if (p.kind === 'calendar') {
+      const off = userOffset(user);
+      const now = Date.now();
+      const events = store
+        .list({ status: 'open', chatId: String(chatId) })
+        .filter((e) => e.due && Date.parse(e.due) >= now - 86400000 && (e.type === 'meeting' || e.type === 'task'));
+      if (!events.length) { await send(chatId, 'Пока нет встреч или задач со временем, которые можно скинуть в календарь.'); return true; }
+      const list = events.slice(0, 8).map((e) => `• ${e.title || e.counterparty} - ${fmtUser(e.due, off, e.hasTime)}`).join('\n');
+      pendingCal.set(String(chatId), events);
+      await send(chatId, `Могу скинуть в календарь телефона (${events.length}):\n${esc(list)}\n\nСкинуть файлом?`, {
+        reply_markup: { inline_keyboard: [[{ text: '📅 Да, скинь', callback_data: 'cal_yes' }, { text: 'Не надо', callback_data: 'cal_no' }]] },
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  const pendingCal = new Map(); // chatId -> список событий, ожидающих подтверждения экспорта
+
+  async function sendIcs(chatId, events) {
+    const ics = buildIcs(events, new Date().toISOString());
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('document', new Blob([ics], { type: 'text/calendar' }), 'raspisanie.ics');
+    form.append('caption', 'Открой файл - события добавятся в календарь телефона 📅');
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
+    return res.json();
+  }
+
   /* ---- Обычный разговор ---- */
 
   async function friendFlow(chatId, text, { asVoice = false } = {}) {
     store.addRaw(chatId, text);
-    captureEntry(store, text, new Date(), chatId); // долги, встречи и задачи тихо ложатся в структурированную базу
+    const user = store.getUser(String(chatId));
+    // долги/встречи/задачи тихо ложатся в базу с учётом часового пояса
+    captureEntry(store, text, new Date(), chatId, userOffset(user));
 
     if (!aiEnabled()) {
       // Без ключа ИИ отвечают правила, без потери данных
@@ -482,6 +581,9 @@ export function startTelegramBot(store, token, log = console) {
     if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
     if (user.step) return onboardingStep(String(chatId), user, text);
 
+    // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
+    if (await handleIntent(String(chatId), user, text)) return;
+
     return friendFlow(String(chatId), text);
   }
 
@@ -497,6 +599,39 @@ export function startTelegramBot(store, token, log = console) {
       store.clearChatData(chatId);
       await send(chatId, 'Всё. Меня больше нет... а вот и я, новенький! 👋');
       return startOnboarding(chatId);
+    }
+
+    // Экспорт в календарь: пользователь может отказаться
+    if (cb.data === 'cal_no') {
+      pendingCal.delete(chatId);
+      return send(chatId, 'Ок, не буду. Скажешь - скину в любой момент.');
+    }
+    if (cb.data === 'cal_yes') {
+      const events = pendingCal.get(chatId);
+      pendingCal.delete(chatId);
+      if (!events || !events.length) return send(chatId, 'Что-то список потерялся. Попроси календарь ещё раз?');
+      try {
+        const r = await sendIcs(chatId, events);
+        if (!r.ok) throw new Error(r.description || 'sendDocument failed');
+        return;
+      } catch (e) {
+        log.error('[telegram] ics', e.message);
+        return send(chatId, 'Не смог собрать файл. Попробуем позже?');
+      }
+    }
+
+    // Подтверждение выполнения просроченного дела (вечерний вопрос)
+    if (cb.data && cb.data.startsWith('done_')) {
+      const id = Number(cb.data.slice(5));
+      const e = store.byId(id);
+      if (e && (e.chatId || 'web') === chatId && e.status === 'open') {
+        store.setStatus(id, 'done');
+        return send(chatId, 'Красава, закрыл 👍');
+      }
+      return send(chatId, 'Уже закрыто, всё ок 🙂');
+    }
+    if (cb.data && cb.data.startsWith('keep_')) {
+      return send(chatId, 'Понял, оставил. Напомню ещё.');
     }
 
     if (!aiEnabled()) return;
@@ -562,6 +697,9 @@ export function startTelegramBot(store, token, log = console) {
     },
     sendText(chatId, text) {
       return send(chatId, esc(text));
+    },
+    sendButtons(chatId, text, inline_keyboard) {
+      return send(chatId, esc(text), { reply_markup: { inline_keyboard } });
     },
   };
 }
