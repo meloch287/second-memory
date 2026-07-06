@@ -97,13 +97,24 @@ const WAKE_PREFIX = 'Так, я выспался! 😄\n\n';
 export function startTelegramBot(store, token, log = console) {
   if (!token) return null;
 
+  // Таймаут на каждый запрос к Telegram: без него зависший вызов (медленный
+  // прокси) стопорил бота молча. getUpdates - длинный (long poll), остальное
+  // короткое. Аборт роняет вызов, а цикл/обработчик ловит и продолжает.
   const api = async (method, params) => {
-    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    return res.json();
+    const controller = new AbortController();
+    const timeoutMs = method === 'getUpdates' ? 35000 : 15000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      return res.json();
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   const send = (chat_id, text, extra = {}) =>

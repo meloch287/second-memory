@@ -283,7 +283,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
     ],
-    { maxTokens: 1200, onDelta, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 1200, onDelta, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -316,7 +316,7 @@ export async function aiSearch(store, chatId, query, now = new Date()) {
           'Если ничего не нашлось - честно скажи, что не помнишь такого, и не выдумывай.',
       },
     ],
-    { maxTokens: 500, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 500, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -364,7 +364,7 @@ export async function aiFollowup(store, chatId, kind, now = new Date(), onDelta 
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, '', now) + '\n\n' + prompt },
     ],
-    { maxTokens: 1200, onDelta, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 1200, onDelta, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -474,7 +474,7 @@ export async function aiMorningPing(user, eventLines, now = new Date()) {
           '\n\nНапиши одно короткое дружеское утреннее сообщение: поздоровайся и напомни про дела своими словами. Без списков, 2-3 предложения.',
       },
     ],
-    { maxTokens: 400, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 400, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -543,7 +543,7 @@ export async function aiSummarizeText(text, filename) {
           String(text).slice(0, 12000),
       },
     ],
-    { maxTokens: 700, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 700, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -654,7 +654,7 @@ export async function aiDescribeImage(base64, mime = 'image/jpeg', hint = '') {
         ],
       },
     ],
-    { maxTokens: 300, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 300, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
 }
 
@@ -675,7 +675,7 @@ export async function aiTranscribe(base64, format = 'ogg') {
         ],
       },
     ],
-    { maxTokens: 700, timeoutMs: 45000, retryDelays: [0, 8000] }
+    { maxTokens: 700, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
   if (!text || text.includes('NO_SPEECH')) return null;
   return text;
