@@ -7,6 +7,9 @@ import { Store } from '../src/store.mjs';
 import { parseMessage, parseExpense } from '../src/parser.mjs';
 import { expensesReport } from '../src/finance.mjs';
 
+// Внешний ключ окружения не должен влиять на plaintext-ожидания тестов
+delete process.env.SM_ENCRYPTION_KEY;
+
 const NOW = new Date('2026-07-06T09:00:00.000Z');
 function tmpFile() {
   return join(mkdtempSync(join(tmpdir(), 'sm-b3-')), 'memory.json');

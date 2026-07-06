@@ -8,6 +8,9 @@ import { isDuplicateEntry } from '../src/worker.mjs';
 import { morningHour, eveningHour, todayEvents } from '../src/scheduler.mjs';
 import { extractDocxText } from '../src/docx.mjs';
 
+// Тесты рассчитаны на открытый JSON: внешний ключ окружения не должен влиять
+delete process.env.SM_ENCRYPTION_KEY;
+
 const NOW = new Date(2026, 6, 6, 9, 0);
 
 function freshStore() {
