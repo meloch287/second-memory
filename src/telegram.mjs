@@ -107,6 +107,59 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
+  // Нативная «печать по словам»: sendMessageDraft (Bot API 9.5+).
+  // Пустой text показывает «Thinking…», обновления с одним draft_id
+  // анимируются, финал - обычный sendMessage (драфт эфемерный, 30 сек).
+  let draftSeq = 1;
+  function createDraft(chat_id) {
+    const draft_id = ((Date.now() % 1000000000) * 1000 + (draftSeq++ % 1000)) % 2147483647 || 1;
+    let lastSent = 0;
+    let pending = null;
+    let timer = null;
+    let closed = false;
+    let supported = true;
+
+    const push = (text) => {
+      if (!supported || closed) return;
+      api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text })
+        .then((r) => {
+          if (!r.ok) supported = false; // старый сервер/клиент - тихо выключаемся
+        })
+        .catch(() => {});
+    };
+
+    push(''); // сразу «Thinking…», пока модель размышляет
+
+    const update = (text) => {
+      if (closed) return;
+      pending = String(text).slice(0, 4000);
+      const now = Date.now();
+      const dueIn = 450 - (now - lastSent);
+      if (dueIn <= 0) {
+        lastSent = now;
+        push(pending);
+        pending = null;
+      } else if (!timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          if (pending != null && !closed) {
+            lastSent = Date.now();
+            push(pending);
+            pending = null;
+          }
+        }, dueIn);
+      }
+    };
+
+    const finish = (fullText, extra = {}) => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      return send(chat_id, fullText, extra);
+    };
+
+    return { update, finish };
+  }
+
   async function downloadBase64(file_id) {
     const info = await api('getFile', { file_id });
     if (!info.ok) throw new Error('getFile failed');
@@ -211,9 +264,10 @@ export function startTelegramBot(store, token, log = console) {
     if (!aiEnabled()) {
       return send(chatId, 'Мне нужен ключ ИИ для итогов (AI_API_KEY в .env). Пока могу просто слушать и запоминать.');
     }
+    const draft = createDraft(chatId);
     try {
-      const text = await withTyping(chatId, () => aiDiarySummary(store, chatId));
-      return send(chatId, esc(text), {
+      const text = await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(esc(t)));
+      return draft.finish(esc(text), {
         reply_markup: {
           inline_keyboard: [
             [
@@ -225,7 +279,7 @@ export function startTelegramBot(store, token, log = console) {
       });
     } catch (e) {
       log.error('[telegram] summary', e.message);
-      return send(chatId, 'Что-то я завис с итогами. Дай мне минуту и спроси ещё раз?');
+      return draft.finish('Что-то я завис с итогами. Дай мне минуту и спроси ещё раз?');
     }
   }
 
@@ -236,9 +290,11 @@ export function startTelegramBot(store, token, log = console) {
     captureEntry(store, text, new Date(), chatId); // долги, встречи и задачи тихо ложатся в структурированную базу
 
     let reply;
+    let draft = null;
     if (aiEnabled()) {
+      draft = createDraft(chatId);
       try {
-        reply = await withTyping(chatId, () => aiFriendReply(store, chatId, text));
+        reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(esc(t)));
       } catch (e) {
         log.error('[telegram] friend', e.message);
       }
@@ -247,11 +303,11 @@ export function startTelegramBot(store, token, log = console) {
       // Без ИИ отвечают правила, без потери данных
       const out = await handleMessage(store, text, new Date(), String(chatId));
       reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
-    } else {
-      store.pushHistory('user', text, String(chatId));
-      store.pushHistory('assistant', reply, String(chatId));
+      return draft ? draft.finish(esc(reply)) : send(chatId, esc(reply));
     }
-    return send(chatId, esc(reply));
+    store.pushHistory('user', text, String(chatId));
+    store.pushHistory('assistant', reply, String(chatId));
+    return draft.finish(esc(reply));
   }
 
   /* ---- Роутинг сообщений ---- */
@@ -364,14 +420,15 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (!aiEnabled()) return;
+    const draft = createDraft(chatId);
     try {
-      const text = await withTyping(chatId, () =>
-        aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more')
+      const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more', new Date(), (t) =>
+        draft.update(esc(t))
       );
-      await send(chatId, esc(text));
+      await draft.finish(esc(text));
     } catch (e) {
       log.error('[telegram] callback', e.message);
-      await send(chatId, 'Завис. Спроси меня текстом, так надёжнее 🙂');
+      await draft.finish('Завис. Спроси меня текстом, так надёжнее 🙂');
     }
   }
 

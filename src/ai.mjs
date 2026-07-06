@@ -36,7 +36,75 @@ const stripThink = (s) =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 90000 } = {}) {
+// Потоковый запрос: SSE-дельты, onDelta получает видимый текст по мере
+// генерации (блок <think> вырезается на лету - пока модель «думает»,
+// наружу не уходит ничего).
+async function streamOnce(cfg, messages, maxTokens, timeoutMs, onDelta) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${cfg.url}/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${cfg.key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: cfg.model, messages, max_tokens: maxTokens, stream: true }),
+    });
+    if (res.status === 429 || res.status >= 500) throw new Error(`AI HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
+
+    let full = '';
+    let buf = '';
+    const decoder = new TextDecoder();
+    for await (const chunk of res.body) {
+      buf += decoder.decode(chunk, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
+          if (delta) {
+            full += delta;
+            const visible = stripThink(full);
+            if (visible) onDelta(visible);
+          }
+        } catch {}
+      }
+    }
+    const cleaned = stripThink(full);
+    if (!cleaned) throw new Error('AI: пустой ответ после reasoning');
+    return cleaned;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutMs = 90000, onDelta = null } = {}) {
+  if (onDelta) {
+    // Стрим с теми же паузами на 429; при любой ошибке стрима - обычный запрос
+    const delays = [0, 12000, 35000];
+    let lastError;
+    for (const delay of delays) {
+      if (delay) await sleep(delay);
+      try {
+        return await streamOnce(cfg, messages, maxTokens, timeoutMs, onDelta);
+      } catch (e) {
+        lastError = e;
+        if (!/HTTP (429|5\d\d)/.test(e.message)) break; // не лимит - выходим на нестрим
+      }
+    }
+    try {
+      return await chatCompletion(cfg, messages, { maxTokens, timeoutMs });
+    } catch {
+      throw lastError;
+    }
+  }
   // 429/5xx у шлюзов - обычное дело: до двух повторов с паузой.
   // У GonkaGate лимит поминутный, поэтому паузы длинные.
   const delays = [0, 12000, 35000];
@@ -190,18 +258,18 @@ function friendContext(store, chatId, query, now) {
   ].join('\n');
 }
 
-export async function aiFriendReply(store, chatId, text, now = new Date()) {
+export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
   return ask(
     [
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, text, now) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
     ],
-    { maxTokens: 1200 }
+    { maxTokens: 1200, onDelta }
   );
 }
 
-export async function aiDiarySummary(store, chatId, now = new Date()) {
+export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const todayRaw = store.rawForDay(chatId, dayStart, dayStart + 86400000);
@@ -230,11 +298,11 @@ export async function aiDiarySummary(store, chatId, now = new Date()) {
           '\n\nПодведи итоги дня как друг, не как секретарь. Структура: строка «🕒 Утро», строка «💼 День», строка «🌙 Вечер» - по паре живых фраз о том, что было (пропусти главу, если пусто). В конце «💡 Инсайт» - одна умная мысль или совет по итогам недели. Если сегодня записей не было, скажи об этом тепло и предложи рассказать, как прошёл день.',
       },
     ],
-    { maxTokens: 1600 }
+    { maxTokens: 1600, onDelta }
   );
 }
 
-export async function aiFollowup(store, chatId, kind, now = new Date()) {
+export async function aiFollowup(store, chatId, kind, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
   const prompt =
     kind === 'tomorrow'
@@ -245,7 +313,7 @@ export async function aiFollowup(store, chatId, kind, now = new Date()) {
       { role: 'system', content: friendSystem(user) },
       { role: 'user', content: friendContext(store, chatId, '', now) + '\n\n' + prompt },
     ],
-    { maxTokens: 1200 }
+    { maxTokens: 1200, onDelta }
   );
 }
 
