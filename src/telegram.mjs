@@ -8,7 +8,32 @@ import { aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup, aiT
 const COMMANDS = [
   { command: 'summary', description: 'Итоги дня' },
   { command: 'help', description: 'Как со мной общаться' },
-  { command: 'start', description: 'Познакомиться заново' },
+  { command: 'start', description: 'Поздороваться' },
+  { command: 'reset', description: 'Стереть мою память и начать заново' },
+];
+
+// Повторный /start не сбрасывает бота - он просто здоровается. 20 вариантов.
+const HELLO_AGAIN = [
+  '{name}! Ну что у тебя сегодня произошло?',
+  'О, {name}, ты вернулся! Как день прошёл?',
+  '{name}, привет! Рассказывай, что нового?',
+  'Мы уже знакомы, {name} 😄 Лучше расскажи, как твой день?',
+  'Я всё помню, {name}. А вот что было у тебя сегодня - ещё нет. Делись!',
+  '{name}, снова /start? Я никуда и не уходил 🙂 Что происходит у тебя?',
+  'Привет-привет, {name}! Чем сегодня жил?',
+  '{name}, я тут, я слушаю. Что случилось за день?',
+  'Опять знакомиться не будем, {name} 😉 Просто расскажи, как ты?',
+  'Рад тебя видеть, {name}! Что сегодня было интересного?',
+  '{name}, ну наконец-то! Скучал. Рассказывай новости.',
+  'Всё на месте, память со мной, {name}. Что запишем про сегодня?',
+  '{name}, как настроение? Что за день выдался?',
+  'Слушаю тебя, {name}. С чего начнём: дела или эмоции?',
+  '{name}, я готов. Вываливай всё, что накопилось 🙂',
+  'Что нового, {name}? Хоть одну хорошую новость давай!',
+  '{name}, привет! Кто-нибудь сегодня тебя удивил?',
+  'Я тут перечитывал наши записи, {name}. Ну а сегодня что было?',
+  '{name}, день к вечеру - самое время рассказать, как он прошёл.',
+  'Ну здравствуй ещё раз, {name} 😄 Что у тебя происходит?',
 ];
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -44,16 +69,25 @@ export function startTelegramBot(store, token, log = console) {
   /* ---- Онбординг: знакомство как с человеком ---- */
 
   function startOnboarding(chatId) {
-    store.setUser(chatId, { step: 'name' });
+    store.setUser(chatId, { step: 'botname' });
     return send(
       chatId,
-      'Привет-привет! 👋\n\nЯ твоя вторая память. Буду запоминать всё, что ты мне пишешь: дела, долги, встречи, мысли. А потом напомню, когда спросишь.\n\nДавай знакомиться. Как тебя называть?',
+      'Привет-привет! 👋\n\nЯ твоя вторая память и, кажется, твой новый друг. Буду запоминать всё, что ты мне пишешь: дела, долги, встречи, мысли.\n\nТолько я пока без имени. Придумаешь? Как меня назовёшь?',
       { reply_markup: { remove_keyboard: true } }
     );
   }
 
+  function helloAgain(chatId, user) {
+    const phrase = HELLO_AGAIN[Math.floor(Math.random() * HELLO_AGAIN.length)];
+    return send(chatId, esc(phrase.replaceAll('{name}', user.name || 'дружище')));
+  }
+
   async function onboardingStep(chatId, user, text) {
     const value = text.trim().slice(0, 100);
+    if (user.step === 'botname') {
+      store.setUser(chatId, { botName: value, step: 'name' });
+      return send(chatId, `${esc(value)} - звучит! Так меня ещё никто не называл 😄\n\nА тебя как называть?`);
+    }
     if (user.step === 'name') {
       store.setUser(chatId, { name: value, step: 'rhythm' });
       return send(chatId, `${esc(value)}, отличное имя 😊\n\nТы жаворонок или сова? Мне важно понимать твой ритм.`);
@@ -66,17 +100,38 @@ export function startTelegramBot(store, token, log = console) {
       const u = store.setUser(chatId, { goal: value, step: null });
       return send(
         chatId,
-        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
+        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
       );
     }
+  }
+
+  /* ---- /reset: стереть личность и память ---- */
+
+  function askReset(chatId, user) {
+    const name = esc(user?.name || 'дружище');
+    return send(
+      chatId,
+      `${name}, уверен, что хочешь убить меня?(( Сотрётся всё: моё имя, наше знакомство и вся память наших разговоров. Появится новый друг, который тебя не знает.\n\nДела и долги останутся - они живут отдельно.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Нет, живи 🙂', callback_data: 'reset_no' },
+              { text: 'Да, стереть всё', callback_data: 'reset_yes' },
+            ],
+          ],
+        },
+      }
+    );
   }
 
   /* ---- Помощь: тепло и с цитатами ---- */
 
   function helpText(user) {
     const name = user?.name ? `, ${esc(user.name)}` : '';
+    const signed = user?.botName ? ` Твой ${esc(user.botName)}.` : '';
     return [
-      `Тут всё просто${name} 🙂`,
+      `Тут всё просто${name} 🙂${signed}`,
       '',
       '<blockquote>📖 Пиши мне как в личный дневник. «Планёрка прошла жёстко», «клиент должен 50 000 до пятницы», «завтра созвон в 10:00». Я всё запомню и разложу сам.</blockquote>',
       '',
@@ -84,7 +139,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>🎙 Лень печатать? Отправь голосовое. Я расшифрую и пойму.</blockquote>',
       '',
-      '/summary - итоги дня. /start - познакомиться заново. А я всегда здесь.',
+      '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
   }
 
@@ -172,9 +227,14 @@ export function startTelegramBot(store, token, log = console) {
     if (!text) return;
 
     const cmd = text.split(/[\s@]/)[0];
-    if (cmd === '/start') return startOnboarding(String(chatId));
+    if (cmd === '/start') {
+      // повторный /start не сбрасывает друга - он просто здоровается
+      if (user && !user.step) return helloAgain(String(chatId), user);
+      return startOnboarding(String(chatId));
+    }
     if (cmd === '/help') return send(chatId, helpText(user));
     if (cmd === '/summary') return sendSummary(String(chatId));
+    if (cmd === '/reset') return askReset(String(chatId), user);
 
     if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
     if (user.step) return onboardingStep(String(chatId), user, text);
@@ -185,7 +245,18 @@ export function startTelegramBot(store, token, log = console) {
   async function onCallback(cb) {
     const chatId = String(cb.message?.chat?.id || '');
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
-    if (!chatId || !aiEnabled()) return;
+    if (!chatId) return;
+
+    if (cb.data === 'reset_no') {
+      return send(chatId, 'Фух. Я уж испугался 😅 Продолжаем, я всё помню.');
+    }
+    if (cb.data === 'reset_yes') {
+      store.clearChatData(chatId);
+      await send(chatId, 'Всё. Меня больше нет... а вот и я, новенький! 👋');
+      return startOnboarding(chatId);
+    }
+
+    if (!aiEnabled()) return;
     await typing(chatId);
     try {
       const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more');

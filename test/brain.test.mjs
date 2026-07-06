@@ -106,6 +106,23 @@ test('шкала памяти: пустая база даёт 0, записи н
   assert.ok(covCase.matched >= 1, 'винительный падеж должен матчиться по основе');
 });
 
+test('/reset бота: clearChatData стирает профиль и память чата, но не записи', async () => {
+  const s = freshStore();
+  s.setUser('42', { botName: 'Барни', name: 'Саша', step: null });
+  s.addRaw('42', 'сырая заметка');
+  s.addFacts([{ chatId: '42', text: 'факт', people: [], tags: [] }]);
+  s.pushHistory('user', 'привет', '42');
+  await handleMessage(s, 'Ромашка должна 120 000 до конца месяца', NOW); // веб-запись
+
+  s.clearChatData('42');
+  assert.equal(s.getUser('42'), null);
+  assert.equal(s.data.raw.filter((r) => r.chatId === '42').length, 0);
+  assert.equal(s.data.facts.filter((f) => f.chatId === '42').length, 0);
+  assert.equal(s.recentHistory(50, '42').length, 0);
+  assert.equal(s.list({ type: 'debt' }).length, 1, 'деловые записи не стираются');
+  assert.equal(s.recentHistory(50, 'web').length, 2, 'веб-история не тронута');
+});
+
 test('история диалога копится и очищается командой «очистить чат»', async () => {
   const s = freshStore();
   await handleMessage(s, 'Иванов должен 50 000 до 20 июля', NOW);

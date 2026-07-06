@@ -139,6 +139,16 @@ export class Store {
     this.save();
   }
 
+  // Полный сброс личности и памяти одного чата (/reset у бота).
+  // Общие деловые записи (entries) не трогаем - они видны и из веба.
+  clearChatData(chatId) {
+    delete this.data.users[chatId];
+    this.data.raw = this.data.raw.filter((r) => r.chatId !== chatId);
+    this.data.facts = this.data.facts.filter((f) => f.chatId !== chatId);
+    this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
+    this.save();
+  }
+
   // Простой keyword-RAG: свежие факты + совпадения по словам запроса.
   factsFor(chatId, query = '', limit = 25) {
     const mine = this.data.facts.filter((f) => !chatId || f.chatId === chatId);
