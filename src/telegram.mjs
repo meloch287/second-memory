@@ -465,9 +465,10 @@ export function startTelegramBot(store, token, log = console) {
 
     if (p.kind === 'voiceonce') {
       if (!audioEnabled()) { await send(chatId, 'Голосом пока не могу - нет ключа озвучки. Отвечу текстом.'); return true; }
+      // ставим флаг и пускаем текст дальше в разговор: бот сразу ответит
+      // голосом на сам вопрос («запиши голосовым, что думаешь про...»)
       store.setUser(String(chatId), { voiceNext: true });
-      await send(chatId, 'Давай, спрашивай - отвечу голосом 🎙');
-      return true;
+      return false;
     }
 
     if (p.kind === 'export') {
