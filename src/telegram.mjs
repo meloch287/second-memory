@@ -355,16 +355,17 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (p.kind === 'calendar') {
+      const events = upcomingEvents(String(chatId));
+      if (!events.length) { await send(chatId, 'Пока нет встреч или задач со временем для календаря телефона.'); return true; }
       const off = userOffset(user);
-      const now = Date.now();
-      const events = store
-        .list({ status: 'open', chatId: String(chatId) })
-        .filter((e) => e.due && Date.parse(e.due) >= now - 86400000 && (e.type === 'meeting' || e.type === 'task'));
-      if (!events.length) { await send(chatId, 'Пока нет встреч или задач со временем, которые можно скинуть в календарь.'); return true; }
       const list = events.slice(0, 8).map((e) => `• ${e.title || e.counterparty} - ${fmtUser(e.due, off, e.hasTime)}`).join('\n');
-      pendingCal.set(String(chatId), events);
-      await send(chatId, `Могу скинуть в календарь телефона (${events.length}):\n${esc(list)}\n\nСкинуть файлом?`, {
-        reply_markup: { inline_keyboard: [[{ text: '📅 Да, скинь', callback_data: 'cal_yes' }, { text: 'Не надо', callback_data: 'cal_no' }]] },
+      await send(chatId, `Держу в памяти ${events.length} событий. Что закинуть в календарь телефона?\n${esc(list)}`, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📅 Всё расписание', callback_data: 'cal_all' }, { text: '📅 Только на неделю', callback_data: 'cal_week' }],
+            [{ text: 'Не надо', callback_data: 'cal_no' }],
+          ],
+        },
       });
       return true;
     }
@@ -372,16 +373,44 @@ export function startTelegramBot(store, token, log = console) {
     return false;
   }
 
-  const pendingCal = new Map(); // chatId -> список событий, ожидающих подтверждения экспорта
+  // Будущие события пользователя (встречи и задачи со временем), свежие тоже.
+  function upcomingEvents(chatId, withinDays = null) {
+    const now = Date.now();
+    const to = withinDays ? now + withinDays * 86400000 : Infinity;
+    return store
+      .list({ status: 'open', chatId })
+      .filter((e) => e.due && (e.type === 'meeting' || (e.type === 'task' && e.hasTime)))
+      .filter((e) => Date.parse(e.due) >= now - 86400000 && Date.parse(e.due) <= to);
+  }
 
-  async function sendIcs(chatId, events) {
+  async function sendIcs(chatId, events, filename = 'raspisanie.ics') {
     const ics = buildIcs(events, new Date().toISOString());
     const form = new FormData();
     form.append('chat_id', String(chatId));
-    form.append('document', new Blob([ics], { type: 'text/calendar' }), 'raspisanie.ics');
+    form.append('document', new Blob([ics], { type: 'text/calendar' }), filename);
     form.append('caption', 'Открой файл - события добавятся в календарь телефона 📅');
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
     return res.json();
+  }
+
+  // Проактивно предлагаем календарь телефона, когда записали встречу или
+  // задачу со временем. Не чаще раза в 20 минут, чтобы не надоедать.
+  async function maybeOfferCalendar(chatId, user, entry) {
+    if (!entry || !entry.due) return;
+    const calendarable = entry.type === 'meeting' || (entry.type === 'task' && entry.hasTime);
+    if (!calendarable) return;
+    const last = user?.lastCalOffer || 0;
+    if (Date.now() - last < 20 * 60000) return;
+    store.setUser(chatId, { lastCalOffer: Date.now() });
+    const off = userOffset(user);
+    await send(chatId, `Закинуть в календарь телефона? «${esc(entry.title || entry.counterparty || 'событие')}» - ${esc(fmtUser(entry.due, off, entry.hasTime))}`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📅 Это событие', callback_data: `cal_one_${entry.id}` }, { text: '📅 Всё расписание', callback_data: 'cal_all' }],
+          [{ text: 'Не надо', callback_data: 'cal_no' }],
+        ],
+      },
+    });
   }
 
   /* ---- Обычный разговор ---- */
@@ -390,13 +419,15 @@ export function startTelegramBot(store, token, log = console) {
     store.addRaw(chatId, text);
     const user = store.getUser(String(chatId));
     // долги/встречи/задачи тихо ложатся в базу с учётом часового пояса
-    captureEntry(store, text, new Date(), chatId, userOffset(user));
+    const captured = captureEntry(store, text, new Date(), chatId, userOffset(user));
 
     if (!aiEnabled()) {
       // Без ключа ИИ отвечают правила, без потери данных
       const out = await handleMessage(store, text, new Date(), String(chatId));
       const reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
-      return send(chatId, esc(reply));
+      await send(chatId, esc(reply));
+      await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
+      return;
     }
 
     // На голосовое отвечаем голосом: вместо драфта - статус «записывает
@@ -410,11 +441,13 @@ export function startTelegramBot(store, token, log = console) {
         try {
           const ogg = await aiTts(reply);
           const sent = await sendVoice(chatId, ogg, reply);
-          if (sent.ok) return sent;
+          if (!sent.ok) await send(chatId, esc(reply));
         } catch (e) {
           log.error('[telegram] tts', e.message); // голос не вышел - ответим текстом
+          await send(chatId, esc(reply));
         }
-        return send(chatId, esc(reply));
+        await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
+        return;
       } catch (e) {
         log.error('[telegram] friend-voice', e.message);
         return send(chatId, esc(sleepyText(chatId)));
@@ -436,7 +469,8 @@ export function startTelegramBot(store, token, log = console) {
     reply = withWake(chatId, reply);
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
-    return send(chatId, esc(reply));
+    await send(chatId, esc(reply));
+    await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
   }
 
   /* ---- Роутинг сообщений ---- */
@@ -630,17 +664,24 @@ export function startTelegramBot(store, token, log = console) {
       return startOnboarding(chatId);
     }
 
-    // Экспорт в календарь: пользователь может отказаться
+    // Календарь телефона: пользователь может отказаться. Список событий
+    // собираем из памяти в момент клика - переживает перезапуск бота.
     if (cb.data === 'cal_no') {
-      pendingCal.delete(chatId);
-      return send(chatId, 'Ок, не буду. Скажешь - скину в любой момент.');
+      return send(chatId, 'Ок, не буду. Скажешь «скинь в календарь» - соберу в любой момент.');
     }
-    if (cb.data === 'cal_yes') {
-      const events = pendingCal.get(chatId);
-      pendingCal.delete(chatId);
-      if (!events || !events.length) return send(chatId, 'Что-то список потерялся. Попроси календарь ещё раз?');
+    if (cb.data === 'cal_all' || cb.data === 'cal_week' || cb.data.startsWith('cal_one_')) {
+      let events;
+      let fname = 'raspisanie.ics';
+      if (cb.data === 'cal_all') events = upcomingEvents(chatId);
+      else if (cb.data === 'cal_week') events = upcomingEvents(chatId, 7);
+      else {
+        const e = store.byId(Number(cb.data.slice(8)));
+        events = e && (e.chatId || 'web') === chatId && e.status === 'open' ? [e] : [];
+        fname = 'sobytie.ics';
+      }
+      if (!events.length) return send(chatId, 'Похоже, событий уже нет. Попроси «скинь в календарь», если что-то появится.');
       try {
-        const r = await sendIcs(chatId, events);
+        const r = await sendIcs(chatId, events, fname);
         if (!r.ok) throw new Error(r.description || 'sendDocument failed');
         return;
       } catch (e) {
