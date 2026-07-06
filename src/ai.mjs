@@ -180,7 +180,10 @@ function fmtEntry(e, off = DEFAULT_OFFSET) {
   return parts.join(' | ');
 }
 
-const STYLE = 'Пиши по-русски, коротко и просто. Без markdown-разметки (без **, #, таблиц). Не используй длинное тире, только дефис. Суммы с пробелами (50 000 ₽), даты как ДД.ММ.ГГГГ. Не выдумывай ничего, чего нет в данных.';
+// Форматирование без привязки к языку (для друга - он зеркалит язык юзера).
+const STYLE_FMT = 'Коротко и просто. Без markdown-разметки (без **, #, таблиц). Не используй длинное тире, только дефис. Суммы с пробелами (50 000 ₽), даты как ДД.ММ.ГГГГ. Не выдумывай ничего, чего нет в данных.';
+// Веб-ассистент всегда по-русски.
+const STYLE = 'Пиши по-русски. ' + STYLE_FMT;
 
 /* ---------- Веб-ассистент (деловой тон) ---------- */
 
@@ -250,9 +253,70 @@ function friendSystem(user) {
     'Ориентир по часам работы: поликлиники и банки примерно 8-20, магазины 9-22, госучреждения 9-18 в будни, врачи по записи днём. Ночью (примерно с 23 до 8) почти всё закрыто и люди спят. ' +
     'Если дело физически ещё не могло случиться (человек сказал «завтра пойду», а ещё не завтра или заведение закрыто) - не спрашивай про результат, это глупо выглядит. ' +
     'Ночью не дёргай по делам: пожелай спокойной ночи или спокойно поддержи разговор. Про дела и напоминания заводи речь в разумное дневное время. ' +
+    'ВАЖНО: отвечай на том языке, на котором пишет человек. Русское сообщение - русский ответ, английское - английский, и так далее. По умолчанию русский. ' +
     'Ответ обычно 1-3 предложения. ' +
-    STYLE
+    STYLE_FMT
   );
+}
+
+// Эмпатичный вечерний check-in, если у человека был тяжёлый день (№10).
+export async function aiCheckin(store, chatId, now = new Date()) {
+  const user = store.getUser(chatId);
+  const off = userOffset(user);
+  const history = store.recentHistory(10, chatId);
+  const ctx =
+    nowLine(off, now) +
+    '\n\nПоследние сообщения:\n' +
+    history.map((h) => `${h.role === 'user' ? user?.name || 'Друг' : 'Ты'}: ${h.text.slice(0, 200)}`).join('\n');
+  return ask(
+    [
+      { role: 'system', content: friendSystem(user) },
+      {
+        role: 'user',
+        content:
+          ctx +
+          '\n\nПохоже, у человека был непростой день. Напиши одно короткое тёплое сообщение как друг: мягко спроси, как он сейчас, поддержи. Без советов и без списка дел, просто по-человечески.',
+      },
+    ],
+    { maxTokens: 300, timeoutMs: 30000, retryDelays: [0, 5000] }
+  );
+}
+
+// Чек/счёт с фото -> структурированная трата/долг (№8). null, если не чек.
+export async function aiExtractReceipt(base64, mime = 'image/jpeg') {
+  const text = await chatCompletion(
+    AUDIO(),
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'Это фото чека, счёта или ценника? Если да - верни ТОЛЬКО JSON: ' +
+              '{"receipt":true,"amount":число_рублей,"merchant":"магазин/кому","category":"еда|транспорт|...","date":"YYYY-MM-DD или null"}. ' +
+              'Если это НЕ чек/счёт - верни {"receipt":false}.',
+          },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 300, timeoutMs: 45000, retryDelays: [0, 5000] }
+  );
+  try {
+    const s = text.indexOf('{');
+    const e = text.lastIndexOf('}');
+    if (s < 0 || e <= s) return null;
+    const j = JSON.parse(text.slice(s, e + 1));
+    if (!j.receipt || typeof j.amount !== 'number' || !isFinite(j.amount) || j.amount <= 0) return null;
+    return {
+      amount: Math.round(j.amount),
+      merchant: j.merchant ? String(j.merchant).slice(0, 60) : null,
+      category: j.category ? String(j.category).slice(0, 40) : 'Разное',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // Часть суток по «настенному» часу пользователя - для явной подсказки ИИ.
@@ -297,13 +361,23 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   ].join('\n');
 }
 
+// Сообщение почти без кириллицы -> вероятно, другой язык.
+function nonRussian(text) {
+  const letters = (text.match(/\p{L}/gu) || []).length;
+  const cyr = (text.match(/[а-яёА-ЯЁ]/g) || []).length;
+  return letters >= 4 && cyr / letters < 0.3;
+}
+
 export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
   const smartFacts = await smartRecall(store, chatId, text);
+  const langHint = nonRussian(text)
+    ? '\n\n[Reply in the SAME language as the message above, not in Russian.]'
+    : '';
   return ask(
     [
       { role: 'system', content: friendSystem(user) },
-      { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.` },
+      { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.${langHint}` },
     ],
     { maxTokens: 1200, onDelta, timeoutMs: 30000, retryDelays: [0, 5000] }
   );

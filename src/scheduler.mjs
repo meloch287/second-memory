@@ -6,7 +6,7 @@
 // Всё считается в часовом поясе пользователя (tz.mjs).
 
 import { join, dirname } from 'node:path';
-import { aiEnabled, aiMorningPing, aiConsolidate } from './ai.mjs';
+import { aiEnabled, aiMorningPing, aiConsolidate, aiCheckin } from './ai.mjs';
 import { exportVault } from './obsidian.mjs';
 import { wall, userDayBounds, userOffset, fmtUser } from './tz.mjs';
 import { todayWeather, weatherLine } from './weather.mjs';
@@ -130,7 +130,8 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       const early = Date.parse(e.due) > now.getTime();
       const head = early ? `🔔 Через ${Math.max(1, Math.round((Date.parse(e.due) - now.getTime()) / 60000))} мин (${t})` : `🔔 Пора (${t})`;
       await bot.sendButtons(chatId, `${head}: ${e.title || e.counterparty || 'дело'}`, [
-        [{ text: '✅ Сделал', callback_data: `done_${e.id}` }, { text: 'Ещё нет', callback_data: `keep_${e.id}` }],
+        [{ text: '✅ Сделал', callback_data: `done_${e.id}` }, { text: '⏰ +1 час', callback_data: `snooze_${e.id}_60` }],
+        [{ text: 'Завтра', callback_data: `snooze_${e.id}_1440` }, { text: 'Через неделю', callback_data: `snooze_${e.id}_10080` }],
       ]);
     }
 
@@ -166,7 +167,11 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       const { start, end } = userDayBounds(user, now);
       const wroteToday = store.rawForDay(chatId, start, end).length > 0;
       if (wroteToday) {
-        const phrase = EVENING_PHRASES[Math.floor(Math.random() * EVENING_PHRASES.length)].replaceAll('{name}', user.name || 'дружище');
+        // Если день был тяжёлым - тёплый эмпатичный check-in вместо обычного
+        const lowToday = user.lastLowMoodDay === `${w.getUTCFullYear()}-${w.getUTCMonth()}-${w.getUTCDate()}`;
+        let phrase;
+        if (lowToday) phrase = await aiCheckin(store, chatId, now).catch(() => null);
+        if (!phrase) phrase = EVENING_PHRASES[Math.floor(Math.random() * EVENING_PHRASES.length)].replaceAll('{name}', user.name || 'дружище');
         await bot.sendText(chatId, phrase);
         store.pushHistory('assistant', phrase, chatId);
       }

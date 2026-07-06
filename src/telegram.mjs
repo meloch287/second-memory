@@ -18,8 +18,11 @@ import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, co
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage } from './parser.mjs';
-import { balanceReport } from './finance.mjs';
+import { balanceReport, expensesReport } from './finance.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
+import { aiExtractReceipt } from './ai.mjs';
+
+const RUB = new Intl.NumberFormat('ru-RU');
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
 const hasFfmpeg = (() => {
@@ -278,7 +281,11 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>⏰ Напоминания: «напомни в 15:00 позвонить маме» - и я звякну ровно в это время. «Каждый понедельник созвон в 10:00» - буду напоминать регулярно. «Перенеси встречу на 16:00» или «отмени звонок» - подвину или уберу.</blockquote>',
       '',
-      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (сводка по долгам), «найди про Петрова». «Скинь в календарь» - пришлю файл для календаря телефона. «Экспорт» - выгружу всю память (CSV, дневник, JSON).</blockquote>',
+      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (долги), «траты» (расходы за месяц), «найди про Петрова». «Скинь в календарь» - файл для календаря телефона. «Экспорт» - вся память (CSV, дневник, JSON).</blockquote>',
+      '',
+      '<blockquote>💸 Трать словами: «потратил 500 на кофе» - учту. Кинь фото чека - распознаю сумму сам. Поправить память: «забудь про Петрова» или «это не так».</blockquote>',
+      '',
+      '<blockquote>🎙 «Отвечай голосом» - буду отвечать войсами, «отвечай текстом» - обратно. Пишешь на другом языке - отвечу на нём.</blockquote>',
       '',
       '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и сразу отвечу. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
       '',
@@ -426,6 +433,43 @@ export function startTelegramBot(store, token, log = console) {
       return true;
     }
 
+    if (p.kind === 'expenses') {
+      await send(chatId, esc(expensesReport(store, String(chatId), userOffset(user))));
+      return true;
+    }
+
+    if (p.kind === 'expense') {
+      store.add({ type: 'expense', title: p.category, category: p.category, amount: p.amount, chatId: String(chatId), text: p.text, status: 'done' });
+      store.addRaw(String(chatId), p.text); // пусть попадёт и в память дневника
+      await send(chatId, `Записал трату: ${esc(p.category)} - ${RUB.format(p.amount)} ₽ 💸`);
+      return true;
+    }
+
+    if (p.kind === 'forget') {
+      const n = store.removeFactsMatching(String(chatId), p.target);
+      await send(chatId, n ? `Забыл про «${esc(p.target)}». Стёр из памяти.` : `А про «${esc(p.target)}» я ничего и не помнил.`);
+      return true;
+    }
+
+    if (p.kind === 'correct') {
+      const n = store.removeRecentFacts(String(chatId), 2);
+      await send(chatId, n ? 'Понял, стёр последнее из памяти. Расскажи, как правильно - запомню заново.' : 'Ок, я и не записал ничего такого. Как оно на самом деле?');
+      return true;
+    }
+
+    if (p.kind === 'setvoice') {
+      store.setUser(String(chatId), { voiceReplies: p.on });
+      await send(chatId, p.on ? 'Окей, теперь отвечаю голосом 🎙' : 'Понял, отвечаю текстом.');
+      return true;
+    }
+
+    if (p.kind === 'voiceonce') {
+      if (!audioEnabled()) { await send(chatId, 'Голосом пока не могу - нет ключа озвучки. Отвечу текстом.'); return true; }
+      store.setUser(String(chatId), { voiceNext: true });
+      await send(chatId, 'Давай, спрашивай - отвечу голосом 🎙');
+      return true;
+    }
+
     if (p.kind === 'export') {
       await send(chatId, 'В каком виде выгрузить твою память?', {
         reply_markup: {
@@ -520,6 +564,28 @@ export function startTelegramBot(store, token, log = console) {
     });
   }
 
+  // Признаки тяжёлого настроения - для эмпатичных check-in'ов (№10).
+  const LOW_MOOD_RE = /(?:плохо|устал|вымотал|бесит|бесят|грустно|тоскливо|тяжело|болит|поругал|поссор|ссор|стресс|выгор|депресс|не хочу|достало|хреново|паршиво|обидно|плачу|реву|одинок|подавлен|нет сил|всё бесит|заебал)/;
+
+  // Ответ: голосом (если просили/включено) или текстом. one-shot флаг гасим.
+  async function deliver(chatId, replyText, user) {
+    const wantVoice = audioEnabled() && (user?.voiceReplies || user?.voiceNext);
+    if (user?.voiceNext) store.setUser(String(chatId), { voiceNext: false });
+    if (wantVoice) {
+      const stop = typingLoop(chatId, 'record_voice');
+      try {
+        const ogg = await aiTts(replyText);
+        const r = await sendVoice(chatId, ogg, replyText);
+        if (r.ok) return;
+      } catch (e) {
+        log.error('[telegram] tts', e.message);
+      } finally {
+        stop();
+      }
+    }
+    return send(chatId, esc(replyText));
+  }
+
   /* ---- Обычный разговор ---- */
 
   async function friendFlow(chatId, text) {
@@ -527,12 +593,16 @@ export function startTelegramBot(store, token, log = console) {
     const user = store.getUser(String(chatId));
     // долги/встречи/задачи тихо ложатся в базу с учётом часового пояса
     const captured = captureEntry(store, text, new Date(), chatId, userOffset(user));
+    // фиксируем тяжёлый день для вечернего check-in'а
+    if (LOW_MOOD_RE.test(text.toLowerCase().replace(/ё/g, 'е'))) {
+      const w = wall(user, new Date());
+      store.setUser(String(chatId), { lastLowMoodDay: `${w.getUTCFullYear()}-${w.getUTCMonth()}-${w.getUTCDate()}` });
+    }
 
     if (!aiEnabled()) {
-      // Без ключа ИИ отвечают правила, без потери данных
       const out = await handleMessage(store, text, new Date(), String(chatId));
       const reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
-      await send(chatId, esc(reply));
+      await deliver(chatId, reply, store.getUser(String(chatId)));
       await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
       return;
     }
@@ -544,13 +614,12 @@ export function startTelegramBot(store, token, log = console) {
       log.error('[telegram] friend', e.message);
     }
     if (!reply) {
-      // ИИ отлетел: записи уже сохранены, а бот идёт спать
       return send(chatId, esc(sleepyText(chatId)));
     }
     reply = withWake(chatId, reply);
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
-    await send(chatId, esc(reply));
+    await deliver(chatId, reply, store.getUser(String(chatId)));
     await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
   }
 
@@ -611,17 +680,32 @@ export function startTelegramBot(store, token, log = console) {
     return friendFlow(String(chatId), transcript);
   }
 
-  // Картинка (фото, статичный стикер, превью гифки): описываем и запоминаем.
-  async function imageFlow(chatId, fileId, label, caption, mime = 'image/jpeg') {
+  // Картинка (фото, статичный стикер, превью гифки): сначала пробуем распознать
+  // чек и записать трату (№8), иначе описываем и запоминаем.
+  async function imageFlow(chatId, fileId, label, caption, mime = 'image/jpeg', tryReceipt = false) {
     if (!audioEnabled()) {
       return send(chatId, 'Картинки пока не разглядываю: нет ключа мультимодального ИИ. Расскажи словами?');
     }
+    let b64;
+    try {
+      b64 = await withTyping(chatId, () => downloadBase64(fileId));
+    } catch (e) {
+      log.error('[telegram] image dl', e.message);
+      return send(chatId, 'Не смог скачать картинку. Попробуй ещё раз?');
+    }
+
+    if (tryReceipt) {
+      const rec = await withTyping(chatId, () => aiExtractReceipt(b64, mime)).catch(() => null);
+      if (rec) {
+        store.add({ type: 'expense', title: rec.category, category: rec.category, amount: rec.amount, counterparty: rec.merchant, chatId: String(chatId), text: `Чек: ${rec.merchant || rec.category}`, status: 'done' });
+        store.addRaw(String(chatId), `Потратил ${rec.amount} на ${rec.category}${rec.merchant ? ` (${rec.merchant})` : ''}`);
+        return send(chatId, `Чек распознал: ${esc(rec.category)}${rec.merchant ? ` (${esc(rec.merchant)})` : ''} - ${RUB.format(rec.amount)} ₽. Записал в траты 💸`);
+      }
+    }
+
     let description;
     try {
-      description = await withTyping(chatId, async () => {
-        const b64 = await downloadBase64(fileId);
-        return aiDescribeImage(b64, mime, caption || '');
-      });
+      description = await withTyping(chatId, () => aiDescribeImage(b64, mime, caption || ''));
     } catch (e) {
       log.error('[telegram] image', e.message);
       return send(chatId, 'Разглядывал-разглядывал, но так и не понял, что там. Расскажешь словами?');
@@ -672,7 +756,7 @@ export function startTelegramBot(store, token, log = console) {
 
     if (msg.photo && msg.photo.length) {
       const largest = msg.photo[msg.photo.length - 1];
-      return imageFlow(chatId, largest.file_id, '[Прислал фото]', msg.caption);
+      return imageFlow(chatId, largest.file_id, '[Прислал фото]', msg.caption, 'image/jpeg', true);
     }
 
     if (msg.animation) {
@@ -857,6 +941,17 @@ export function startTelegramBot(store, token, log = console) {
     }
     if (cb.data && cb.data.startsWith('keep_')) {
       return send(chatId, 'Понял, оставил. Напомню ещё.');
+    }
+    // Отложить напоминание (№5): snooze_<id>_<минуты>
+    if (cb.data && cb.data.startsWith('snooze_')) {
+      const [, id, mins] = cb.data.split('_');
+      const e = store.byId(Number(id));
+      if (!e || (e.chatId || 'web') !== chatId || e.status !== 'open') return send(chatId, 'Это дело уже неактуально 🙂');
+      const newDue = new Date(Date.now() + Number(mins) * 60000).toISOString();
+      store.patch(e.id, { due: newDue, hasTime: true, reminded: false });
+      const off = userOffset(store.getUser(chatId));
+      const when = Number(mins) >= 1440 ? fmtUser(newDue, off, false) : fmtUser(newDue, off, true).slice(-5);
+      return send(chatId, `Ок, напомню ${Number(mins) >= 1440 ? '' : 'в '}${when} 👍`);
     }
 
     if (!aiEnabled()) return;

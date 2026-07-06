@@ -32,6 +32,26 @@ export function parseMessage(text, now = new Date()) {
     return { kind: 'clearchat' };
   }
 
+  // Голос по запросу и тумблер озвучки (№9)
+  if (/^(?:отвечай|говори|пиши)\s+(?:мне\s+)?(?:текстом|не голосом|без голоса)/.test(t)) {
+    return { kind: 'setvoice', on: false };
+  }
+  if (/^(?:отвечай|говори)\s+(?:мне\s+)?(?:голос|войсом|аудио)/.test(t)) {
+    return { kind: 'setvoice', on: true };
+  }
+  if (/(?:ответь|скажи|можешь|давай).*(?:голос|войс|аудио)/.test(t) || /^голос(?:ом|овым)?[!?.]*$/.test(t)) {
+    return { kind: 'voiceonce' };
+  }
+
+  // Поправить память (№2): «забудь про X» / «это не так». Регистр из raw.
+  if (/^(?:забудь|удали из памяти|сотри)\s+/.test(t)) {
+    const target = raw.replace(/^\s*(?:забудь|удали из памяти|сотри)\s+(?:про|о|об)?\s*/i, '').trim();
+    if (target) return { kind: 'forget', target };
+  }
+  if (/^(?:нет,?\s*)?(?:это не так|я такого не говорил|ты не так понял|это неправда|неправда|ты перепутал)/.test(t)) {
+    return { kind: 'correct' };
+  }
+
   // Календарь: «скинь в календарь», «расписание в календарь», «экспорт .ics»
   if (/(?:в календар|скинь календар|календарь.*телефон|\.ics)/.test(t)) {
     return { kind: 'calendar' };
@@ -73,9 +93,19 @@ export function parseMessage(text, now = new Date()) {
   const search = parseSearch(raw, t);
   if (search) return search;
 
+  // Сводка трат
+  if (/^(?:траты|расходы|на что.*(?:трач|деньги|уход)|сколько потрат)/.test(t)) {
+    return { kind: 'expenses' };
+  }
+
   if (QUERY_STARTS.some((s) => t.startsWith(s)) || t.includes('что у меня')) {
     return parseQuery(raw, t, now);
   }
+
+  // Трата - раньше обычной записи (иначе уйдёт в заметку)
+  const exp = parseExpense(raw, t);
+  if (exp) return exp;
+
   return parseEntry(raw, t, now);
 }
 
@@ -195,6 +225,24 @@ function parseQuery(raw, t, now) {
 
 function entry(type, fields) {
   return { kind: 'entry', entry: { type, ...fields } };
+}
+
+// Трата (№7): «потратил 2000 на бензин», «купил кофе за 300», «минус 500 такси»
+const EXPENSE_RE = /(?:потратил|потратила|истратил|истратила|купил|купила|заплатил|заплатила|оплатил|оплатила|отдал|отдала|спустил|спустила|минус)/;
+export function parseExpense(raw, t) {
+  if (!EXPENSE_RE.test(t)) return null;
+  // не путаем с долгом («заплатил Пете» = долг? нет, трата; «должен» ловится раньше)
+  const { amount, rest } = extractAmount(raw);
+  if (amount == null) return null;
+  // категория: убираем глагол, «за», «на», предлоги, сумму
+  let cat = rest
+    .replace(EXPENSE_RE, '')
+    .replace(/^\s*(?:за|на|в|по)\s+/i, '')
+    .replace(/\s*(?:за|на)\s*$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  cat = cap(cat) || 'Разное';
+  return { kind: 'expense', amount, category: cat.slice(0, 60), text: raw };
 }
 
 function parseEntry(raw, t, now) {

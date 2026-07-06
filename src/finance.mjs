@@ -9,6 +9,31 @@ const fmtDay = (iso, off = 180) => {
   return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
 };
 
+// Сводка трат за текущий месяц по категориям (№7).
+export function expensesReport(store, chatId, offsetMin = 180, now = Date.now()) {
+  if (!chatId) return 'Пока трат нет.';
+  const w = new Date(now + offsetMin * 60000);
+  const monthStart = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), 1) - offsetMin * 60000;
+  const exp = store
+    .list({ type: 'expense', chatId })
+    .filter((e) => Date.parse(e.createdAt) >= monthStart);
+  if (!exp.length) return 'В этом месяце трат пока не записано. Скажи «потратил 500 на кофе» - учту.';
+
+  const byCat = new Map();
+  let total = 0;
+  for (const e of exp) {
+    const cat = e.category || e.title || 'Разное';
+    byCat.set(cat, (byCat.get(cat) || 0) + (e.amount || 0));
+    total += e.amount || 0;
+  }
+  const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+  const lines = [`💸 Траты за ${months[w.getUTCMonth()]}: ${money(total)}`, ''];
+  for (const [cat, sum] of [...byCat.entries()].sort((a, b) => b[1] - a[1])) {
+    lines.push(`  ${cat}: ${money(sum)}`);
+  }
+  return lines.join('\n');
+}
+
 export function balanceReport(store, chatId, offsetMin = 180, now = Date.now()) {
   if (!chatId) return 'Долгов нет.'; // без chatId не агрегируем всех
   const debts = store.list({ type: 'debt', status: 'open', chatId });

@@ -1,7 +1,16 @@
 // Файловое JSON-хранилище с атомарной записью (tmp + rename).
+// Опционально шифруется на диске (AES-256-GCM) при заданном SM_ENCRYPTION_KEY.
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+
+const ENC_MAGIC = Buffer.from('SMENC1\n'); // маркер зашифрованного файла
+
+function encKey() {
+  const k = process.env.SM_ENCRYPTION_KEY;
+  return k ? createHash('sha256').update(k).digest() : null; // 32 байта
+}
 
 export class Store {
   constructor(file) {
@@ -12,8 +21,24 @@ export class Store {
 
   load() {
     if (!existsSync(this.file)) return;
+    let wasPlaintext = false;
     try {
-      const parsed = JSON.parse(readFileSync(this.file, 'utf8'));
+      const buf = readFileSync(this.file);
+      let text;
+      if (buf.length >= ENC_MAGIC.length && buf.subarray(0, ENC_MAGIC.length).equals(ENC_MAGIC)) {
+        const key = encKey();
+        if (!key) throw new Error('данные зашифрованы, но SM_ENCRYPTION_KEY не задан');
+        const iv = buf.subarray(ENC_MAGIC.length, ENC_MAGIC.length + 12);
+        const tag = buf.subarray(ENC_MAGIC.length + 12, ENC_MAGIC.length + 28);
+        const ct = buf.subarray(ENC_MAGIC.length + 28);
+        const d = createDecipheriv('aes-256-gcm', key, iv);
+        d.setAuthTag(tag);
+        text = Buffer.concat([d.update(ct), d.final()]).toString('utf8');
+      } else {
+        text = buf.toString('utf8');
+        wasPlaintext = true;
+      }
+      const parsed = JSON.parse(text);
       if (parsed && Array.isArray(parsed.entries)) {
         if (!Array.isArray(parsed.history)) parsed.history = [];
         if (!parsed.users || typeof parsed.users !== 'object') parsed.users = {};
@@ -27,13 +52,27 @@ export class Store {
     } catch {
       // повреждённый файл откладываем в сторону, данные не затираем молча
       copyFileSync(this.file, this.file + '.corrupt-' + Date.now());
+      return;
     }
+    // Миграция: файл был открытым, а ключ задан - перешифруем при первом сохранении
+    if (wasPlaintext && encKey()) this.save();
   }
 
   save() {
     mkdirSync(dirname(this.file), { recursive: true });
+    const json = JSON.stringify(this.data, null, 2);
+    const key = encKey();
+    let out;
+    if (key) {
+      const iv = randomBytes(12);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      const ct = Buffer.concat([cipher.update(json, 'utf8'), cipher.final()]);
+      out = Buffer.concat([ENC_MAGIC, iv, cipher.getAuthTag(), ct]);
+    } else {
+      out = Buffer.from(json, 'utf8');
+    }
     const tmp = this.file + '.tmp';
-    writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+    writeFileSync(tmp, out);
     renameSync(tmp, this.file);
   }
 
@@ -230,6 +269,38 @@ export class Store {
   // Досье людей (обновляет ночная консолидация).
   getPersonas(chatId) {
     return this.data.personas[chatId] || {};
+  }
+
+  // Забыть факты по запросу («забудь про Петрова»). Возвращает число удалённых.
+  removeFactsMatching(chatId, query) {
+    const words = String(query).toLowerCase().replace(/ё/g, 'е').split(/[^а-яa-z0-9]+/).filter((w) => w.length > 3);
+    if (!words.length) return 0;
+    const hit = (hay, w) => hay.includes(w) || (w.length > 4 && hay.includes(w.slice(0, -2)));
+    const before = this.data.facts.length;
+    this.data.facts = this.data.facts.filter((f) => {
+      if (f.chatId !== chatId) return true;
+      const hay = (f.text + ' ' + (f.people || []).join(' ') + ' ' + (f.tags || []).join(' ')).toLowerCase().replace(/ё/g, 'е');
+      return !words.some((w) => hit(hay, w));
+    });
+    // заодно чистим досье упомянутых людей
+    const personas = this.data.personas[chatId];
+    if (personas) {
+      for (const name of Object.keys(personas)) {
+        const n = name.toLowerCase().replace(/ё/g, 'е');
+        if (words.some((w) => hit(n, w))) delete personas[name];
+      }
+    }
+    this.save();
+    return before - this.data.facts.length;
+  }
+
+  // Забыть последние N фактов чата («нет, это было не так»).
+  removeRecentFacts(chatId, n = 1) {
+    const ids = this.data.facts.filter((f) => f.chatId === chatId).slice(-n).map((f) => f.id);
+    const set = new Set(ids);
+    this.data.facts = this.data.facts.filter((f) => !set.has(f.id));
+    this.save();
+    return ids.length;
   }
 
   setPersonas(chatId, map) {
