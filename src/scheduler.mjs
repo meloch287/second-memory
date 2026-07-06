@@ -57,7 +57,18 @@ export function todayEvents(store, chatId, now = new Date()) {
 }
 
 export function startScheduler(store, bot, log = console, intervalMs = 300000) {
+  let busy = false;
   const tick = async () => {
+    if (busy) return; // тик с ИИ-вызовами может пережить интервал - не перекрываемся
+    busy = true;
+    try {
+      await runTick();
+    } finally {
+      busy = false;
+    }
+  };
+
+  const runTick = async () => {
     const now = new Date();
     const today = dayKey(now);
     const hour = now.getHours();
@@ -68,6 +79,7 @@ export function startScheduler(store, bot, log = console, intervalMs = 300000) {
         if (!user || user.step) continue;
         try {
           if (hour === morningHour(user.rhythm) && user.lastMorningPing !== today) {
+            store.setUser(chatId, { lastMorningPing: today }); // маркер ДО await - защита от двойного пинга
             const events = todayEvents(store, chatId, now);
             if (events.length) {
               const text = await aiMorningPing(user, events, now).catch(() => null);
@@ -76,10 +88,10 @@ export function startScheduler(store, bot, log = console, intervalMs = 300000) {
                 store.pushHistory('assistant', text, chatId);
               }
             }
-            store.setUser(chatId, { lastMorningPing: today }); // отмечаем и при пустом дне - не долбим повторно
           }
 
           if (hour === eveningHour(user.rhythm) && user.lastEveningPing !== today) {
+            store.setUser(chatId, { lastEveningPing: today }); // маркер ДО await
             const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
             const wroteToday = store.rawForDay(chatId, start, start + DAY_MS).length > 0;
             if (wroteToday) {
@@ -90,7 +102,6 @@ export function startScheduler(store, bot, log = console, intervalMs = 300000) {
               await bot.sendText(chatId, phrase);
               store.pushHistory('assistant', phrase, chatId);
             }
-            store.setUser(chatId, { lastEveningPing: today });
           }
         } catch (e) {
           log.error('[scheduler] ping', chatId, e.message);

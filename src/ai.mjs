@@ -501,7 +501,7 @@ export async function aiSummarizeText(text, filename) {
 
 // Из потока дневника извлекаются и факты для памяти, и структурные
 // записи (долги, задачи, встречи), которые мог упустить быстрый парсер.
-export async function aiExtractFacts(rawItems) {
+export async function aiExtractFacts(rawItems, now = new Date()) {
   const list = rawItems.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
   const text = await chatCompletion(
     WORKER(),
@@ -509,6 +509,7 @@ export async function aiExtractFacts(rawItems) {
       {
         role: 'user',
         content:
+          `Сегодня ${fmtLocal(now.toISOString(), true)}. Относительные даты («до пятницы», «завтра») считай от этого момента.\n` +
           'Преврати сырые дневниковые записи в память. Верни ТОЛЬКО JSON-объект:\n' +
           '{"facts":[{"text":"короткий факт: кто, что, когда, эмоция","people":["Имя"],"tags":["тема"]}],' +
           '"entries":[{"type":"debt|task|meeting","title":"...","counterparty":"Имя или null","amount":числоИлиNull,' +
