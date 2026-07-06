@@ -41,6 +41,27 @@ const HELLO_AGAIN = [
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+// Ответ на шаге знакомства похож на встречный вопрос или непонимание,
+// а не на само значение. Кириллица: без \b, только includes/startsWith.
+export function isConfusedReply(text) {
+  const t = String(text).toLowerCase().replace(/ё/g, 'е').trim();
+  if (/\?\s*$/.test(t)) return true;
+  const starts = ['что', 'чего', 'зачем', 'почему', 'как это', 'в смысле', 'не понял', 'не понимаю', 'а это'];
+  if (starts.some((s) => t.startsWith(s))) return true;
+  return t.includes('что значит') || t.includes('что это') || t.includes('не знаю что');
+}
+
+// Живые объяснения каждого вопроса знакомства + повтор вопроса.
+const STEP_EXPLAIN = {
+  botname:
+    'А, это я про имя для себя 🙂 Ты будешь так ко мне обращаться, а я - подписываться. Подойдёт любое: Барни, Джарвис, Братан, хоть Пельмень.\n\nТак как меня назовёшь?',
+  name: 'Всё просто: скажи, как к тебе обращаться. Имя или прозвище, как удобно.\n\nТак как тебя называть?',
+  rhythm:
+    'Жаворонок - это кто рано встаёт и с утра полон сил. Сова - кто оживает к вечеру и сидит допоздна. Мне это нужно, чтобы понимать твой день.\n\nТак ты кто: жаворонок или сова?',
+  goal:
+    'Я спрашиваю, что сейчас занимает большую часть твоей жизни: работа, учёба, семья, спорт, отдых. Так мне проще понимать твои записи.\n\nЧто у тебя сейчас главное?',
+};
+
 const FALLBACKS = [
   'Слушай, я сегодня что-то туплю. Скажи ещё раз чуть иначе?',
   'Кажется, я задумался и прослушал. Повтори, пожалуйста?',
@@ -112,6 +133,19 @@ export function startTelegramBot(store, token, log = console) {
 
   async function onboardingStep(chatId, user, text) {
     const value = text.trim().slice(0, 100);
+
+    // Встречный вопрос - объясняем и переспрашиваем, ничего не сохраняя
+    if (isConfusedReply(value)) {
+      return send(chatId, esc(STEP_EXPLAIN[user.step] || STEP_EXPLAIN.name));
+    }
+    // Имя из целого предложения - вероятно, это не имя
+    if ((user.step === 'botname' || user.step === 'name') && (value.length > 30 || value.split(/\s+/).length > 3)) {
+      return send(
+        chatId,
+        `Хм, длинновато для имени 🙂 Давай короче. ${user.step === 'botname' ? 'Как меня назовёшь?' : 'Как тебя называть?'}`
+      );
+    }
+
     if (user.step === 'botname') {
       store.setUser(chatId, { botName: value, step: 'name' });
       return send(chatId, `${esc(value)} - звучит! Так меня ещё никто не называл 😄\n\nА тебя как называть?`);

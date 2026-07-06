@@ -106,6 +106,17 @@ test('шкала памяти: пустая база даёт 0, записи н
   assert.ok(covCase.matched >= 1, 'винительный падеж должен матчиться по основе');
 });
 
+test('онбординг: встречный вопрос не принимается за ответ', async () => {
+  const { isConfusedReply } = await import('../src/telegram.mjs');
+  assert.equal(isConfusedReply('Это что значит?'), true);
+  assert.equal(isConfusedReply('что значит жаворонок'), true);
+  assert.equal(isConfusedReply('в смысле'), true);
+  assert.equal(isConfusedReply('не понял'), true);
+  assert.equal(isConfusedReply('Саня'), false);
+  assert.equal(isConfusedReply('сова'), false);
+  assert.equal(isConfusedReply('Работа'), false);
+});
+
 test('mp3 и другие аудиоформаты Telegram корректно маппятся', async () => {
   const { audioFormatFromMime } = await import('../src/ai.mjs');
   assert.equal(audioFormatFromMime('audio/mpeg'), 'mp3');
