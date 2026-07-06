@@ -125,6 +125,18 @@ export function startTelegramBot(store, token, log = console) {
       ...extra,
     });
 
+  /* ---- «Сон» при недоступном ИИ ---- */
+  const sleepAnnounced = new Set();
+  function sleepyText(chatId) {
+    const key = String(chatId);
+    if (sleepAnnounced.has(key)) return SLEEP_AGAIN;
+    sleepAnnounced.add(key);
+    return SLEEP_FIRST;
+  }
+  function withWake(chatId, reply) {
+    return sleepAnnounced.delete(String(chatId)) ? WAKE_PREFIX + reply : reply;
+  }
+
   // «Печатает…» держится, пока готовим ответ: Telegram гасит статус через
   // ~5 секунд, поэтому шлём его циклом до самой отправки сообщения.
   function typingLoop(chat_id, action = 'typing') {
