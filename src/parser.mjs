@@ -239,6 +239,11 @@ function entry(type, fields) {
 }
 
 // Поиск участника группы по имени/username с учётом падежа («никиту» -> Никита).
+// Транслитерация кириллицы в латиницу - имена в Telegram часто латиницей
+// («Nikita»), а зовут их кириллицей («тегни Никиту»).
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+const toLat = (s) => s.replace(/[а-яе]/g, (c) => TRANSLIT[c] ?? c);
+
 export function findMember(members, query) {
   const stem = (s) => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[ауыоеиюяьй]+$/, '');
   const q = String(query).toLowerCase().replace(/^@/, '').replace(/ё/g, 'е').trim();
@@ -249,9 +254,9 @@ export function findMember(members, query) {
   }
   const qs = stem(q);
   if (qs.length < 2) return null;
+  const match = (n) => n && (n === qs || n.startsWith(qs) || qs.startsWith(n) || toLat(n) === toLat(qs) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
   for (const [id, m] of Object.entries(members || {})) {
-    const n = stem(m.name || '');
-    if (n && (n === qs || n.startsWith(qs) || qs.startsWith(n))) return { id, ...m };
+    if (match(stem(m.name || ''))) return { id, ...m };
   }
   return null;
 }

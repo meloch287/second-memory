@@ -36,6 +36,14 @@ test('findMember: по имени с падежом и по username', () => {
   assert.equal(findMember({}, 'Никита'), null);
 });
 
+test('findMember: кириллица находит латинское имя (Nikita ↔ никиту)', () => {
+  const members = { 482: { name: 'Nikita', username: 'pxpusk' }, 7: { name: 'Sasha', username: null } };
+  assert.equal(findMember(members, 'никиту')?.id, '482', 'кир. падеж находит лат. Nikita');
+  assert.equal(findMember(members, 'Никита')?.id, '482');
+  assert.equal(findMember(members, 'сашу')?.id, '7', 'кир. падеж находит лат. Sasha');
+  assert.equal(findMember(members, 'петю'), null);
+});
+
 test('parseGroupCmd: обычные фразы - не команды', () => {
   assert.equal(parseGroupCmd(norm('что мы решили по бюджету?')), null);
   assert.equal(parseGroupCmd(norm('напомни завтра про созвон')), null);

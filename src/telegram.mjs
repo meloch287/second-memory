@@ -920,6 +920,26 @@ export function startTelegramBot(store, token, log = console) {
 
     if (!addressed) return; // без обращения молчим, только запоминаем
 
+    // «я Никита» - человек представился: обновляем его имя в реестре
+    const iam = text.match(/^(?:я|меня зовут)\s+([А-Яа-яЁёA-Za-z]{2,20})[!.]*$/i);
+    if (iam && msg.from) {
+      const newName = iam[1][0].toUpperCase() + iam[1].slice(1);
+      const members2 = { ...(g.members || {}) };
+      members2[msg.from.id] = { ...(members2[msg.from.id] || {}), name: newName, username: msg.from.username || members2[msg.from.id]?.username || null };
+      g = store.setUser(key, { members: members2 });
+      return send(chatId, `Принял, ${esc(newName)}! Теперь знаю тебя по имени 🙂`);
+    }
+
+    // «тегни его/её» ответом на чьё-то сообщение - тегаем автора того сообщения
+    if (/^(?:тегни|тэгни|пингани|позови|призови)\s+(?:его|её|ее)[!?.\s]*$/i.test(text)) {
+      const t = msg.reply_to_message?.from;
+      if (t && !t.is_bot) {
+        const mention = t.username ? `@${t.username}` : `<a href="tg://user?id=${t.id}">${esc(t.first_name || 'Эй')}</a>`;
+        return send(chatId, `${mention}, тебя ${esc(fromName)} зовёт 🙂`);
+      }
+      return send(chatId, 'Ответь командой «тегни его» на сообщение самого человека - тогда пойму, кого звать.');
+    }
+
     // Связка имени с ником: «Никита - это @pxpusk», «запомни Никита = @pxpusk»
     const link = text.match(/^(?:запомни[:,]?\s*)?([А-Яа-яЁёA-Za-z]{2,20})\s*(?:-|—|–|=|это)\s*(?:это\s+)?@([A-Za-z][A-Za-z0-9_]{3,31})[!.]*$/i);
     if (link) {
