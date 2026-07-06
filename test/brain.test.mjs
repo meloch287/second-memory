@@ -1,0 +1,80 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.mjs';
+import { handleMessage } from '../src/brain.mjs';
+
+const NOW = new Date(2026, 6, 6, 9, 0); // понедельник, 6 июля 2026
+
+function freshStore() {
+  const dir = mkdtempSync(join(tmpdir(), 'second-memory-'));
+  return new Store(join(dir, 'memory.json'));
+}
+
+test('сценарий: долги записываются и отгружаются одним запросом', () => {
+  const s = freshStore();
+
+  const r1 = handleMessage(s, 'Иванов должен 50 000 до 20 июля', NOW);
+  assert.match(r1.reply, /Записал долг №1/);
+  assert.match(r1.reply, /Иванов/);
+
+  const r2 = handleMessage(s, 'я должен Петрову 15к до пятницы', NOW);
+  assert.match(r2.reply, /вы должны/);
+
+  const r3 = handleMessage(s, 'отгрузи все долговые обязательства заказчиков', NOW);
+  assert.match(r3.reply, /Открытые долги \(2\)/);
+  assert.match(r3.reply, /Иванов/);
+  assert.match(r3.reply, /Петрову/);
+
+  const r4 = handleMessage(s, 'сколько мне должны', NOW);
+  assert.match(r4.reply, /Вам должны/);
+  assert.match(r4.reply, /50/);
+});
+
+test('сценарий: встреча попадает в сводку на завтра', () => {
+  const s = freshStore();
+  handleMessage(s, 'запиши встречу с Сергеем завтра в 15:00', NOW);
+  const r = handleMessage(s, 'что у меня завтра', NOW);
+  assert.match(r.reply, /Сводка на 07\.07\.2026/);
+  assert.match(r.reply, /Встреча с Сергеем/);
+  assert.match(r.reply, /15:00/);
+});
+
+test('сценарий: «готово N» закрывает запись, она уходит из списков', () => {
+  const s = freshStore();
+  handleMessage(s, 'напомни оплатить хостинг через 3 дня', NOW);
+  const done = handleMessage(s, 'готово 1', NOW);
+  assert.match(done.reply, /закрыта/);
+  const list = handleMessage(s, 'покажи задачи', NOW);
+  assert.match(list.reply, /ничего не найдено/);
+});
+
+test('сценарий: просроченный долг помечается в выдаче', () => {
+  const s = freshStore();
+  handleMessage(s, 'Смирнов должен 30 000 до 1 июля', NOW); // уже в прошлом
+  const r = handleMessage(s, 'покажи долги', NOW);
+  assert.match(r.reply, /ПРОСРОЧЕН/);
+});
+
+test('сценарий: заметка сохраняется и видна в списке заметок', () => {
+  const s = freshStore();
+  handleMessage(s, 'клиент Альфа просил расширить договор', NOW);
+  const r = handleMessage(s, 'покажи заметки', NOW);
+  assert.match(r.reply, /Альфа/);
+});
+
+test('сценарий: удаление записи', () => {
+  const s = freshStore();
+  handleMessage(s, 'запиши встречу с Олегом завтра в 12:00', NOW);
+  const r = handleMessage(s, 'удали 1', NOW);
+  assert.match(r.reply, /Удалил/);
+  assert.equal(s.list({ status: 'open' }).length, 0);
+});
+
+test('пустое сообщение — вежливая подсказка', () => {
+  const s = freshStore();
+  const r = handleMessage(s, '   ', NOW);
+  assert.match(r.reply, /Напишите/);
+});

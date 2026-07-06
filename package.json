@@ -1,0 +1,24 @@
+{
+  "name": "second-memory",
+  "version": "1.0.0",
+  "description": "Вторая память — ассистент в одно окно: записывает встречи, задачи и долги обычным русским языком и отвечает на запросы. Ноль зависимостей.",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "keywords": [
+    "assistant",
+    "second-brain",
+    "russian",
+    "nlp",
+    "zero-dependency",
+    "telegram-bot"
+  ],
+  "author": "Саша <good177yy@mail.ru>",
+  "license": "MIT"
+}

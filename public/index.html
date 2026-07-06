@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вторая память — персональный ассистент для дел, встреч и долгов</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%A0%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a href="#main" class="skip-link">Перейти к диалогу с ассистентом</a>
+
+  <div class="app">
+    <header class="app-header">
+      <h1>Вторая память</h1>
+      <p class="tagline">Одно окно: говорите обычным языком — я запишу, разложу по полочкам и отдам по первому запросу.</p>
+    </header>
+
+    <main id="main" tabindex="-1" aria-labelledby="chat-heading">
+      <h2 id="chat-heading" class="visually-hidden">Диалог с ассистентом</h2>
+
+      <div class="chat">
+        <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-relevant="additions"
+             aria-atomic="false" aria-label="История диалога" tabindex="0">
+          <div class="message message--assistant">
+            <span class="visually-hidden">Ассистент:</span>
+            <p>Здравствуйте! Я ваша вторая память. Пишите как есть: «Иванов должен 50 000 до 20 июля», «запиши встречу с Сергеем завтра в 15:00», «напомни оплатить хостинг через 3 дня». Спросите «сводка» или «сколько мне должны» — отвечу мгновенно. Команда «помощь» покажет все примеры.</p>
+          </div>
+        </div>
+
+        <div id="chat-status" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+        <div class="quick-actions" role="group" aria-label="Быстрые действия">
+          <button type="button" class="chip" data-msg="сводка">Сводка</button>
+          <button type="button" class="chip" data-msg="покажи все долги">Все долги</button>
+          <button type="button" class="chip" data-msg="что у меня завтра">Что завтра</button>
+          <button type="button" class="chip" data-msg="помощь">Помощь</button>
+        </div>
+
+        <form id="composer" class="composer" autocomplete="off">
+          <label for="message-input" class="visually-hidden">Сообщение</label>
+          <input id="message-input" name="message" type="text" autocomplete="off"
+                 placeholder="Например: Иванов должен 50 000 до 20 июля" required
+                 aria-describedby="form-hint">
+          <button type="button" id="mic-toggle" class="mic-btn" aria-pressed="false"
+                  aria-label="Голосовой ввод" hidden>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
+            </svg>
+          </button>
+          <button type="submit" class="btn-send">Отправить</button>
+        </form>
+        <p id="form-hint" class="visually-hidden" aria-live="polite"></p>
+      </div>
+    </main>
+
+    <aside class="panel" aria-labelledby="memory-heading">
+      <h2 id="memory-heading" tabindex="-1">Память</h2>
+
+      <section class="panel-section" aria-labelledby="h-debt">
+        <h3 id="h-debt">Долги (0)</h3>
+        <ul id="list-debt"><li class="empty-state">Пока нет долгов</li></ul>
+      </section>
+
+      <section class="panel-section" aria-labelledby="h-meeting">
+        <h3 id="h-meeting">Встречи (0)</h3>
+        <ul id="list-meeting"><li class="empty-state">Пока нет встреч</li></ul>
+      </section>
+
+      <section class="panel-section" aria-labelledby="h-task">
+        <h3 id="h-task">Задачи (0)</h3>
+        <ul id="list-task"><li class="empty-state">Пока нет задач</li></ul>
+      </section>
+
+      <section class="panel-section" aria-labelledby="h-note">
+        <h3 id="h-note">Заметки (0)</h3>
+        <ul id="list-note"><li class="empty-state">Пока нет заметок</li></ul>
+      </section>
+    </aside>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
