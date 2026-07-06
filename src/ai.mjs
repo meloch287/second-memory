@@ -483,16 +483,24 @@ export async function aiMorningPing(user, eventLines, now = new Date()) {
 // polza возвращает JSON {"audio": base64}; на всякий случай понимаем и бинарь.
 export async function aiTts(text) {
   const cfg = AUDIO();
-  const res = await fetch(`${cfg.url}/audio/speech`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: process.env.AI_TTS_MODEL || 'openai/gpt-4o-mini-tts',
-      input: String(text).slice(0, 1500),
-      voice: process.env.AI_TTS_VOICE || 'alloy',
-      response_format: 'opus',
-    }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000); // без таймаута озвучка могла зависать
+  let res;
+  try {
+    res = await fetch(`${cfg.url}/audio/speech`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.AI_TTS_MODEL || 'openai/gpt-4o-mini-tts',
+        input: String(text).slice(0, 1500),
+        voice: process.env.AI_TTS_VOICE || 'alloy',
+        response_format: 'opus',
+      }),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('json')) {

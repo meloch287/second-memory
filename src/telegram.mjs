@@ -245,7 +245,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (сводка по долгам), «найди про Петрова». «Скинь в календарь» - пришлю файл для календаря телефона. «Экспорт» - выгружу всю память (CSV, дневник, JSON).</blockquote>',
       '',
-      '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и отвечу голосом. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
+      '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и сразу отвечу. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
       '',
       '<blockquote>⚙️ «Настройки» покажут всё про тебя. «Напоминай за 30 минут», «мой город Казань» - подстрою под себя. По утрам расскажу про дела и погоду.</blockquote>',
       '',
@@ -487,7 +487,7 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Обычный разговор ---- */
 
-  async function friendFlow(chatId, text, { asVoice = false } = {}) {
+  async function friendFlow(chatId, text) {
     store.addRaw(chatId, text);
     const user = store.getUser(String(chatId));
     // долги/встречи/задачи тихо ложатся в базу с учётом часового пояса
@@ -500,32 +500,6 @@ export function startTelegramBot(store, token, log = console) {
       await send(chatId, esc(reply));
       await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
       return;
-    }
-
-    // На голосовое отвечаем голосом: вместо драфта - статус «записывает
-    // голосовое», ответ озвучивается TTS, текст уходит подписью.
-    if (asVoice) {
-      const stopAction = typingLoop(chatId, 'record_voice');
-      try {
-        const reply = withWake(chatId, await aiFriendReply(store, chatId, text));
-        store.pushHistory('user', text, String(chatId));
-        store.pushHistory('assistant', reply, String(chatId));
-        try {
-          const ogg = await aiTts(reply);
-          const sent = await sendVoice(chatId, ogg, reply);
-          if (!sent.ok) await send(chatId, esc(reply));
-        } catch (e) {
-          log.error('[telegram] tts', e.message); // голос не вышел - ответим текстом
-          await send(chatId, esc(reply));
-        }
-        await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
-        return;
-      } catch (e) {
-        log.error('[telegram] friend-voice', e.message);
-        return send(chatId, esc(sleepyText(chatId)));
-      } finally {
-        stopAction();
-      }
     }
 
     let reply;
@@ -598,8 +572,8 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
     }
     if (user?.step) return onboardingStep(chatId, user, transcript);
-    await send(chatId, `🎙 «${esc(transcript.slice(0, 500))}${transcript.length > 500 ? '…' : ''}»`);
-    return friendFlow(String(chatId), transcript, { asVoice: !long }); // длинное - ответим текстом
+    // Без дублирования расшифровки - сразу ответ на голосовое текстом.
+    return friendFlow(String(chatId), transcript);
   }
 
   // Картинка (фото, статичный стикер, превью гифки): описываем и запоминаем.
@@ -673,8 +647,7 @@ export function startTelegramBot(store, token, log = console) {
       });
       if (!transcript) return send(chatId, 'Кружок посмотрел, но слов не разобрал. Повтори?');
       if (user?.step) return onboardingStep(chatId, user, transcript);
-      await send(chatId, `🎥 «${esc(transcript)}»`);
-      return friendFlow(String(chatId), transcript, { asVoice: true });
+      return friendFlow(String(chatId), transcript); // без эха, сразу ответ текстом
     }
 
     if (msg.document) {
