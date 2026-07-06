@@ -98,7 +98,7 @@ const server = createServer(async (req, res) => {
       res.end(data);
     } catch {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('404 — не найдено');
+      res.end('404 - не найдено');
     }
   } catch (e) {
     json(res, 500, { error: e.message });

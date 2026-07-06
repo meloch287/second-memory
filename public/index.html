@@ -12,8 +12,14 @@
 
   <div class="app">
     <header class="app-header">
-      <h1>Вторая память</h1>
-      <p class="tagline">Одно окно: говорите обычным языком — голосом или текстом. Я запишу, разложу по полочкам и отдам по первому запросу.</p>
+      <div class="brand">
+        <svg class="brand-mark" aria-hidden="true" focusable="false" width="34" height="34" viewBox="0 0 34 34">
+          <circle cx="17" cy="17" r="15" fill="#2454E8"/>
+          <circle cx="17" cy="17" r="6" fill="#FFFFFF"/>
+        </svg>
+        <h1>Вторая память</h1>
+      </div>
+      <p class="tagline">Пишите или говорите. Я запишу долги, встречи и задачи. Спросите. Отвечу сразу.</p>
     </header>
 
     <main id="main" tabindex="-1" aria-labelledby="chat-heading">
@@ -24,7 +30,7 @@
              aria-atomic="false" aria-label="История диалога" tabindex="0">
           <div class="message message--assistant" id="welcome-msg">
             <span class="visually-hidden">Ассистент:</span>
-            <p>Здравствуйте! Я ваша вторая память. Пишите или наговаривайте голосом — кнопка с микрофоном записывает голосовое и сразу расшифровывает его. Примеры: «Иванов должен 50 000 до 20 июля», «запиши встречу с Сергеем завтра в 15:00», «напомни оплатить хостинг через 3 дня». Спросите «сводка» или «сколько мне должны» — отвечу мгновенно. Команда «помощь» покажет все примеры.</p>
+            <p>Здравствуйте! Я ваша вторая память. Пишите текстом или голосом. Я запишу долг, встречу, задачу или заметку. Примеры: «клиент должен 50 000 до 20 июля», «встреча завтра в 15:00», «напомни оплатить счёт через 3 дня». Скажите «саммари» и получите сводку от ИИ. Команда «помощь» покажет всё.</p>
           </div>
         </div>
 
@@ -49,7 +55,7 @@
               <button type="button" class="menu-item" data-msg="саммари">ИИ-саммари</button>
               <button type="button" class="menu-item" id="menu-clear-chat">Очистить чат</button>
               <div class="menu-item--confirm" id="clear-chat-confirm-box" hidden>
-                <span id="clear-chat-confirm-label">Очистить чат? История переписки исчезнет, но долги, встречи, задачи и заметки останутся.</span>
+                <span id="clear-chat-confirm-label">Очистить чат? Записи в памяти останутся.</span>
                 <div class="confirm-row" role="group" aria-labelledby="clear-chat-confirm-label">
                   <button type="button" id="clear-chat-cancel" class="btn-ghost">Нет, оставить</button>
                   <button type="button" id="clear-chat-confirm" class="btn-danger">Да, очистить</button>
@@ -63,7 +69,7 @@
         <form id="composer" class="composer" autocomplete="off">
           <label for="message-input" class="visually-hidden">Сообщение</label>
           <input id="message-input" name="message" type="text" autocomplete="off"
-                 placeholder="Например: Иванов должен 50 000 до 20 июля" required
+                 placeholder="Опишите долг, встречу или задачу" required
                  aria-describedby="form-hint">
           <button type="button" id="mic-toggle" class="mic-btn"
                   aria-label="Записать голосовое сообщение" aria-describedby="mic-error" hidden>
@@ -71,7 +77,12 @@
               <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
             </svg>
           </button>
-          <button type="submit" class="btn-send">Отправить</button>
+          <button type="submit" class="btn-send" aria-label="Отправить">
+            <span class="send-text">Отправить</span>
+            <svg class="send-icon" aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+            </svg>
+          </button>
 
           <div id="recording-panel" class="recording-panel" role="group"
                aria-labelledby="recording-panel-label" hidden>
@@ -92,22 +103,22 @@
       <h2 id="memory-heading" tabindex="-1">Память</h2>
 
       <section class="panel-section" aria-labelledby="h-debt">
-        <h3 id="h-debt">Долги (0)</h3>
+        <h3 id="h-debt">Долги <span class="count">0</span></h3>
         <ul id="list-debt"><li class="empty-state">Пока нет долгов</li></ul>
       </section>
 
       <section class="panel-section" aria-labelledby="h-meeting">
-        <h3 id="h-meeting">Встречи (0)</h3>
+        <h3 id="h-meeting">Встречи <span class="count">0</span></h3>
         <ul id="list-meeting"><li class="empty-state">Пока нет встреч</li></ul>
       </section>
 
       <section class="panel-section" aria-labelledby="h-task">
-        <h3 id="h-task">Задачи (0)</h3>
+        <h3 id="h-task">Задачи <span class="count">0</span></h3>
         <ul id="list-task"><li class="empty-state">Пока нет задач</li></ul>
       </section>
 
       <section class="panel-section" aria-labelledby="h-note">
-        <h3 id="h-note">Заметки (0)</h3>
+        <h3 id="h-note">Заметки <span class="count">0</span></h3>
         <ul id="list-note"><li class="empty-state">Пока нет заметок</li></ul>
       </section>
     </aside>

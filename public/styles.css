@@ -66,8 +66,22 @@ body {
   grid-column: 1 / -1;
 }
 
+/* grid-колонки не должны растягиваться под несжимаемый контент */
+.app > main,
+.app > .panel {
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.brand-mark { flex: none; }
+
 h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.85rem;
   font-weight: 600;
@@ -98,6 +112,7 @@ h1::after {
 
 .chat-log {
   height: 56vh;
+  height: 56dvh;
   min-height: 320px;
   overflow-y: auto;
   padding: 20px;
@@ -158,6 +173,7 @@ h1::after {
   background: var(--user-bubble-bg);
   color: var(--text-on-accent);
   border-bottom-right-radius: 4px;
+  box-shadow: 0 2px 8px rgba(36, 84, 232, 0.22);
 }
 
 /* ---- Голосовое сообщение в чате ---- */
@@ -285,7 +301,7 @@ h1::after {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 20px 0;
+  padding: 12px 20px 6px;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -412,8 +428,18 @@ h1::after {
   font-weight: 600;
   cursor: pointer;
   transition: background-color 150ms;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .btn-send:hover { background: #1D46C6; }
+/* кольцо фокуса на синей заливке: белая прокладка, иначе контраст 1.39:1 */
+.btn-send:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px #FFFFFF;
+}
+.send-icon { display: none; }
 
 /* ---- Память (aside) ---- */
 
@@ -441,6 +467,19 @@ h1::after {
   font-size: 0.95rem;
 }
 
+.panel .count {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 8px;
+  margin-left: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--assistant-bubble-bg);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
 .panel ul {
   list-style: none;
   margin: 0;
@@ -462,7 +501,60 @@ h1::after {
   }
   .chat-log {
     height: 50vh;
+    height: 50dvh;
   }
+}
+
+@media (max-width: 560px) {
+  .app {
+    padding: 16px 12px 24px;
+    gap: 16px;
+  }
+  h1 { font-size: 1.5rem; }
+  .brand-mark { width: 28px; height: 28px; }
+  .tagline { font-size: 0.95rem; }
+  .chat, .panel { border-radius: 14px; }
+  .chat-log {
+    height: 48vh;
+    height: 48dvh;
+    min-height: 260px;
+    padding: 14px;
+  }
+  .quick-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 10px 14px 6px;
+    scroll-padding-inline: 14px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .quick-actions::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none;
+    scroll-margin-inline: 4px;
+  }
+  .composer { padding: 10px 14px 16px; }
+  .btn-send {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .send-text { display: none; }
+  .send-icon { display: block; }
+  .recording-panel .btn-send {
+    width: auto;
+    padding: 0 16px;
+    border-radius: 10px;
+  }
+  .menu-popover {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 96px;
+    min-width: 0;
+  }
+  .panel { padding: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

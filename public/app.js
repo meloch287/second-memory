@@ -95,7 +95,7 @@ async function deliver(text) {
   } catch {
     clearTimeout(typingTimer);
     statusEl.textContent = '';
-    appendMessage('assistant', 'Не удалось получить ответ. Проверьте, что сервер запущен, и попробуйте ещё раз.');
+    appendMessage('assistant', 'Нет ответа от сервера. Попробуйте ещё раз.');
   } finally {
     pending = false;
   }
@@ -265,7 +265,7 @@ function itemLabel(e) {
   const parts = [`№${e.id}`];
   if (e.type === 'debt') {
     parts.push(e.counterparty || 'Без имени');
-    if (e.amount != null) parts.push('— ' + RUB.format(e.amount) + ' ₽');
+    if (e.amount != null) parts.push('- ' + RUB.format(e.amount) + ' ₽');
     if (e.direction === 'out') parts.push('(вы должны)');
   } else {
     parts.push(e.title || e.text || '');
@@ -287,7 +287,12 @@ async function refreshMemory() {
 
   for (const [type, label, emptyText] of CATEGORIES) {
     const items = entries.filter((e) => e.type === type);
-    document.getElementById('h-' + type).textContent = `${label} (${items.length})`;
+    const heading = document.getElementById('h-' + type);
+    heading.textContent = label + ' ';
+    const badge = document.createElement('span');
+    badge.className = 'count';
+    badge.textContent = items.length;
+    heading.appendChild(badge);
 
     const ul = document.getElementById('list-' + type);
     ul.textContent = '';

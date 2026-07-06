@@ -80,7 +80,7 @@ export function startTelegramBot(store, token, log = console) {
       }
       const voice = msg.voice || msg.audio;
       if ((voice.duration || 0) > 180) {
-        await send(chatId, 'Голосовое длиннее трёх минут — не осилю. Скажите короче или напишите текстом.');
+        await send(chatId, 'Голосовое длиннее трёх минут. Скажите короче или напишите текстом.');
         return;
       }
       const transcript = await transcribeVoice(voice.file_id);
