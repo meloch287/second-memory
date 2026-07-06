@@ -1,45 +1,23 @@
-// Telegram-бот: та же «вторая память», но в чате Telegram.
-// Включается переменной TELEGRAM_BOT_TOKEN, работает через long polling.
-// Понимает голосовые: скачивает файл и транскрибирует через ИИ (см. ai.mjs).
+// Telegram-бот «друг и дневник». Три команды: /start /help /summary.
+// Всё остальное - живой разговор: сообщения падают в сырую базу,
+// фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 
-import { handleMessage } from './brain.mjs';
-import { aiEnabled, aiTranscribe } from './ai.mjs';
-
-const KEYBOARD = {
-  keyboard: [
-    [{ text: '📋 Сводка' }, { text: '💰 Все долги' }],
-    [{ text: '📅 Что завтра' }, { text: '🧠 ИИ-саммари' }],
-    [{ text: '❓ Помощь' }],
-  ],
-  resize_keyboard: true,
-  is_persistent: true,
-};
+import { handleMessage, captureEntry } from './brain.mjs';
+import { aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup, aiTranscribe } from './ai.mjs';
 
 const COMMANDS = [
-  { command: 'summary', description: 'ИИ-саммари по всей базе' },
-  { command: 'debts', description: 'Все открытые долги' },
-  { command: 'today', description: 'Сводка на сегодня' },
-  { command: 'clear', description: 'Очистить историю чата' },
-  { command: 'help', description: 'Примеры команд' },
+  { command: 'summary', description: 'Итоги дня' },
+  { command: 'help', description: 'Как со мной общаться' },
+  { command: 'start', description: 'Познакомиться заново' },
 ];
 
-const SLASH_MAP = {
-  '/summary': 'саммари',
-  '/debts': 'покажи все долги',
-  '/today': 'что у меня сегодня',
-  '/clear': 'очистить чат',
-  '/help': 'помощь',
-  '/start': 'помощь',
-};
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-// Первая строка ответа — жирным, остальное как есть.
-function toHtml(text) {
-  const nl = text.indexOf('\n');
-  if (nl < 0) return esc(text);
-  return `<b>${esc(text.slice(0, nl))}</b>\n${esc(text.slice(nl + 1))}`;
-}
+const FALLBACKS = [
+  'Слушай, я сегодня что-то туплю. Скажи ещё раз чуть иначе?',
+  'Кажется, я задумался и прослушал. Повтори, пожалуйста?',
+  'У меня сейчас туман в голове. Напиши ещё раз, я соберусь.',
+];
 
 export function startTelegramBot(store, token, log = console) {
   if (!token) return null;
@@ -53,55 +31,172 @@ export function startTelegramBot(store, token, log = console) {
     return res.json();
   };
 
-  const send = (chat_id, text) =>
+  const send = (chat_id, text, extra = {}) =>
     api('sendMessage', {
       chat_id,
-      text: toHtml(String(text).slice(0, 4000)),
+      text: String(text).slice(0, 4000),
       parse_mode: 'HTML',
-      reply_markup: KEYBOARD,
+      ...extra,
     });
 
-  async function transcribeVoice(fileId) {
-    const info = await api('getFile', { file_id: fileId });
-    if (!info.ok) throw new Error('getFile failed');
-    const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
-    if (!res.ok) throw new Error('file download failed');
-    const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
-    return aiTranscribe(b64, 'ogg');
+  const typing = (chat_id) => api('sendChatAction', { chat_id, action: 'typing' }).catch(() => {});
+
+  /* ---- Онбординг: знакомство как с человеком ---- */
+
+  function startOnboarding(chatId) {
+    store.setUser(chatId, { step: 'name' });
+    return send(
+      chatId,
+      'Привет-привет! 👋\n\nЯ твоя вторая память. Буду запоминать всё, что ты мне пишешь: дела, долги, встречи, мысли. А потом напомню, когда спросишь.\n\nДавай знакомиться. Как тебя называть?',
+      { reply_markup: { remove_keyboard: true } }
+    );
   }
+
+  async function onboardingStep(chatId, user, text) {
+    const value = text.trim().slice(0, 100);
+    if (user.step === 'name') {
+      store.setUser(chatId, { name: value, step: 'rhythm' });
+      return send(chatId, `${esc(value)}, отличное имя 😊\n\nТы жаворонок или сова? Мне важно понимать твой ритм.`);
+    }
+    if (user.step === 'rhythm') {
+      store.setUser(chatId, { rhythm: value, step: 'goal' });
+      return send(chatId, 'Запомнил. И последний вопрос: что у тебя сейчас главное в жизни? Работа, учёба или просто кайфуешь?');
+    }
+    if (user.step === 'goal') {
+      const u = store.setUser(chatId, { goal: value, step: null });
+      return send(
+        chatId,
+        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉\n\nПросто пиши мне как в дневник. Я слушаю: как прошёл твой день?`
+      );
+    }
+  }
+
+  /* ---- Помощь: тепло и с цитатами ---- */
+
+  function helpText(user) {
+    const name = user?.name ? `, ${esc(user.name)}` : '';
+    return [
+      `Тут всё просто${name} 🙂`,
+      '',
+      '<blockquote>📖 Пиши мне как в личный дневник. «Планёрка прошла жёстко», «клиент должен 50 000 до пятницы», «завтра созвон в 10:00». Я всё запомню и разложу сам.</blockquote>',
+      '',
+      '<blockquote>💬 Спрашивай о чём угодно: «что у меня завтра?», «кто мне должен?», «о чём я писал в понедельник?». Отвечу по твоим записям.</blockquote>',
+      '',
+      '<blockquote>🎙 Лень печатать? Отправь голосовое. Я расшифрую и пойму.</blockquote>',
+      '',
+      '/summary - итоги дня. /start - познакомиться заново. А я всегда здесь.',
+    ].join('\n');
+  }
+
+  /* ---- Итоги дня с кнопками продолжения ---- */
+
+  async function sendSummary(chatId) {
+    if (!aiEnabled()) {
+      return send(chatId, 'Мне нужен ключ ИИ для итогов (AI_API_KEY в .env). Пока могу просто слушать и запоминать.');
+    }
+    await typing(chatId);
+    try {
+      const text = await aiDiarySummary(store, chatId);
+      return send(chatId, esc(text), {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Расскажи подробнее', callback_data: 'more' },
+              { text: 'Что завтра?', callback_data: 'tomorrow' },
+            ],
+          ],
+        },
+      });
+    } catch (e) {
+      log.error('[telegram] summary', e.message);
+      return send(chatId, 'Что-то я завис с итогами. Дай мне минуту и спроси ещё раз?');
+    }
+  }
+
+  /* ---- Обычный разговор ---- */
+
+  async function friendFlow(chatId, text) {
+    store.addRaw(chatId, text);
+    captureEntry(store, text); // долги, встречи и задачи тихо ложатся в структурированную базу
+
+    let reply;
+    if (aiEnabled()) {
+      await typing(chatId);
+      try {
+        reply = await aiFriendReply(store, chatId, text);
+      } catch (e) {
+        log.error('[telegram] friend', e.message);
+      }
+    }
+    if (!reply) {
+      // Без ИИ отвечают правила, без потери данных
+      const out = await handleMessage(store, text, new Date(), String(chatId));
+      reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
+    } else {
+      store.pushHistory('user', text, String(chatId));
+      store.pushHistory('assistant', reply, String(chatId));
+    }
+    return send(chatId, esc(reply));
+  }
+
+  /* ---- Роутинг сообщений ---- */
 
   async function onMessage(msg) {
     const chatId = msg.chat.id;
+    const user = store.getUser(String(chatId));
 
     if (msg.voice || msg.audio) {
-      if (!aiEnabled()) {
-        await send(chatId, 'Расшифровка голосовых не настроена (нет AI_API_KEY). Напишите текстом, пожалуйста.');
-        return;
+      if (!audioEnabled()) {
+        return send(chatId, 'Голосовые пока не разбираю: нет ключа для расшифровки. Напиши текстом, я всё пойму.');
       }
       const voice = msg.voice || msg.audio;
       if ((voice.duration || 0) > 180) {
-        await send(chatId, 'Голосовое длиннее трёх минут. Скажите короче или напишите текстом.');
-        return;
+        return send(chatId, 'Ого, длинное голосовое. Дольше трёх минут не осилю. Скажи покороче?');
       }
-      const transcript = await transcribeVoice(voice.file_id);
+      await typing(chatId);
+      const info = await api('getFile', { file_id: voice.file_id });
+      if (!info.ok) throw new Error('getFile failed');
+      const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
+      if (!fileRes.ok) throw new Error('file download failed');
+      const b64 = Buffer.from(await fileRes.arrayBuffer()).toString('base64');
+      const transcript = await aiTranscribe(b64, 'ogg');
       if (!transcript) {
-        await send(chatId, 'Не расслышал речь в голосовом. Попробуйте ещё раз.');
-        return;
+        return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
       }
-      const out = await handleMessage(store, transcript);
-      await send(chatId, `🎙 «${transcript}»\n\n${out.reply}`);
-      return;
+      if (user?.step) return onboardingStep(chatId, user, transcript);
+      return friendFlow(String(chatId), transcript);
     }
 
     if (typeof msg.text !== 'string') return;
-    let text = msg.text.trim();
-    if (SLASH_MAP[text.split(' ')[0]]) text = SLASH_MAP[text.split(' ')[0]];
-    // кнопки клавиатуры приходят с эмодзи в начале — срезаем
-    text = text.replace(/^[^\p{L}\p{N}/]+\s*/u, '');
+    const text = msg.text.trim();
     if (!text) return;
-    const out = await handleMessage(store, text);
-    await send(chatId, out.reply);
+
+    const cmd = text.split(/[\s@]/)[0];
+    if (cmd === '/start') return startOnboarding(String(chatId));
+    if (cmd === '/help') return send(chatId, helpText(user));
+    if (cmd === '/summary') return sendSummary(String(chatId));
+
+    if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
+    if (user.step) return onboardingStep(String(chatId), user, text);
+
+    return friendFlow(String(chatId), text);
   }
+
+  async function onCallback(cb) {
+    const chatId = String(cb.message?.chat?.id || '');
+    api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
+    if (!chatId || !aiEnabled()) return;
+    await typing(chatId);
+    try {
+      const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more');
+      await send(chatId, esc(text));
+    } catch (e) {
+      log.error('[telegram] callback', e.message);
+      await send(chatId, 'Завис. Спроси меня текстом, так надёжнее 🙂');
+    }
+  }
+
+  /* ---- Long polling ---- */
 
   let running = true;
   let offset = 0;
@@ -111,13 +206,18 @@ export function startTelegramBot(store, token, log = console) {
     api('setMyCommands', { commands: COMMANDS }).catch(() => {});
     while (running) {
       try {
-        const res = await api('getUpdates', { offset, timeout: 25 });
+        const res = await api('getUpdates', {
+          offset,
+          timeout: 25,
+          allowed_updates: ['message', 'callback_query'],
+        });
         if (!res.ok) throw new Error(res.description || 'getUpdates failed');
         for (const update of res.result) {
           offset = update.update_id + 1;
           // Ошибка одного update не должна ронять обработку остальных в пачке
           try {
             if (update.message) await onMessage(update.message);
+            else if (update.callback_query) await onCallback(update.callback_query);
           } catch (e) {
             log.error('[telegram] update', update.update_id, e.message);
           }

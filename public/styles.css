@@ -1,17 +1,17 @@
-/* Палитра проверена на WCAG AA (текст ≥ 4.5:1, UI ≥ 3:1). */
+/* Тёплая «бумажная» тема. Все пары цветов проверены на WCAG AA
+   (текст ≥ 4.5:1, UI ≥ 3:1), расчёт в истории проекта. */
 :root {
-  --page-bg: #F7F7F5;
-  --surface-bg: #FFFFFF;
-  --assistant-bubble-bg: #EEF0F2;
-  --user-bubble-bg: #2454E8;
-  --text-primary: #1B1F24;
-  --text-on-accent: #FFFFFF;
-  --text-muted: #5B6470;
-  --accent: #2454E8;
-  --border-strong: #7A8189;   /* функциональные границы: ≥3:1 */
-  --border-soft: #E2E1DD;     /* декоративные разделители */
-  --focus-ring: #0B3FC4;
-  --danger-rec: #B3261E;      /* запись: 6.54:1 на белом, 6.09:1 на фоне */
+  --page-bg: #F6F1E7;
+  --surface-bg: #FFFDF8;
+  --ink: #26221B;
+  --text-muted: #6B6357;
+  --accent: #6E4A32;
+  --border-strong: #8A8070;   /* функциональные границы: ≥3:1 */
+  --border-soft: #D2C5A8;     /* декоративные разделители */
+  --rule: #C9BFAE;            /* линия у реплик ассистента, декор */
+  --focus-ring: #8A3B2A;
+  --danger-rec: #B3261E;
+  --pill-bg: #EFE8DA;
 }
 
 * { box-sizing: border-box; }
@@ -19,9 +19,9 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: linear-gradient(180deg, #FAF9F6 0%, var(--page-bg) 40%, #F1F0EC 100%);
-  color: var(--text-primary);
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--page-bg);
+  color: var(--ink);
+  font: 16px/1.55 Georgia, "Iowan Old Style", "Times New Roman", serif;
 }
 
 .visually-hidden {
@@ -49,41 +49,33 @@ body {
   border-radius: 0 0 10px 0;
   z-index: 10;
 }
-.skip-link:focus-visible {
-  left: 0;
-}
+.skip-link:focus-visible { left: 0; }
 
 .app {
-  max-width: 1060px;
+  max-width: 1020px;
   margin: 0 auto;
-  padding: 28px 20px 40px;
+  padding: 32px 20px 44px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 290px;
   gap: 24px;
 }
 
-.app-header {
-  grid-column: 1 / -1;
-}
+.app-header { grid-column: 1 / -1; }
 
-/* grid-колонки не должны растягиваться под несжимаемый контент */
 .app > main,
-.app > .panel {
-  min-width: 0;
-}
+.app > .panel { min-width: 0; }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .brand-mark { flex: none; }
 
 h1 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.85rem;
+  font-size: 1.8rem;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -95,7 +87,7 @@ h1::after {
 .tagline {
   margin: 0;
   color: var(--text-muted);
-  max-width: 64ch;
+  max-width: 60ch;
 }
 
 /* ---- Чат ---- */
@@ -103,8 +95,8 @@ h1::after {
 .chat {
   background: var(--surface-bg);
   border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  box-shadow: 0 10px 34px rgba(27, 31, 36, 0.07), 0 1px 3px rgba(27, 31, 36, 0.05);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(38, 34, 27, 0.06);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -115,14 +107,14 @@ h1::after {
   height: 56dvh;
   min-height: 320px;
   overflow-y: auto;
-  padding: 20px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 @keyframes msg-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -133,58 +125,53 @@ h1::after {
 
 .message p {
   margin: 0;
-  padding: 10px 14px;
-  border-radius: 14px;
-  max-width: 85%;
+  max-width: 88%;
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
 
+/* Ассистент: без пузыря, спокойный текст с тонкой линией слева */
 .message--assistant p {
-  background: var(--assistant-bubble-bg);
-  color: var(--text-primary);
-  border-bottom-left-radius: 4px;
+  color: var(--ink);
+  border-left: 3px solid var(--rule);
+  padding: 2px 0 2px 14px;
 }
 
-/* Ответы ИИ: настоящие абзацы внутри одного пузыря */
-.summary-body {
-  background: var(--assistant-bubble-bg);
-  border-radius: 14px;
-  border-bottom-left-radius: 4px;
-  padding: 10px 14px;
-  max-width: 85%;
-}
-.summary-body p {
-  background: none;
-  padding: 0;
-  max-width: none;
-  border-radius: 0;
-  white-space: pre-line;
-}
-.summary-body p + p {
-  margin-top: 8px;
-}
-
-.message--user {
-  justify-content: flex-end;
-}
+.message--user { justify-content: flex-end; }
 
 .message--user p {
-  background: var(--user-bubble-bg);
-  color: var(--text-on-accent);
+  background: var(--ink);
+  color: var(--surface-bg);
+  padding: 10px 14px;
+  border-radius: 12px;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(36, 84, 232, 0.22);
+  box-shadow: 0 1px 4px rgba(38, 34, 27, 0.25);
 }
 
-/* ---- Голосовое сообщение в чате ---- */
+/* Ответы ИИ: абзацы с той же линией */
+.summary-body {
+  border-left: 3px solid var(--rule);
+  padding: 2px 0 2px 14px;
+  max-width: 88%;
+}
+.summary-body p {
+  margin: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  max-width: none;
+}
+.summary-body p + p { margin-top: 10px; }
+
+/* ---- Голосовое сообщение ---- */
 
 .voice-message {
-  background: var(--user-bubble-bg);
-  color: var(--text-on-accent);
-  border-radius: 14px;
+  background: var(--ink);
+  color: var(--surface-bg);
+  border-radius: 12px;
   border-bottom-right-radius: 4px;
   padding: 10px 14px;
-  max-width: 85%;
+  max-width: 88%;
+  box-shadow: 0 1px 4px rgba(38, 34, 27, 0.25);
 }
 
 .voice-player {
@@ -199,8 +186,8 @@ h1::after {
   height: 36px;
   border-radius: 50%;
   border: none;
-  background: #FFFFFF;   /* 5.99:1 к пузырю */
-  color: var(--accent);  /* иконка: 5.99:1 к белому */
+  background: var(--surface-bg);
+  color: var(--ink);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -210,29 +197,27 @@ h1::after {
 .voice-msg__play:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
-  box-shadow: 0 0 0 3px #FFFFFF; /* белая прокладка между кольцом и синим пузырём */
+  box-shadow: 0 0 0 3px #FFFFFF;
 }
 
-.voice-waveform {
-  display: block;
-}
+.voice-waveform { display: block; }
 
 .voice-duration {
   font-size: 0.85rem;
-  color: var(--text-on-accent);
+  color: var(--surface-bg);
 }
 
 .voice-transcript {
   margin: 8px 0 0;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.35);
-  font-size: 0.9rem;
-  color: var(--text-on-accent);
+  border-top: 1px solid rgba(255, 253, 248, 0.35);
+  font-size: 0.92rem;
+  color: var(--surface-bg);
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
 
-/* ---- Панель записи ---- */
+/* ---- Панель записи голосового ---- */
 
 .recording-panel {
   display: flex;
@@ -274,65 +259,21 @@ h1::after {
   height: 36px;
 }
 
-.btn-ghost {
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--surface-bg);
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.mic-error {
-  margin: 0;
-  padding: 0 20px 16px;
-  font-size: 0.9rem;
-  color: var(--danger-rec);
-}
-.mic-btn[data-error="true"] {
-  border-color: var(--danger-rec);
-}
-
-/* ---- Быстрые действия и композер ---- */
+/* ---- Меню ---- */
 
 .quick-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 20px 6px;
+  justify-content: flex-end;
+  padding: 10px 20px 4px;
   border-top: 1px solid var(--border-soft);
 }
 
-.chip {
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--surface-bg);
-  color: var(--accent);
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 150ms, transform 150ms, box-shadow 150ms;
-}
-.chip:hover {
-  background: #EDF2FF;
-  transform: translateY(-1px);
-  box-shadow: 0 3px 10px rgba(27, 31, 36, 0.08);
-}
-
-/* ---- Меню ---- */
-
-.menu-wrap {
-  position: relative;
-}
+.menu-wrap { position: relative; }
 
 .menu-popover {
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 0;
+  right: 0;
   z-index: 5;
   min-width: 240px;
   display: flex;
@@ -342,7 +283,7 @@ h1::after {
   background: var(--surface-bg);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(27, 31, 36, 0.16);
+  box-shadow: 0 10px 28px rgba(38, 34, 27, 0.18);
 }
 .menu-popover[hidden] { display: none; }
 
@@ -352,16 +293,16 @@ h1::after {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--ink);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.menu-item:hover { background: #EDF2FF; }
+.menu-item:hover { background: var(--pill-bg); }
 
 .menu-item--confirm {
   padding: 10px 12px;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 .menu-item--confirm[hidden] { display: none; }
 
@@ -382,7 +323,22 @@ h1::after {
   font-weight: 600;
   cursor: pointer;
 }
-.btn-danger:hover { background: #FBEDEC; }
+.btn-danger:hover { background: #F8ECE9; }
+
+/* ---- Композер ---- */
+
+.chip {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-bg);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.chip:hover { background: var(--pill-bg); }
 
 .composer {
   display: flex;
@@ -398,7 +354,7 @@ h1::after {
   border-radius: 10px;
   padding: 0 14px;
   font: inherit;
-  color: var(--text-primary);
+  color: var(--ink);
   background: var(--surface-bg);
 }
 #message-input::placeholder { color: var(--text-muted); }
@@ -412,18 +368,26 @@ h1::after {
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--surface-bg);
-  color: var(--text-primary);
+  color: var(--ink);
   cursor: pointer;
 }
 .mic-btn[hidden] { display: none; }
+.mic-btn[data-error="true"] { border-color: var(--danger-rec); }
+
+.mic-error {
+  margin: 0;
+  padding: 0 20px 16px;
+  font-size: 0.92rem;
+  color: var(--danger-rec);
+}
 
 .btn-send {
   min-height: 44px;
   padding: 0 20px;
   border: none;
   border-radius: 10px;
-  background: var(--accent);
-  color: var(--text-on-accent);
+  background: var(--ink);
+  color: var(--surface-bg);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -432,8 +396,8 @@ h1::after {
   align-items: center;
   justify-content: center;
 }
-.btn-send:hover { background: #1D46C6; }
-/* кольцо фокуса на синей заливке: белая прокладка, иначе контраст 1.39:1 */
+.btn-send:hover { background: #3A3428; }
+/* кольцо фокуса на тёмной заливке: белая прокладка */
 .btn-send:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
@@ -441,13 +405,24 @@ h1::after {
 }
 .send-icon { display: none; }
 
+.btn-ghost {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-bg);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
 /* ---- Память (aside) ---- */
 
 .panel {
   background: var(--surface-bg);
   border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  box-shadow: 0 10px 34px rgba(27, 31, 36, 0.07), 0 1px 3px rgba(27, 31, 36, 0.05);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(38, 34, 27, 0.06);
   padding: 20px;
   align-self: start;
 }
@@ -474,8 +449,8 @@ h1::after {
   margin-left: 4px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--assistant-bubble-bg);
-  color: var(--text-primary);
+  background: var(--pill-bg);
+  color: var(--ink);
   font-size: 0.8rem;
   text-align: center;
 }
@@ -488,17 +463,15 @@ h1::after {
 
 .panel li {
   padding: 4px 0;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
 
-.panel .empty-state {
-  color: var(--text-muted);
-}
+.panel .empty-state { color: var(--text-muted); }
+
+/* ---- Мобильная адаптация ---- */
 
 @media (max-width: 880px) {
-  .app {
-    grid-template-columns: 1fr;
-  }
+  .app { grid-template-columns: 1fr; }
   .chat-log {
     height: 50vh;
     height: 50dvh;
@@ -510,29 +483,16 @@ h1::after {
     padding: 16px 12px 24px;
     gap: 16px;
   }
-  h1 { font-size: 1.5rem; }
-  .brand-mark { width: 28px; height: 28px; }
+  h1 { font-size: 1.45rem; }
+  .brand-mark { width: 26px; height: 26px; }
   .tagline { font-size: 0.95rem; }
-  .chat, .panel { border-radius: 14px; }
   .chat-log {
     height: 48vh;
     height: 48dvh;
     min-height: 260px;
     padding: 14px;
   }
-  .quick-actions {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding: 10px 14px 6px;
-    scroll-padding-inline: 14px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .quick-actions::-webkit-scrollbar { display: none; }
-  .chip {
-    flex: none;
-    scroll-margin-inline: 4px;
-  }
+  .quick-actions { padding: 8px 14px 4px; }
   .composer { padding: 10px 14px 16px; }
   .btn-send {
     width: 44px;

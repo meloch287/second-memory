@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
 import { handleMessage } from './brain.mjs';
 import { startTelegramBot } from './telegram.mjs';
+import { startFactWorker } from './worker.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -110,3 +111,4 @@ server.listen(PORT, () => {
 });
 
 startTelegramBot(store, process.env.TELEGRAM_BOT_TOKEN);
+startFactWorker(store);

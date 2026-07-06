@@ -49,14 +49,22 @@ function plural(n, [one, few, many]) {
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const byDue = (a, b) => Date.parse(a.due || '9999-01-01') - Date.parse(b.due || '9999-01-01') || a.id - b.id;
 
-export async function handleMessage(store, text, now = new Date()) {
+export async function handleMessage(store, text, now = new Date(), chatId = 'web') {
   const result = await route(store, text, now);
   const t = String(text || '').trim();
   if (t && !result.cleared) {
-    store.pushHistory('user', t);
-    store.pushHistory('assistant', result.reply);
+    store.pushHistory('user', t, chatId);
+    store.pushHistory('assistant', result.reply, chatId);
   }
   return result;
+}
+
+// Тихая запись для бота-друга: структурируем долги, встречи и задачи,
+// не подменяя живой ответ ИИ. Заметки не дублируем, они уже в сырой базе.
+export function captureEntry(store, text, now = new Date()) {
+  const p = parseMessage(text, now);
+  if (p.kind !== 'entry' || p.entry.type === 'note') return null;
+  return store.add(p.entry);
 }
 
 async function route(store, text, now) {
@@ -113,13 +121,15 @@ function saveEntry(store, entry) {
   const e = store.add(entry);
   let reply;
   if (e.type === 'debt') {
-    const who = e.counterparty || 'контрагент не указан';
     const sum = e.amount != null ? money(e.amount) : 'сумма не указана';
     const till = e.due ? `, срок до ${fmtDate(e.due, false)}` : '';
-    reply =
-      e.direction === 'out'
-        ? `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`
-        : `Записал долг №${e.id}: ${who} должен вам ${sum}${till}.`;
+    if (e.direction === 'out') {
+      reply = `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
+    } else if (e.counterparty) {
+      reply = `Записал долг №${e.id}: ${e.counterparty} должен вам ${sum}${till}.`;
+    } else {
+      reply = `Записал долг №${e.id}: вам должны ${sum}${till}.`;
+    }
   } else if (e.type === 'meeting') {
     reply = `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime)}` : ', дата не указана'}.`;
   } else if (e.type === 'task') {
