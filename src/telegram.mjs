@@ -110,18 +110,23 @@ export function startTelegramBot(store, token, log = console) {
   // Нативная «печать по словам»: sendMessageDraft (Bot API 9.5+).
   // Пустой text показывает «Thinking…», обновления с одним draft_id
   // анимируются, финал - обычный sendMessage (драфт эфемерный, 30 сек).
+  // update() и finish() принимают СЫРОЙ текст: в драфт он уходит как есть,
+  // финальное сообщение экранируется здесь же.
   let draftSeq = 1;
   function createDraft(chat_id) {
     const draft_id = ((Date.now() % 1000000000) * 1000 + (draftSeq++ % 1000)) % 2147483647 || 1;
-    let lastSent = 0;
+    let lastText = '';
+    let lastSentAt = 0;
     let pending = null;
     let timer = null;
     let closed = false;
     let supported = true;
 
     const push = (text) => {
-      if (!supported || closed) return;
-      api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text })
+      if (!supported || closed) return Promise.resolve();
+      lastText = text;
+      lastSentAt = Date.now();
+      return api('sendMessageDraft', { chat_id: Number(chat_id), draft_id, text })
         .then((r) => {
           if (!r.ok) supported = false; // старый сервер/клиент - тихо выключаемся
         })
@@ -130,20 +135,25 @@ export function startTelegramBot(store, token, log = console) {
 
     push(''); // сразу «Thinking…», пока модель размышляет
 
+    // Драфт живёт 30 секунд: во время пауз (ретраи лимитов, долгий
+    // reasoning) переотправляем последний кадр, чтобы пузырь не исчезал
+    // и лента не прыгала.
+    const keepalive = setInterval(() => {
+      if (!closed && supported && Date.now() - lastSentAt > 8000) push(lastText);
+    }, 4000);
+
     const update = (text) => {
       if (closed) return;
       pending = String(text).slice(0, 4000);
       const now = Date.now();
-      const dueIn = 450 - (now - lastSent);
+      const dueIn = 300 - (now - lastSentAt);
       if (dueIn <= 0) {
-        lastSent = now;
         push(pending);
         pending = null;
       } else if (!timer) {
         timer = setTimeout(() => {
           timer = null;
           if (pending != null && !closed) {
-            lastSent = Date.now();
             push(pending);
             pending = null;
           }
@@ -151,10 +161,16 @@ export function startTelegramBot(store, token, log = console) {
       }
     };
 
-    const finish = (fullText, extra = {}) => {
-      closed = true;
+    const finish = async (rawText, extra = {}) => {
+      if (closed) return;
       if (timer) clearTimeout(timer);
-      return send(chat_id, fullText, extra);
+      clearInterval(keepalive);
+      const full = String(rawText).slice(0, 4000);
+      // Последний кадр драфта = финальный текст: пузырь уже нужной высоты,
+      // и замена драфта настоящим сообщением проходит без скачка.
+      if (supported && lastText !== full) await push(full);
+      closed = true;
+      return send(chat_id, esc(full), extra);
     };
 
     return { update, finish };
@@ -266,8 +282,8 @@ export function startTelegramBot(store, token, log = console) {
     }
     const draft = createDraft(chatId);
     try {
-      const text = await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(esc(t)));
-      return draft.finish(esc(text), {
+      const text = await aiDiarySummary(store, chatId, new Date(), (t) => draft.update(t));
+      return draft.finish(text, {
         reply_markup: {
           inline_keyboard: [
             [
@@ -294,7 +310,7 @@ export function startTelegramBot(store, token, log = console) {
     if (aiEnabled()) {
       draft = createDraft(chatId);
       try {
-        reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(esc(t)));
+        reply = await aiFriendReply(store, chatId, text, new Date(), (t) => draft.update(t));
       } catch (e) {
         log.error('[telegram] friend', e.message);
       }
@@ -303,11 +319,11 @@ export function startTelegramBot(store, token, log = console) {
       // Без ИИ отвечают правила, без потери данных
       const out = await handleMessage(store, text, new Date(), String(chatId));
       reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
-      return draft ? draft.finish(esc(reply)) : send(chatId, esc(reply));
+      return draft ? draft.finish(reply) : send(chatId, esc(reply));
     }
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
-    return draft.finish(esc(reply));
+    return draft.finish(reply);
   }
 
   /* ---- Роутинг сообщений ---- */
@@ -423,9 +439,9 @@ export function startTelegramBot(store, token, log = console) {
     const draft = createDraft(chatId);
     try {
       const text = await aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more', new Date(), (t) =>
-        draft.update(esc(t))
+        draft.update(t)
       );
-      await draft.finish(esc(text));
+      await draft.finish(text);
     } catch (e) {
       log.error('[telegram] callback', e.message);
       await draft.finish('Завис. Спроси меня текстом, так надёжнее 🙂');
