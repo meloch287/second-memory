@@ -868,11 +868,36 @@ export function startTelegramBot(store, token, log = console) {
     const addressed = mentionsBot(rawText) || msg.reply_to_message?.from?.id === botId;
     const text = addressed ? stripMention(rawText) : rawText;
 
+    // Слэш-команды в группе работают и без @тега
+    if (rawText.startsWith('/')) {
+      const slash = rawText.split(/[@\s]/)[0].toLowerCase();
+      if (slash === '/reset') {
+        if (!(await callerIsAdmin(chatId, msg.from.id))) return send(chatId, 'Сброс памяти группы - только для админов 🙂');
+        return askReset(chatId, { ...g, name: fromName }); // обращение к тому, кто просит
+      }
+      if (slash === '/summary') return sendSummary(key);
+      if (slash === '/help' || slash === '/start') {
+        return send(
+          chatId,
+          `Я общая память этой группы 🙂 Запоминаю дела, долги и договорённости.\n\nТегни @${botUsername} и спроси что угодно: «что мы решили по бюджету?», «баланс», «траты», «найди про...».\n\nАдминам: «закрепи» (ответом), «кикни», «замуть на час», «переименуй в ...», «дай ссылку». /summary - итоги, /reset - стереть память группы (только админ).`
+        );
+      }
+      return; // чужие/неизвестные команды в группе молча пропускаем
+    }
+
     // всё в общую память группы (с автором), тихий захват дел/долгов
     store.addRaw(key, `${fromName}: ${text}`);
     captureEntry(store, text, new Date(), key, userOffset(g));
 
     if (!addressed) return; // без обращения молчим, только запоминаем
+
+    // Смена имени бота в группе: «ты теперь Серега», «тебя зовут Макс»
+    const nm = text.match(/(?:ты теперь|(?:теперь )?тебя зовут)\s+([А-Яа-яЁёA-Za-z0-9_-]{2,20})/i);
+    if (nm) {
+      const newName = nm[1][0].toUpperCase() + nm[1].slice(1);
+      store.setUser(key, { botName: newName });
+      return send(chatId, `Принято, теперь я тут ${esc(newName)} 😎`);
+    }
 
     // 1) команды управления группой
     const gc = parseGroupCmd(text.toLowerCase().replace(/ё/g, 'е').trim());
@@ -1050,6 +1075,15 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, 'Фух. Я уж испугался 😅 Продолжаем, я всё помню.');
     }
     if (cb.data === 'reset_yes') {
+      const prof = store.getUser(chatId);
+      if (prof?.isGroup) {
+        // память группы стирает только админ группы; онбординг не нужен
+        if (!(await callerIsAdmin(chatId, cb.from.id))) return send(chatId, 'Стереть память группы может только админ.');
+        const title = prof.name;
+        store.clearChatData(chatId);
+        store.setUser(chatId, { isGroup: true, name: title, botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
+        return send(chatId, 'Всё, память группы чистая. Начинаем с нуля 👋');
+      }
       store.clearChatData(chatId);
       await send(chatId, 'Всё. Меня больше нет... а вот и я, новенький! 👋');
       return startOnboarding(chatId);
