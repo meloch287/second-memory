@@ -131,6 +131,25 @@ h1::after {
   border-bottom-left-radius: 4px;
 }
 
+/* Ответы ИИ: настоящие абзацы внутри одного пузыря */
+.summary-body {
+  background: var(--assistant-bubble-bg);
+  border-radius: 14px;
+  border-bottom-left-radius: 4px;
+  padding: 10px 14px;
+  max-width: 85%;
+}
+.summary-body p {
+  background: none;
+  padding: 0;
+  max-width: none;
+  border-radius: 0;
+  white-space: pre-line;
+}
+.summary-body p + p {
+  margin-top: 8px;
+}
+
 .message--user {
   justify-content: flex-end;
 }
@@ -287,6 +306,67 @@ h1::after {
   transform: translateY(-1px);
   box-shadow: 0 3px 10px rgba(27, 31, 36, 0.08);
 }
+
+/* ---- Меню ---- */
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(27, 31, 36, 0.16);
+}
+.menu-popover[hidden] { display: none; }
+
+.menu-item {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: #EDF2FF; }
+
+.menu-item--confirm {
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+.menu-item--confirm[hidden] { display: none; }
+
+.confirm-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.btn-danger {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--danger-rec);
+  border-radius: 10px;
+  background: var(--surface-bg);
+  color: var(--danger-rec);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-danger:hover { background: #FBEDEC; }
 
 .composer {
   display: flex;

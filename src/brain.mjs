@@ -3,6 +3,7 @@
 
 import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
+import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
 
 const RUB = new Intl.NumberFormat('ru-RU');
 const money = (v) => `${RUB.format(v)} ₽`;
@@ -26,7 +27,8 @@ const HELP = [
   '• «сколько мне должны»',
   '• «что у меня завтра», «покажи встречи на неделю», «сводка»',
   '',
-  'Управление: «готово 3» — закрыть запись №3, «удали 5» — удалить.',
+  'Управление: «готово 3» — закрыть запись №3, «удали 5» — удалить, «очистить чат» — стереть историю переписки.',
+  'ИИ: «саммари» — умная сводка по всей базе; любой вопрос со знаком «?» — отвечу по вашим данным.',
 ].join('\n');
 
 function fmtDate(iso, hasTime) {
@@ -47,7 +49,17 @@ function plural(n, [one, few, many]) {
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const byDue = (a, b) => Date.parse(a.due || '9999-01-01') - Date.parse(b.due || '9999-01-01') || a.id - b.id;
 
-export function handleMessage(store, text, now = new Date()) {
+export async function handleMessage(store, text, now = new Date()) {
+  const result = await route(store, text, now);
+  const t = String(text || '').trim();
+  if (t && !result.cleared) {
+    store.pushHistory('user', t);
+    store.pushHistory('assistant', result.reply);
+  }
+  return result;
+}
+
+async function route(store, text, now) {
   const p = parseMessage(text, now);
   switch (p.kind) {
     case 'empty':
@@ -57,8 +69,34 @@ export function handleMessage(store, text, now = new Date()) {
       };
     case 'help':
       return { reply: HELP };
-    case 'entry':
+    case 'summary': {
+      if (!aiEnabled()) {
+        return {
+          reply:
+            'ИИ-саммари не настроено. Задайте AI_API_KEY в файле .env (см. README, раздел «ИИ-саммари») — и я начну делать умные сводки по всей базе.',
+        };
+      }
+      try {
+        return { reply: await aiSummary(store, now), ai: true };
+      } catch (e) {
+        return { reply: `Не получилось связаться с ИИ (${e.message}). Попробуйте ещё раз.` };
+      }
+    }
+    case 'clearchat':
+      store.clearHistory();
+      return { reply: 'Чат очищен. Долги, встречи, задачи и заметки остались на месте.', cleared: true };
+    case 'entry': {
+      // Фраза со знаком «?» — это вопрос, а не запись: отдаём ИИ с контекстом
+      // базы (иначе «у кого из должников горит срок?» станет мусорным долгом).
+      if (aiEnabled() && /\?\s*$/.test(String(text).trim())) {
+        try {
+          return { reply: await aiAnswer(store, text, now), ai: true };
+        } catch {
+          // ИИ недоступен — обрабатываем по правилам ниже
+        }
+      }
       return saveEntry(store, p.entry);
+    }
     case 'done':
       return markDone(store, p.target);
     case 'delete':

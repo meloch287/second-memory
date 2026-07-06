@@ -22,7 +22,7 @@
       <div class="chat">
         <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-relevant="additions"
              aria-atomic="false" aria-label="История диалога" tabindex="0">
-          <div class="message message--assistant">
+          <div class="message message--assistant" id="welcome-msg">
             <span class="visually-hidden">Ассистент:</span>
             <p>Здравствуйте! Я ваша вторая память. Пишите или наговаривайте голосом — кнопка с микрофоном записывает голосовое и сразу расшифровывает его. Примеры: «Иванов должен 50 000 до 20 июля», «запиши встречу с Сергеем завтра в 15:00», «напомни оплатить хостинг через 3 дня». Спросите «сводка» или «сколько мне должны» — отвечу мгновенно. Команда «помощь» покажет все примеры.</p>
           </div>
@@ -33,8 +33,31 @@
         <div class="quick-actions" role="group" aria-label="Быстрые действия">
           <button type="button" class="chip" data-msg="сводка">Сводка</button>
           <button type="button" class="chip" data-msg="покажи все долги">Все долги</button>
-          <button type="button" class="chip" data-msg="что у меня завтра">Что завтра</button>
-          <button type="button" class="chip" data-msg="помощь">Помощь</button>
+          <button type="button" class="chip" data-msg="саммари">ИИ-саммари</button>
+
+          <div class="menu-wrap">
+            <button type="button" id="menu-trigger" class="chip"
+                    aria-expanded="false" aria-controls="menu-popover" aria-haspopup="true">
+              Меню
+            </button>
+            <div id="menu-popover" class="menu-popover" role="group"
+                 aria-label="Меню быстрых действий" hidden>
+              <button type="button" class="menu-item" data-msg="сводка">Сводка</button>
+              <button type="button" class="menu-item" data-msg="покажи все долги">Все долги</button>
+              <button type="button" class="menu-item" data-msg="покажи задачи">Задачи</button>
+              <button type="button" class="menu-item" data-msg="покажи встречи">Встречи</button>
+              <button type="button" class="menu-item" data-msg="саммари">ИИ-саммари</button>
+              <button type="button" class="menu-item" id="menu-clear-chat">Очистить чат</button>
+              <div class="menu-item--confirm" id="clear-chat-confirm-box" hidden>
+                <span id="clear-chat-confirm-label">Очистить чат? История переписки исчезнет, но долги, встречи, задачи и заметки останутся.</span>
+                <div class="confirm-row" role="group" aria-labelledby="clear-chat-confirm-label">
+                  <button type="button" id="clear-chat-cancel" class="btn-ghost">Нет, оставить</button>
+                  <button type="button" id="clear-chat-confirm" class="btn-danger">Да, очистить</button>
+                </div>
+              </div>
+              <button type="button" class="menu-item" data-msg="помощь">Помощь</button>
+            </div>
+          </div>
         </div>
 
         <form id="composer" class="composer" autocomplete="off">

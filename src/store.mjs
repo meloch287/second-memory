@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [] };
+    this.data = { seq: 0, entries: [], history: [] };
     this.load();
   }
 
@@ -14,7 +14,10 @@ export class Store {
     if (!existsSync(this.file)) return;
     try {
       const parsed = JSON.parse(readFileSync(this.file, 'utf8'));
-      if (parsed && Array.isArray(parsed.entries)) this.data = parsed;
+      if (parsed && Array.isArray(parsed.entries)) {
+        if (!Array.isArray(parsed.history)) parsed.history = [];
+        this.data = parsed;
+      }
     } catch {
       // повреждённый файл откладываем в сторону, данные не затираем молча
       copyFileSync(this.file, this.file + '.corrupt-' + Date.now());
@@ -70,5 +73,21 @@ export class Store {
     const [e] = this.data.entries.splice(i, 1);
     this.save();
     return e;
+  }
+
+  // История диалога — контекст для ИИ-саммари и свободных вопросов.
+  pushHistory(role, text) {
+    this.data.history.push({ role, text: String(text).slice(0, 1000), ts: new Date().toISOString() });
+    if (this.data.history.length > 200) this.data.history.splice(0, this.data.history.length - 200);
+    this.save();
+  }
+
+  recentHistory(n = 30) {
+    return this.data.history.slice(-n);
+  }
+
+  clearHistory() {
+    this.data.history = [];
+    this.save();
   }
 }

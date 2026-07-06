@@ -25,6 +25,12 @@ export function parseMessage(text, now = new Date()) {
   if (/^(?:помощь|справка|help|\/start|\/help|что ты умеешь)/.test(t)) {
     return { kind: 'help' };
   }
+  if (/^(?:ии[- ]?саммари|саммари|резюме|анализ)/.test(t) || t.includes('саммари')) {
+    return { kind: 'summary' };
+  }
+  if (/^очисти(?:ть)?\s+(?:чат|историю)/.test(t)) {
+    return { kind: 'clearchat' };
+  }
 
   if (QUERY_STARTS.some((s) => t.startsWith(s)) || t.includes('что у меня')) {
     return parseQuery(raw, t, now);

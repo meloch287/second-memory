@@ -84,7 +84,13 @@ async function deliver(text) {
     const data = await res.json();
     clearTimeout(typingTimer);
     statusEl.textContent = '';
-    appendMessage('assistant', data.reply || '…');
+    if (data.cleared) {
+      clearChatLog();
+    } else if (data.ai) {
+      appendSummaryMessage(data.reply || '…');
+    } else {
+      appendMessage('assistant', data.reply || '…');
+    }
     setTimeout(refreshMemory, 50);
   } catch {
     clearTimeout(typingTimer);
@@ -120,12 +126,122 @@ input.addEventListener('input', () => {
   }
 });
 
-document.querySelectorAll('.chip').forEach((chip) => {
-  chip.addEventListener('click', () => {
-    input.value = chip.dataset.msg || chip.textContent.trim();
-    input.focus();
-    form.requestSubmit();
+function sendCanned(msg) {
+  input.value = msg;
+  input.focus();
+  form.requestSubmit();
+}
+
+document.querySelectorAll('.chip[data-msg]').forEach((chip) => {
+  chip.addEventListener('click', () => sendCanned(chip.dataset.msg));
+});
+
+// Длинные ответы ИИ — настоящими абзацами (навигация скринридера по <p>),
+// без автозачитывания всего текста: короткий анонс через #chat-status.
+function appendSummaryMessage(text) {
+  const wrap = document.createElement('div');
+  wrap.className = 'message message--assistant';
+  wrap.setAttribute('aria-live', 'off');
+  const who = document.createElement('span');
+  who.className = 'visually-hidden';
+  who.textContent = 'Ассистент:';
+  wrap.append(who);
+  const body = document.createElement('div');
+  body.className = 'summary-body';
+  text.split(/\n{2,}/).filter(Boolean).forEach((para) => {
+    const p = document.createElement('p');
+    p.textContent = para;
+    body.append(p);
   });
+  wrap.append(body);
+  addToLog(wrap);
+  announce('Получен ответ ИИ');
+}
+
+/* ---- Меню и очистка чата ---- */
+
+const menuTrigger = document.getElementById('menu-trigger');
+const menuPopover = document.getElementById('menu-popover');
+const clearItem = document.getElementById('menu-clear-chat');
+const confirmBox = document.getElementById('clear-chat-confirm-box');
+const confirmYes = document.getElementById('clear-chat-confirm');
+const confirmNo = document.getElementById('clear-chat-cancel');
+
+function resetConfirm() {
+  confirmBox.hidden = true;
+  clearItem.hidden = false;
+}
+
+function openMenu() {
+  menuPopover.hidden = false;
+  menuTrigger.setAttribute('aria-expanded', 'true');
+  menuPopover.querySelector('.menu-item').focus();
+}
+
+function closeMenu(focusTrigger) {
+  resetConfirm();
+  menuPopover.hidden = true;
+  menuTrigger.setAttribute('aria-expanded', 'false');
+  if (focusTrigger) menuTrigger.focus();
+}
+
+menuTrigger.addEventListener('click', () => {
+  if (menuPopover.hidden) openMenu();
+  else closeMenu(true);
+});
+
+menuPopover.querySelectorAll('.menu-item[data-msg]').forEach((item) => {
+  item.addEventListener('click', () => {
+    closeMenu(false);
+    sendCanned(item.dataset.msg);
+  });
+});
+
+clearItem.addEventListener('click', () => {
+  clearItem.hidden = true;
+  confirmBox.hidden = false;
+  confirmNo.focus();
+  announce('Подтвердите: очистить историю чата?');
+});
+
+confirmNo.addEventListener('click', () => {
+  resetConfirm();
+  clearItem.focus();
+});
+
+confirmYes.addEventListener('click', () => {
+  closeMenu(false);
+  clearChatLog();
+  fetch('/api/history/clear', { method: 'POST' }).catch(() => {
+    announce('Не удалось очистить контекст на сервере. Попробуйте ещё раз.');
+  });
+});
+
+function clearChatLog() {
+  log.querySelectorAll('.message').forEach((m) => {
+    if (m.id !== 'welcome-msg') m.remove();
+  });
+  input.focus();
+  announce('Чат очищен');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || menuPopover.hidden) return;
+  e.preventDefault();
+  if (!confirmBox.hidden) {
+    // первый Escape отменяет только подтверждение, второй закроет меню
+    resetConfirm();
+    clearItem.focus();
+  } else {
+    closeMenu(true);
+  }
+});
+
+document.addEventListener('pointerdown', (e) => {
+  if (menuPopover.hidden) return;
+  if (menuPopover.contains(e.target) || menuTrigger.contains(e.target)) return;
+  const focusable = e.target.closest && e.target.closest('button, a, input, [tabindex]');
+  closeMenu(!focusable);
 });
 
 /* ---- Панель «Память» ---- */

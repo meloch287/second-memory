@@ -2,6 +2,7 @@
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
@@ -9,6 +10,16 @@ import { handleMessage } from './brain.mjs';
 import { startTelegramBot } from './telegram.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// .env (если есть): AI_API_KEY, TELEGRAM_BOT_TOKEN и т.д. Уже заданные
+// переменные окружения имеют приоритет.
+try {
+  for (const line of readFileSync(join(ROOT, '.env'), 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+  }
+} catch {}
+
 const PUBLIC = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 8790);
 
@@ -56,7 +67,12 @@ const server = createServer(async (req, res) => {
       if (typeof payload?.text !== 'string') {
         return json(res, 400, { error: 'Поле text должно быть строкой' });
       }
-      return json(res, 200, handleMessage(store, payload.text.slice(0, 2000)));
+      return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000)));
+    }
+
+    if (url.pathname === '/api/history/clear' && req.method === 'POST') {
+      store.clearHistory();
+      return json(res, 200, { ok: true });
     }
 
     if (url.pathname === '/api/entries' && req.method === 'GET') {
@@ -66,7 +82,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/digest' && req.method === 'GET') {
-      return json(res, 200, handleMessage(store, 'что у меня сегодня'));
+      return json(res, 200, await handleMessage(store, 'что у меня сегодня'));
     }
 
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'Нет такого метода' });

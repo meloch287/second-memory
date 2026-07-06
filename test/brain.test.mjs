@@ -13,68 +13,84 @@ function freshStore() {
   return new Store(join(dir, 'memory.json'));
 }
 
-test('сценарий: долги записываются и отгружаются одним запросом', () => {
+test('сценарий: долги записываются и отгружаются одним запросом', async () => {
   const s = freshStore();
 
-  const r1 = handleMessage(s, 'Иванов должен 50 000 до 20 июля', NOW);
+  const r1 = await handleMessage(s, 'Иванов должен 50 000 до 20 июля', NOW);
   assert.match(r1.reply, /Записал долг №1/);
   assert.match(r1.reply, /Иванов/);
 
-  const r2 = handleMessage(s, 'я должен Петрову 15к до пятницы', NOW);
+  const r2 = await handleMessage(s, 'я должен Петрову 15к до пятницы', NOW);
   assert.match(r2.reply, /вы должны/);
 
-  const r3 = handleMessage(s, 'отгрузи все долговые обязательства заказчиков', NOW);
+  const r3 = await handleMessage(s, 'отгрузи все долговые обязательства заказчиков', NOW);
   assert.match(r3.reply, /Открытые долги \(2\)/);
   assert.match(r3.reply, /Иванов/);
   assert.match(r3.reply, /Петрову/);
 
-  const r4 = handleMessage(s, 'сколько мне должны', NOW);
+  const r4 = await handleMessage(s, 'сколько мне должны', NOW);
   assert.match(r4.reply, /Вам должны/);
   assert.match(r4.reply, /50/);
 });
 
-test('сценарий: встреча попадает в сводку на завтра', () => {
+test('сценарий: встреча попадает в сводку на завтра', async () => {
   const s = freshStore();
-  handleMessage(s, 'запиши встречу с Сергеем завтра в 15:00', NOW);
-  const r = handleMessage(s, 'что у меня завтра', NOW);
+  await handleMessage(s, 'запиши встречу с Сергеем завтра в 15:00', NOW);
+  const r = await handleMessage(s, 'что у меня завтра', NOW);
   assert.match(r.reply, /Сводка на 07\.07\.2026/);
   assert.match(r.reply, /Встреча с Сергеем/);
   assert.match(r.reply, /15:00/);
 });
 
-test('сценарий: «готово N» закрывает запись, она уходит из списков', () => {
+test('сценарий: «готово N» закрывает запись, она уходит из списков', async () => {
   const s = freshStore();
-  handleMessage(s, 'напомни оплатить хостинг через 3 дня', NOW);
-  const done = handleMessage(s, 'готово 1', NOW);
+  await handleMessage(s, 'напомни оплатить хостинг через 3 дня', NOW);
+  const done = await handleMessage(s, 'готово 1', NOW);
   assert.match(done.reply, /закрыта/);
-  const list = handleMessage(s, 'покажи задачи', NOW);
+  const list = await handleMessage(s, 'покажи задачи', NOW);
   assert.match(list.reply, /ничего не найдено/);
 });
 
-test('сценарий: просроченный долг помечается в выдаче', () => {
+test('сценарий: просроченный долг помечается в выдаче', async () => {
   const s = freshStore();
-  handleMessage(s, 'Смирнов должен 30 000 до 1 июля', NOW); // уже в прошлом
-  const r = handleMessage(s, 'покажи долги', NOW);
+  await handleMessage(s, 'Смирнов должен 30 000 до 1 июля', NOW); // уже в прошлом
+  const r = await handleMessage(s, 'покажи долги', NOW);
   assert.match(r.reply, /ПРОСРОЧЕН/);
 });
 
-test('сценарий: заметка сохраняется и видна в списке заметок', () => {
+test('сценарий: заметка сохраняется и видна в списке заметок', async () => {
   const s = freshStore();
-  handleMessage(s, 'клиент Альфа просил расширить договор', NOW);
-  const r = handleMessage(s, 'покажи заметки', NOW);
+  await handleMessage(s, 'клиент Альфа просил расширить договор', NOW);
+  const r = await handleMessage(s, 'покажи заметки', NOW);
   assert.match(r.reply, /Альфа/);
 });
 
-test('сценарий: удаление записи', () => {
+test('сценарий: удаление записи', async () => {
   const s = freshStore();
-  handleMessage(s, 'запиши встречу с Олегом завтра в 12:00', NOW);
-  const r = handleMessage(s, 'удали 1', NOW);
+  await handleMessage(s, 'запиши встречу с Олегом завтра в 12:00', NOW);
+  const r = await handleMessage(s, 'удали 1', NOW);
   assert.match(r.reply, /Удалил/);
   assert.equal(s.list({ status: 'open' }).length, 0);
 });
 
-test('пустое сообщение — вежливая подсказка', () => {
+test('пустое сообщение — вежливая подсказка', async () => {
   const s = freshStore();
-  const r = handleMessage(s, '   ', NOW);
+  const r = await handleMessage(s, '   ', NOW);
   assert.match(r.reply, /Напишите/);
+});
+
+test('саммари без AI_API_KEY — понятная подсказка про настройку', async () => {
+  delete process.env.AI_API_KEY;
+  const s = freshStore();
+  const r = await handleMessage(s, 'саммари', NOW);
+  assert.match(r.reply, /не настроено/);
+});
+
+test('история диалога копится и очищается командой «очистить чат»', async () => {
+  const s = freshStore();
+  await handleMessage(s, 'Иванов должен 50 000 до 20 июля', NOW);
+  assert.equal(s.recentHistory().length, 2); // вопрос + ответ
+  const r = await handleMessage(s, 'очистить чат', NOW);
+  assert.equal(r.cleared, true);
+  assert.equal(s.recentHistory().length, 0);
 });
