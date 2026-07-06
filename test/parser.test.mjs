@@ -139,3 +139,27 @@ test('extractAmount: «50 000», «15к», «1,5 млн», «120 000 руб»', 
 test('extractAmount: маленькие числа без валюты игнорируются', () => {
   assert.equal(extractAmount('позвонить 2 раза').amount, null);
 });
+
+// Регрессии по итогам аудита (ветка test-optimization-test)
+
+test('регрессия: два числа подряд не склеиваются в одно', () => {
+  assert.equal(extractAmount('долг 50000 15000').amount, 50000);
+});
+
+test('регрессия: «Петров мне должен 30 тысяч» — имя не теряется', () => {
+  const p = parseMessage('Петров мне должен 30 тысяч', NOW);
+  assert.equal(p.entry.counterparty, 'Петров');
+  assert.equal(p.entry.amount, 30000);
+  assert.equal(p.entry.direction, 'in');
+});
+
+test('регрессия: «должен я Кузнецову 5000» — направление «вы должны»', () => {
+  const p = parseMessage('должен я Кузнецову 5000', NOW);
+  assert.equal(p.entry.direction, 'out');
+  assert.equal(p.entry.counterparty, 'Кузнецову');
+});
+
+test('регрессия: «через месяц» с 31 января не перескакивает в март', () => {
+  const jan31 = new Date(2026, 0, 31, 9, 0);
+  assert.equal(day(extractDate('через месяц', jan31).when), '2026-02-28');
+});

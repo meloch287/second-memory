@@ -103,7 +103,13 @@ function parseDebt(raw, t, dt, due) {
   const { amount, rest } = extractAmount(dt.rest);
 
   let direction = 'in';
-  if (/(^|\s)(я|мы)\s+долж/.test(t) || /мой долг|наш долг|(^|\s)я взял/.test(t)) direction = 'out';
+  if (
+    /(^|\s)(я|мы)\s+долж/.test(t) ||
+    /долж[а-я]*\s+(я|мы)(\s|$)/.test(t) || // «должен я Кузнецову…»
+    /мой долг|наш долг|(^|\s)я взял/.test(t)
+  ) {
+    direction = 'out';
+  }
   if (/долж[а-я]*\s+(мне|нам)(\s|$)/.test(t) || /(мне|нам)\s+долж/.test(t)) direction = 'in';
 
   const counterparty = findCounterparty(rest);
@@ -121,9 +127,10 @@ function parseDebt(raw, t, dt, due) {
 function findCounterparty(body) {
   let m;
   if ((m = body.match(/["«]([^"»«]{2,40})["»]/))) return m[1].trim();
-  if ((m = body.match(/([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+долж/))) return m[1];
+  // между именем и «должен» может стоять «мне»/«нам»: «Петров мне должен 30 тысяч»
+  if ((m = body.match(/([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+)?)\s+(?:(?:мне|нам)\s+)?долж/))) return m[1];
   if ((m = body.match(/долг[ауе]?\s+(?:перед\s+)?([А-ЯЁ][а-яё]+)/))) return m[1];
-  if ((m = body.match(/долж(?:ен|на|ны)\s+([А-ЯЁ][а-яё]+)/))) return m[1];
+  if ((m = body.match(/долж(?:ен|на|ны)\s+(?:(?:я|мы)\s+)?([А-ЯЁ][а-яё]+)/))) return m[1];
   if ((m = body.match(/(?:заказчик|клиент)[а-яё]*\s+([A-Za-zА-ЯЁа-яё0-9-]{2,})/i))) {
     if (!/^долж/i.test(normText(m[1]))) return cap(m[1]);
   }
@@ -131,7 +138,7 @@ function findCounterparty(body) {
     'я', 'мы', 'он', 'она', 'они', 'оно', 'кто', 'мне', 'нам', 'еще', 'уже',
     'тоже', 'также', 'сейчас', 'вчера', 'позавчера', 'заказчик', 'клиент',
   ]);
-  if ((m = normText(body).match(/(?:^|\s)([а-яеa-z-]{3,})\s+долж/))) {
+  if ((m = normText(body).match(/(?:^|\s)([а-яеa-z-]{3,})\s+(?:(?:мне|нам)\s+)?долж/))) {
     if (!stop.has(m[1])) return cap(m[1]);
   }
   return null;

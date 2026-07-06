@@ -44,7 +44,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
-    if (url.pathname === '/api/health') return json(res, 200, { ok: true });
+    if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true });
 
     if (url.pathname === '/api/message' && req.method === 'POST') {
       let payload;
@@ -53,8 +53,10 @@ const server = createServer(async (req, res) => {
       } catch {
         return json(res, 400, { error: 'Ожидается JSON вида {"text":"..."}' });
       }
-      const text = String(payload?.text ?? '').slice(0, 2000);
-      return json(res, 200, handleMessage(store, text));
+      if (typeof payload?.text !== 'string') {
+        return json(res, 400, { error: 'Поле text должно быть строкой' });
+      }
+      return json(res, 200, handleMessage(store, payload.text.slice(0, 2000)));
     }
 
     if (url.pathname === '/api/entries' && req.method === 'GET') {

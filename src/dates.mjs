@@ -78,8 +78,11 @@ export function extractDate(text, base = new Date()) {
         const n = m[1] ? parseInt(m[1], 10) : 1;
         if (m[2].startsWith('недел')) return addDays(base, n * 7);
         if (m[2].startsWith('месяц')) {
-          const x = new Date(base);
-          x.setMonth(x.getMonth() + n);
+          // setMonth на 29–31 числах перескакивает месяц — прижимаем к последнему дню
+          const d = base.getDate();
+          const x = new Date(base.getFullYear(), base.getMonth() + n, 1);
+          const last = new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate();
+          x.setDate(Math.min(d, last));
           return x;
         }
         return addDays(base, n);
@@ -178,8 +181,10 @@ export function extractDate(text, base = new Date()) {
  * Возвращает { amount, rest }. Числа без валюты/множителя меньше 100 игнорируются.
  */
 export function extractAmount(text) {
+  // Число: цифры + необязательные группы РОВНО по 3 цифры («50 000», «1 000 000»).
+  // Жадное [\d\s]* нельзя: оно склеивало два соседних числа («50000 15000») в одно.
   const rx =
-    /(?<![№#\d,.:])(\d[\d\s]*(?:[.,]\d+)?)\s*(млн|миллион[а-я]*|тыс[а-я]*\.?|к(?![0-9a-zа-я])|k(?![0-9a-zа-я]))?\s*(руб[а-я]*\.?|р\.|₽)?/gi;
+    /(?<![№#\d,.:])(\d+(?:\s\d{3})*(?:[.,]\d+)?)(?!\d)\s*(млн|миллион[а-я]*|тыс[а-я]*\.?|к(?![0-9a-zа-я])|k(?![0-9a-zа-я]))?\s*(руб[а-я]*\.?|р\.|₽)?/gi;
 
   let best = null;
   for (const m of normText(text).matchAll(rx)) {
