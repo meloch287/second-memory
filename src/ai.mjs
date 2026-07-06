@@ -391,10 +391,16 @@ export async function aiEmbed(texts) {
 
 // Семантический поиск фактов под вопрос: эмбеддинг запроса + косинус
 // в хранилище, keyword-поиск как дополнение и фолбэк.
+// Порог, ниже которого векторный поиск не нужен: при небольшой памяти
+// keyword-поиск не хуже, а лишний сетевой вызов эмбеддингов замедляет ответ.
+const VECTOR_MIN_FACTS = 40;
+
 export async function smartRecall(store, chatId, query, limit = 25) {
   const keyword = store.factsFor(chatId, query, limit);
   try {
     if (!store.hasEmbeddings(chatId)) return keyword;
+    const factCount = store.data.facts.filter((f) => f.chatId === chatId).length;
+    if (factCount < VECTOR_MIN_FACTS) return keyword; // мало памяти - без эмбеддингов, быстрее
     const [qv] = await aiEmbed([String(query).slice(0, 500)]);
     const byVector = store.factsByVector(chatId, qv, limit);
     const seen = new Set();
