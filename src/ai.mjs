@@ -359,9 +359,13 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   const history = store.recentHistory(12, chatId);
   const personas = store.getPersonas(chatId);
   const personaLines = Object.entries(personas).map(([name, note]) => `- ${name}: ${note}`);
+  const memberLine = user?.isGroup && user.members
+    ? Object.values(user.members).map((m) => m.name + (m.username ? ` (@${m.username})` : '')).join(', ')
+    : null;
   return [
     nowLine(off, now),
     '',
+    ...(memberLine ? [`УЧАСТНИКИ ГРУППЫ (тут пишут): ${memberLine}`, ''] : []),
     ...(personaLines.length ? ['ЛЮДИ В ЕГО ЖИЗНИ (досье):', ...personaLines, ''] : []),
     'ПАМЯТЬ (факты из прошлых разговоров):',
     ...(facts.length

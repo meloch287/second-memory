@@ -238,6 +238,24 @@ function entry(type, fields) {
   return { kind: 'entry', entry: { type, ...fields } };
 }
 
+// Поиск участника группы по имени/username с учётом падежа («никиту» -> Никита).
+export function findMember(members, query) {
+  const stem = (s) => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[ауыоеиюяьй]+$/, '');
+  const q = String(query).toLowerCase().replace(/^@/, '').replace(/ё/g, 'е').trim();
+  if (!q) return null;
+  for (const [id, m] of Object.entries(members || {})) {
+    const u = (m.username || '').toLowerCase();
+    if (u && (u === q || q === '@' + u)) return { id, ...m };
+  }
+  const qs = stem(q);
+  if (qs.length < 2) return null;
+  for (const [id, m] of Object.entries(members || {})) {
+    const n = stem(m.name || '');
+    if (n && (n === qs || n.startsWith(qs) || qs.startsWith(n))) return { id, ...m };
+  }
+  return null;
+}
+
 // Команды управления группой (текст уже нормализован: lower, е вместо ё).
 // needsReply - команду надо отправлять ответом (reply) на целевое сообщение.
 export function parseGroupCmd(t) {

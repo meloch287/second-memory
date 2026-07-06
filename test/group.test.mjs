@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseGroupCmd } from '../src/parser.mjs';
+import { parseGroupCmd, findMember } from '../src/parser.mjs';
 
 const norm = (s) => s.toLowerCase().replace(/ё/g, 'е').trim();
 
@@ -20,6 +20,20 @@ test('parseGroupCmd: команды управления группой', () => 
   assert.deepEqual(parseGroupCmd(norm('удали это')), { cmd: 'del', needsReply: true });
   assert.deepEqual(parseGroupCmd(norm('сделай админом')), { cmd: 'promote', needsReply: true });
   assert.deepEqual(parseGroupCmd(norm('сними админа')), { cmd: 'demote', needsReply: true });
+});
+
+test('findMember: по имени с падежом и по username', () => {
+  const members = {
+    111: { name: 'Никита', username: 'pxpusk' },
+    222: { name: 'Саша', username: null },
+  };
+  assert.equal(findMember(members, 'Никиту')?.id, '111', 'падеж «Никиту» находит Никиту');
+  assert.equal(findMember(members, 'никита')?.id, '111');
+  assert.equal(findMember(members, 'pxpusk')?.id, '111', 'по username');
+  assert.equal(findMember(members, '@pxpusk')?.id, '111');
+  assert.equal(findMember(members, 'Сашу')?.id, '222', 'падеж «Сашу», без username');
+  assert.equal(findMember(members, 'Петя'), null, 'чужих не находит');
+  assert.equal(findMember({}, 'Никита'), null);
 });
 
 test('parseGroupCmd: обычные фразы - не команды', () => {

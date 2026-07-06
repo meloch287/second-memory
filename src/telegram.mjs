@@ -17,7 +17,7 @@ import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
-import { parseMessage, parseGroupCmd } from './parser.mjs';
+import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
@@ -853,6 +853,25 @@ export function startTelegramBot(store, token, log = console) {
       g = store.setUser(key, { isGroup: true, name: msg.chat.title || 'Группа', botName: g?.botName || 'Помощник', tzOffset: g?.tzOffset ?? DEFAULT_OFFSET, step: null });
     }
 
+    // реестр участников: каждый, кто пишет (или кого добавили) - в справочник,
+    // чтобы бот мог реально тегать людей (@username или tg://user?id=)
+    const members = { ...(g.members || {}) };
+    let membersChanged = false;
+    const remember = (u) => {
+      if (!u || u.is_bot) return;
+      const cur = members[u.id];
+      const name = u.first_name || u.username || '';
+      const username = u.username || null;
+      if (!cur || cur.name !== name || cur.username !== username) {
+        members[u.id] = { name, username };
+        membersChanged = true;
+      }
+    };
+    remember(msg.from);
+    remember(msg.reply_to_message?.from);
+    (msg.new_chat_members || []).forEach(remember);
+    if (membersChanged) g = store.setUser(key, { members });
+
     // бота добавили в группу - представиться
     if (msg.new_chat_members?.some((u) => u.id === botId)) {
       return send(
@@ -891,6 +910,16 @@ export function startTelegramBot(store, token, log = console) {
 
     if (!addressed) return; // без обращения молчим, только запоминаем
 
+    // Тегнуть участника: «тегни Никиту», «позови Сашу». Только реальные
+    // участники из реестра; @username пингует сам, без username - ссылка на профиль.
+    const tag = text.match(/^(?:тегни|тэгни|пингани|позови|призови)\s+@?(.+?)[!?.\s]*$/i);
+    if (tag) {
+      const hit = findMember(g.members, tag[1]);
+      if (!hit) return send(chatId, `Не видел, чтобы ${esc(tag[1])} тут писал. Тегаю только тех, кто есть в группе 🙂`);
+      const mention = hit.username ? `@${hit.username}` : `<a href="tg://user?id=${hit.id}">${esc(hit.name)}</a>`;
+      return send(chatId, `${mention}, тебя ${esc(fromName)} зовёт 🙂`);
+    }
+
     // Смена имени бота в группе: «ты теперь Серега», «тебя зовут Макс»
     const nm = text.match(/(?:ты теперь|(?:теперь )?тебя зовут)\s+([А-Яа-яЁёA-Za-z0-9_-]{2,20})/i);
     if (nm) {
@@ -918,6 +947,12 @@ export function startTelegramBot(store, token, log = console) {
       log.error('[telegram] group friend', e.message);
     }
     if (!reply) return send(chatId, esc(sleepyText(key)));
+    // модель любит зеркалить формат входящих «Имя: ...» - срезаем известные имена
+    const known = new Set(
+      [fromName, g.botName, ...Object.values(g.members || {}).map((m) => m.name)].filter(Boolean).map((s) => s.toLowerCase())
+    );
+    const pm = reply.match(/^([\wА-Яа-яЁё-]{2,20})\s*:\s+/);
+    if (pm && known.has(pm[1].toLowerCase())) reply = reply.slice(pm[0].length);
     store.pushHistory('user', `${fromName}: ${text}`, key);
     store.pushHistory('assistant', reply, key);
     return send(chatId, esc(reply));
