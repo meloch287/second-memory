@@ -676,7 +676,9 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
     }
     if (user?.step) return onboardingStep(chatId, user, transcript);
-    // Без дублирования расшифровки - сразу ответ на голосовое текстом.
+    // Голосовые команды работают как текстовые: сперва интенты
+    // («отвечай голосом», «траты», «забудь», «напомни...»), потом разговор.
+    if (await handleIntent(String(chatId), user, transcript)) return;
     return friendFlow(String(chatId), transcript);
   }
 
@@ -792,7 +794,8 @@ export function startTelegramBot(store, token, log = console) {
       });
       if (!transcript) return send(chatId, 'Кружок посмотрел, но слов не разобрал. Повтори?');
       if (user?.step) return onboardingStep(chatId, user, transcript);
-      return friendFlow(String(chatId), transcript); // без эха, сразу ответ текстом
+      if (await handleIntent(String(chatId), user, transcript)) return; // команды из кружка тоже работают
+      return friendFlow(String(chatId), transcript);
     }
 
     if (msg.document) {
