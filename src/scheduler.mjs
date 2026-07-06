@@ -120,6 +120,7 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
     const w = wall(user, now);
     const hour = w.getUTCHours();
     const today = userDayKey(user, now);
+    const quiet = hour >= 23 || hour < 7; // «тихий час»: ночью не дёргаем по делам
 
     // 1) Точные напоминания по времени (за lead минут до срока)
     const lead = Number.isFinite(user.remindLead) ? user.remindLead : DEFAULT_LEAD;
@@ -143,8 +144,8 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
 
     if (!aiEnabled()) return;
 
-    // 3) Утренний план + погода (если знаем город)
-    if (hour === morningHour(user.rhythm) && user.lastMorningPing !== today) {
+    // 3) Утренний план + погода (если знаем город). В тихий час не пингуем.
+    if (!quiet && hour === morningHour(user.rhythm) && user.lastMorningPing !== today) {
       store.setUser(chatId, { lastMorningPing: today });
       const events = todayEvents(store, chatId, now);
       const wl = user.city ? weatherLine(await todayWeather(user.city)) : null;
@@ -159,8 +160,8 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       }
     }
 
-    // 4) Вечер: «как день» + вопрос о просроченном (№9)
-    if (hour === eveningHour(user.rhythm) && user.lastEveningPing !== today) {
+    // 4) Вечер: «как день» + вопрос о просроченном (№9). В тихий час - нет.
+    if (!quiet && hour === eveningHour(user.rhythm) && user.lastEveningPing !== today) {
       store.setUser(chatId, { lastEveningPing: today });
       const { start, end } = userDayBounds(user, now);
       const wroteToday = store.rawForDay(chatId, start, end).length > 0;
@@ -169,10 +170,10 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
         await bot.sendText(chatId, phrase);
         store.pushHistory('assistant', phrase, chatId);
       }
-      // спросить про самое старое просроченное дело
+      // спросить про самое старое просроченное дело - только днём/вечером
       const overdue = store.overdue(chatId, now.getTime()).filter((e) => e.type !== 'debt' || e.hasTime);
       const item = overdue[overdue.length - 1];
-      if (item) {
+      if (item && hour >= 9 && hour < 22) {
         await bot.sendButtons(chatId, `Кстати, «${item.title || item.counterparty}» так и висит с ${fmtUser(item.due, off, false)}. Сделал уже?`, [
           [{ text: '✅ Да, сделал', callback_data: `done_${item.id}` }, { text: 'Ещё нет', callback_data: `keep_${item.id}` }],
         ]);
