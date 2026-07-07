@@ -356,7 +356,35 @@ export function findMember(members, query) {
   for (const [id, m] of Object.entries(members || {})) {
     if (match(stem(m.name || ''))) return { id, ...m };
   }
+  // близкие формы: уменьшительные и падежи, которые не сходятся префиксом
+  // («Серёгу»->«Сергей»), + опечатки. Правка-расстояние <=1 на основах >=4 букв.
+  if (qs.length >= 4) {
+    for (const [id, m] of Object.entries(members || {})) {
+      const n = stem(m.name || '');
+      if (n.length >= 4 && (editLE1(n, qs) || editLE1(toLat(n), toLat(qs)))) return { id, ...m };
+    }
+  }
   return null;
+}
+
+// true, если строки отличаются не более чем на одну правку (вставка/удаление/замена).
+function editLE1(a, b) {
+  if (a === b) return true;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  if (la === lb) {
+    let d = 0;
+    for (let i = 0; i < la; i++) if (a[i] !== b[i] && ++d > 1) return false;
+    return true;
+  }
+  const s = la < lb ? a : b, l = la < lb ? b : a;
+  let i = 0, j = 0, skips = 0;
+  while (i < s.length && j < l.length) {
+    if (s[i] === l[j]) { i++; j++; }
+    else if (++skips > 1) return false;
+    else j++;
+  }
+  return true;
 }
 
 // Команды управления группой (текст уже нормализован: lower, е вместо ё).

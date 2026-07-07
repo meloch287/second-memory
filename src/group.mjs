@@ -9,6 +9,18 @@ import { captureEntry, handleMessage } from './brain.mjs';
 import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
 
+// Родственные/ролевые слова - валидные «имена» в строчном виде («это мама»,
+// «это батя»). Основа = слово без хвостовых гласных/ь/й, как в findMember,
+// чтобы совпадало и в падежах.
+const REL_STEM = (s) => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[ауыоеиюяьй]+$/, '');
+const RELATIONSHIP = new Set(
+  ['мама', 'мать', 'мамка', 'папа', 'отец', 'папка', 'батя', 'сестра', 'сестрёнка', 'брат', 'братишка',
+   'жена', 'муж', 'супруг', 'супруга', 'бабушка', 'баба', 'дедушка', 'дед', 'деда', 'тётя', 'тетя', 'дядя',
+   'сын', 'сынок', 'дочь', 'дочка', 'тёща', 'теща', 'свекровь', 'свёкор', 'зять', 'невестка', 'сноха',
+   'внук', 'внучка', 'кум', 'кума', 'крёстный', 'крёстная', 'тесть', 'шурин', 'девушка', 'парень', 'друг', 'подруга'].map(REL_STEM)
+);
+const isRelName = (w) => RELATIONSHIP.has(REL_STEM(w));
+
 export function createGroupHandler(deps) {
   const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver } = deps;
 
@@ -278,9 +290,9 @@ export function createGroupHandler(deps) {
     // «он Саша» / «её зовут Саша» / «это @ник» -> тот человек получает имя.
     const rt = msg.reply_to_message?.from;
     if (rt && !rt.is_bot && rt.id !== msg.from?.id) {
-      const rm = text.match(/^(?:это|эт[оа]\s+же|он|она|его зовут|её зовут|ее зовут|зовут|запомни[:,]?\s*(?:это\s+)?)\s+([А-Яа-яЁёA-Za-z@][А-Яа-яЁёA-Za-z0-9_]{1,31})[!.]*$/i);
-      // защита от «это круто/правда»: имя с заглавной, или @ник, или явно к боту
-      if (rm && (rm[1].startsWith('@') || /^[А-ЯЁA-Z]/.test(rm[1]) || addressed)) {
+      const rm = text.match(/^(?:это|эт[оа]\s+же|он|она|его зовут|её зовут|ее зовут|зовут|запомни[:,]?\s*(?:это\s+)?)\s+(?:мо[йяю]\s+|наш[аеи]?\s+|это\s+)?([А-Яа-яЁёA-Za-z@][А-Яа-яЁёA-Za-z0-9_]{1,31})[!.]*$/i);
+      // защита от «это круто/правда»: имя с заглавной, @ник, родственное слово («мама»), или явно к боту
+      if (rm && (rm[1].startsWith('@') || /^[А-ЯЁA-Z]/.test(rm[1]) || isRelName(rm[1]) || addressed)) {
         const raw2 = rm[1];
         const isUn = raw2.startsWith('@');
         const members2 = { ...(g.members || {}) };

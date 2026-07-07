@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.mjs';
 import { parseGroupCmd, findMember } from '../src/parser.mjs';
 
 const norm = (s) => s.toLowerCase().replace(/ё/g, 'е').trim();
+const freshStore = () => new Store(join(mkdtempSync(join(tmpdir(), 'sm-grp-')), 'm.json'));
 
 test('parseGroupCmd: команды управления группой', () => {
   assert.deepEqual(parseGroupCmd(norm('закрепи')), { cmd: 'pin', needsReply: true });
@@ -145,4 +150,40 @@ test('stripBotVocative: имя бота не остаётся обращение
   // короткое/пустое имя не режем (риск ложных)
   assert.equal(stripBotVocative('привет, Кот', 'Кот'), 'привет, Кот');
   assert.equal(stripBotVocative('текст', ''), 'текст');
+});
+
+test('findMember: уменьшительные и падежи (Серёгу->Сергей, андрюху->Андрей)', () => {
+  const m = { 1: { name: 'Мама' }, 2: { name: 'Сергей', username: 'serg' }, 3: { name: 'Андрей' }, 4: { name: 'Батя' }, 5: { name: 'Сестра' } };
+  for (const q of ['маму', 'маме', 'мамой']) assert.equal(findMember(m, q)?.name, 'Мама', q);
+  for (const q of ['серегу', 'серёгу', 'сереге', 'сергея']) assert.equal(findMember(m, q)?.name, 'Сергей', q);
+  for (const q of ['андрюху', 'андрея']) assert.equal(findMember(m, q)?.name, 'Андрей', q);
+  assert.equal(findMember(m, 'батю')?.name, 'Батя');
+  for (const q of ['сестру', 'сестре', 'сестрёнку']) assert.equal(findMember(m, q)?.name, 'Сестра', q);
+  assert.equal(findMember(m, 'Петю'), null, 'чужих не выдумывает');
+});
+
+test('группа: «это мама» реплаем регистрирует, «тегни маму» тегает', async () => {
+  const { createGroupHandler } = await import('../src/group.mjs');
+  const sent = [];
+  const store = freshStore();
+  const { groupFlow } = createGroupHandler({
+    api: async (m) => (m === 'getMe' ? { result: { username: 'bot', id: 42 } } : { ok: true }),
+    send: async (c, t) => { sent.push(t); return { ok: true }; }, esc: (s) => s, store,
+    log: { error() {}, info() {} }, withTyping: (c, fn) => fn(), handleIntent: async () => false,
+    sendSummary: async () => {}, askReset: async () => {}, readDoc: async () => null,
+    downloadBase64: async () => '', sleepyText: () => '...', maybeReact: () => {}, deliver: async () => {},
+  });
+  const chat = { id: -7, type: 'supergroup', title: 'T' };
+  const me = { id: 1, first_name: 'Саня' };
+  // реплай на человека id999 со словом «это мама»
+  await groupFlow({ chat, from: me, text: 'это мама', message_id: 2, reply_to_message: { message_id: 1, from: { id: 999, first_name: 'Аня', is_bot: false } } });
+  assert.equal(store.getUser('-7').members['999'].name, 'Мама', 'зарегистрировал как Мама');
+  // тег по падежу
+  await groupFlow({ chat, from: me, text: '@bot тегни маму', message_id: 3 });
+  const last = sent[sent.length - 1] || '';
+  assert.match(last, /999/, 'тегает человека 999');
+  assert.doesNotMatch(last, /не видел|кто это|черкн/i, 'не спрашивает кто это');
+  // ложное «это круто» реплаем не переименовывает
+  await groupFlow({ chat, from: me, text: 'это круто', message_id: 4, reply_to_message: { message_id: 1, from: { id: 888, first_name: 'Z', is_bot: false } } });
+  assert.notEqual(store.getUser('-7').members['888']?.name, 'Круто', 'прилагательное не стало именем');
 });
