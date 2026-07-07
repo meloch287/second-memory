@@ -424,7 +424,15 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
     ...(open.length ? open.map((e) => fmtEntry(e, off)) : ['- пока пусто -']),
     '',
     'ПОСЛЕДНИЕ СООБЩЕНИЯ:',
-    ...history.map((h) => `${h.role === 'user' ? (user?.name || 'Друг') : 'Ты'}: ${h.text.slice(0, 250)}`),
+    ...history.map((h) => {
+      if (user?.isGroup) {
+        // user-строки уже с именем автора; свои ответы чистим от заражённого
+        // «Имя:»-префикса, чтобы модель не перенимала этот формат
+        if (h.role === 'user') return h.text.slice(0, 250);
+        return `Ты: ${h.text.replace(/^[А-ЯЁA-Z][\wА-Яа-яЁё-]{1,19}:\s+/, '').slice(0, 250)}`;
+      }
+      return `${h.role === 'user' ? (user?.name || 'Друг') : 'Ты'}: ${h.text.slice(0, 250)}`;
+    }),
   ].join('\n');
 }
 

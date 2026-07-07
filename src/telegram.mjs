@@ -1041,15 +1041,34 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, `Запомнил: ${esc(link[1])} - это @${esc(un)} 👌`);
     }
 
-    // Тегнуть участника: «тегни Никиту», «позови Сашу». Только реальные
-    // участники из реестра; @username пингует сам, без username - ссылка на профиль.
-    const tag = text.match(/^(?:тегни|тэгни|пингани|позови|призови)\s+@?(.+?)[!?.\s]*$/i);
+    // Тегнуть участника: «тегни Никиту», «серег, тегни никиту и скажи что...».
+    // Глагол ищем в любом месте фразы (перед ним часто обращение к боту),
+    // «скажи/передай что X» - передаём сообщение тегом. Только реальные
+    // участники; @username пингует сам, без username - ссылка на профиль.
+    const tag = text.match(/(?:^|[\s,!])(?:т[еэ]гни+|пингани|позови|призови)\s+@?(.+)$/i);
     if (tag) {
-      const hit = findMember(g.members, tag[1]);
+      let who = tag[1].trim();
+      let relay = null;
+      const say = who.match(/^(.+?)\s+(?:и\s+)?(?:скажи|передай|напиши)(?:\s+(?:ему|ей))?\s*,?\s*(?:что\s+)?(.+)$/i);
+      if (say) {
+        who = say[1].trim();
+        relay = say[2].trim();
+      }
+      who = who.replace(/[!?.\s]+$/, '');
+      if (/^(?:его|её|ее)$/i.test(who)) {
+        const t = msg.reply_to_message?.from;
+        if (t && !t.is_bot) {
+          const m2 = t.username ? `@${t.username}` : `<a href="tg://user?id=${t.id}">${esc(t.first_name || 'Эй')}</a>`;
+          return send(chatId, relay ? `${m2}, ${esc(fromName)} просил передать: «${esc(relay)}» 📣` : `${m2}, тебя ${esc(fromName)} зовёт 🙂`);
+        }
+        return send(chatId, 'Ответь командой на сообщение самого человека - пойму, кого звать.');
+      }
+      const hit = findMember(g.members, who);
       if (!hit) {
-        return send(chatId, `Не видел, чтобы ${esc(tag[1])} тут писал. Пусть черкнёт разок, или скажи «${esc(tag[1])} - это @ник», и я запомню.`);
+        return send(chatId, `Не видел, чтобы ${esc(who)} тут писал. Пусть черкнёт разок, или скажи «${esc(who)} - это @ник», и я запомню.`);
       }
       const mention = hit.username ? `@${hit.username}` : `<a href="tg://user?id=${hit.id}">${esc(hit.name)}</a>`;
+      if (relay) return send(chatId, `${mention}, ${esc(fromName)} просил передать: «${esc(relay)}» 📣`);
       return send(chatId, `${mention}, тебя ${esc(fromName)} зовёт 🙂`);
     }
 
@@ -1080,12 +1099,17 @@ export function startTelegramBot(store, token, log = console) {
       log.error('[telegram] group friend', e.message);
     }
     if (!reply) return send(chatId, esc(sleepyText(key)));
-    // модель любит зеркалить формат входящих «Имя: ...» - срезаем известные имена
+    // модель любит зеркалить формат входящих «Имя: ...» - срезаем известные
+    // имена в цикле (бывает задвоение) с трима
     const known = new Set(
       [fromName, g.botName, ...Object.values(g.members || {}).map((m) => m.name)].filter(Boolean).map((s) => s.toLowerCase())
     );
-    const pm = reply.match(/^([\wА-Яа-яЁё-]{2,20})\s*:\s+/);
-    if (pm && known.has(pm[1].toLowerCase())) reply = reply.slice(pm[0].length);
+    reply = reply.trim();
+    for (let i = 0; i < 3; i++) {
+      const pm = reply.match(/^([\wА-Яа-яЁё-]{2,20})\s*:\s+/);
+      if (pm && known.has(pm[1].toLowerCase())) reply = reply.slice(pm[0].length).trim();
+      else break;
+    }
     store.pushHistory('user', `${fromName}: ${text}`, key);
     store.pushHistory('assistant', reply, key);
     return send(chatId, esc(reply));
