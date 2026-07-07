@@ -70,7 +70,36 @@ export function getWebSettings(store) {
     voiceReplies: !!c.voiceReplies,
     voice: VOICES.includes(c.voice) ? c.voice : 'alloy',
     voices: VOICES,
+    tgLinked: !!c.linkedChatId,
   };
+}
+
+// --- Связка веб-профиля с Telegram («Подключить Telegram-алерты») ---
+// Одноразовый токен: веб генерит, отдаёт deep-link t.me/<bot>?start=sm-<token>,
+// бот при /start sm-<token> подтверждает и привязывает свой chatId.
+export function startTgLink(store) {
+  const c = cfg(store);
+  const token = randomBytes(9).toString('base64url');
+  c.linkToken = { token, exp: Date.now() + 15 * 60000 };
+  store.save();
+  return token;
+}
+export function consumeTgLink(store, token, chatId) {
+  const c = cfg(store);
+  const lt = c.linkToken;
+  if (!lt || lt.token !== token || Date.now() > lt.exp) return false;
+  c.linkedChatId = String(chatId);
+  delete c.linkToken;
+  store.save();
+  return true;
+}
+export function linkedChatId(store) {
+  return cfg(store).linkedChatId || null;
+}
+export function unlinkTg(store) {
+  const c = cfg(store);
+  delete c.linkedChatId;
+  store.save();
 }
 
 export function setWebSettings(store, patch) {

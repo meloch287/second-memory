@@ -145,6 +145,9 @@
     </aside>
   </div>
 
+  <!-- Всплывашки напоминаний (веб): «пора сделать X». Вежливый live-region. -->
+  <div id="reminder-toasts" class="reminder-toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+
   <!-- Настройки: нативный модальный <dialog> (сосед .app, не потомок) -->
   <dialog id="settings-modal" class="settings-modal" aria-labelledby="settings-title">
     <div class="settings-modal__panel">
@@ -185,6 +188,13 @@
       <div class="field field--switch">
         <input id="reduce-motion" name="reduceMotion" type="checkbox" class="switch-input">
         <label for="reduce-motion">Меньше движения</label>
+      </div>
+
+      <div class="field field--tg">
+        <span id="tg-label" class="field-label">Уведомления в Telegram</span>
+        <p class="field-hint" id="tg-hint">Подключишь бота — напоминания и вся память будут и здесь, и в Telegram. Работает и там, и там.</p>
+        <button type="button" id="tg-connect" class="btn-ghost" aria-describedby="tg-hint">Подключить Telegram</button>
+        <p id="tg-status" class="field-status" role="status" aria-live="polite"></p>
       </div>
 
       <form id="pw-change-form" class="pw-change" novalidate>

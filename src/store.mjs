@@ -320,6 +320,25 @@ export class Store {
     return { facts, entries };
   }
 
+  // Перенести всю память одного пространства в другое (веб 'web' -> телеграм
+  // chatId при «Подключить Telegram»). Возвращает число перенесённых записей+фактов.
+  migrateChat(from, to) {
+    from = String(from); to = String(to);
+    if (from === to) return 0;
+    let n = 0;
+    for (const e of this.data.entries) if ((e.chatId || 'web') === from) { e.chatId = to; n++; }
+    for (const f of this.data.facts) if ((f.chatId || 'web') === from) { f.chatId = to; n++; }
+    for (const r of this.data.raw) if ((r.chatId || 'web') === from) r.chatId = to;
+    for (const h of this.data.history) if ((h.chatId || 'web') === from) h.chatId = to;
+    for (const rec of this.data.recurring) if ((rec.chatId || 'web') === from) rec.chatId = to;
+    if (this.data.personas[from]) {
+      this.data.personas[to] = { ...(this.data.personas[to] || {}), ...this.data.personas[from] };
+      delete this.data.personas[from];
+    }
+    this.save();
+    return n;
+  }
+
   // Досье людей (обновляет ночная консолидация).
   getPersonas(chatId) {
     return this.data.personas[chatId] || {};

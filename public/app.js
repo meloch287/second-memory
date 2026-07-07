@@ -829,6 +829,7 @@ function showApp(fromLogin) {
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) micBtn.hidden = false;
   applySettings();
   refreshStats();
+  startReminderPolling();
   if (fromLogin) input.focus({ preventScroll: true });
 }
 
@@ -906,6 +907,7 @@ function applySettings() {
   motionOff = localStorage.getItem('sm_motion_off') === '1';
   reduceToggle.checked = motionOff;
   if (!webSettings.audio) { voiceToggle.disabled = true; voiceToggle.checked = false; }
+  applyTgStatus();
 }
 
 function syncVoiceEnabled() {
@@ -920,6 +922,83 @@ function saveSettings(patch) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   }).then((r) => r.ok && r.json()).then((s) => { if (s) webSettings = { ...webSettings, ...s }; }).catch(() => {});
+}
+
+/* ---- Подключение Telegram (уведомления + общая память) ---- */
+
+const tgConnect = document.getElementById('tg-connect');
+const tgStatus = document.getElementById('tg-status');
+
+function applyTgStatus() {
+  if (webSettings.tgLinked) {
+    tgConnect.textContent = 'Переподключить Telegram';
+    tgStatus.textContent = 'Подключено ✓ — напоминания приходят и в Telegram, память общая.';
+  } else {
+    tgConnect.textContent = 'Подключить Telegram';
+  }
+}
+
+tgConnect.addEventListener('click', async () => {
+  tgConnect.disabled = true;
+  tgStatus.textContent = 'Готовлю ссылку…';
+  try {
+    const res = await fetch('/api/tg-link', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.url) {
+      window.open(data.url, '_blank', 'noopener');
+      tgStatus.textContent = 'Открыл Telegram — нажми «Старт» (Start) у бота, чтобы подключить.';
+      setTimeout(async () => { if (await loadSettings()) applyTgStatus(); }, 7000);
+    } else {
+      tgStatus.textContent = data.error || 'Не удалось создать ссылку. Попробуй ещё раз.';
+    }
+  } catch {
+    tgStatus.textContent = 'Ошибка сети. Попробуй ещё раз.';
+  } finally {
+    tgConnect.disabled = false;
+  }
+});
+
+/* ---- Веб-напоминания: всплывашки «пора сделать X» ---- */
+
+const reminderToasts = document.getElementById('reminder-toasts');
+let reminderTimer = null;
+
+function showReminderToast(r) {
+  const label = r.type === 'meeting' ? 'Встреча' : r.type === 'debt' ? 'Долг' : 'Напоминание';
+  const el = document.createElement('div');
+  el.className = 'reminder-toast';
+  const icon = document.createElement('span');
+  icon.className = 'reminder-toast__icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '🔔';
+  const txt = document.createElement('span');
+  txt.className = 'reminder-toast__text';
+  txt.textContent = `${label}: ${r.title}`;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'reminder-toast__close';
+  close.setAttribute('aria-label', 'Закрыть напоминание');
+  close.textContent = '✕';
+  close.addEventListener('click', () => el.remove());
+  el.append(icon, txt, close);
+  reminderToasts.appendChild(el);
+  announce(`Напоминание: ${label}: ${r.title}`);
+  setTimeout(() => { if (el.isConnected) el.remove(); }, 30000);
+}
+
+async function pollReminders() {
+  try {
+    const res = await fetch('/api/reminders/due');
+    if (!res.ok) return;
+    const data = await res.json();
+    (data.reminders || []).forEach(showReminderToast);
+  } catch { /* сеть моргнула - в следующий тик */ }
+}
+
+function startReminderPolling() {
+  if (reminderTimer) return;
+  pollReminders();
+  reminderTimer = setInterval(pollReminders, 45000);
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';

@@ -18,6 +18,7 @@ import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, co
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
+import { consumeTgLink } from './webauth.mjs';
 import { balanceReport, expensesReport, monthCategorySpent, budgetsReport } from './finance.mjs';
 import { RUB } from './format.mjs';
 import { renderChart, chartAvailable } from './chart.mjs';
@@ -1090,6 +1091,15 @@ export function startTelegramBot(store, token, log = console) {
 
     const cmd = text.split(/[\s@]/)[0];
     if (cmd === '/start') {
+      // Deep-link «Подключить Telegram» из веба: /start sm-<token>. Привязываем
+      // этот чат к веб-профилю и переносим ВСЮ веб-память сюда (общая память).
+      const param = text.split(/\s+/)[1] || '';
+      const tok = param.startsWith('sm-') ? param.slice(3) : null;
+      if (tok && consumeTgLink(store, tok, chatId)) {
+        const moved = store.migrateChat('web', String(chatId));
+        if (!store.getUser(String(chatId))) store.setUser(String(chatId), { name: '', botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
+        return send(chatId, `✅ Подключил веб-профиль! Перенёс ${moved} ${moved === 1 ? 'запись' : 'записей/фактов'} - теперь память общая: что в вебе, то и тут. Напоминания и уведомления буду слать сюда. 🔔`);
+      }
       // повторный /start не сбрасывает друга - он просто здоровается
       if (user && !user.step) return helloAgain(String(chatId), user);
       return startOnboarding(String(chatId));
@@ -1234,6 +1244,13 @@ export function startTelegramBot(store, token, log = console) {
   (async () => {
     log.log('[telegram] бот запущен (long polling)');
     api('setMyCommands', { commands: COMMANDS }).catch(() => {});
+    // узнаём свой @username - нужен вебу для deep-link «Подключить Telegram»
+    api('getMe', {}).then((me) => {
+      if (me?.ok && me.result?.username && store.data.meta.botUsername !== me.result.username) {
+        store.data.meta.botUsername = me.result.username;
+        store.save();
+      }
+    }).catch(() => {});
     while (running) {
       try {
         const res = await api('getUpdates', {

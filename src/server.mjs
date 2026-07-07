@@ -15,6 +15,7 @@ import { aiTts, audioEnabled } from './ai.mjs';
 import {
   ensureAuth, verifyPassword, setPassword, makeSession, validSession, bumpEpoch,
   parseCookies, sessionCookie, clearCookie, getWebSettings, setWebSettings,
+  startTgLink, linkedChatId,
 } from './webauth.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -30,10 +31,10 @@ try {
 
 const PUBLIC = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 8790);
-// Веб-панель однопользовательская: чтобы она делила память с личным чатом
-// бота в Telegram (а не жила отдельным пустым юзером 'web'), задай WEB_CHAT_ID
-// = свой Telegram chatId в .env. Без него - изолированное пространство 'web'.
-const WEB_CHAT = process.env.WEB_CHAT_ID || 'web';
+// Пространство памяти веба. По умолчанию изолированный 'web' (или WEB_CHAT_ID из
+// .env). После «Подключить Telegram» (linkedChatId в meta.web) веб начинает жить
+// в том же chatId, что и бот - память общая, напоминания шлёт бот. Динамически.
+const webChat = () => linkedChatId(store) || process.env.WEB_CHAT_ID || 'web';
 
 const store = new Store(process.env.SM_DATA || join(ROOT, 'data', 'memory.json'));
 
@@ -137,26 +138,47 @@ const server = createServer(async (req, res) => {
       if (typeof payload?.text !== 'string') {
         return json(res, 400, { error: 'Поле text должно быть строкой' });
       }
-      return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000), new Date(), WEB_CHAT));
+      return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000), new Date(), webChat()));
     }
 
     if (url.pathname === '/api/memory-stats' && req.method === 'GET') {
-      return json(res, 200, memoryStats(store, WEB_CHAT));
+      return json(res, 200, memoryStats(store, webChat()));
     }
 
     if (url.pathname === '/api/history/clear' && req.method === 'POST') {
-      store.clearHistory(WEB_CHAT);
+      store.clearHistory(webChat());
       return json(res, 200, { ok: true });
     }
 
     if (url.pathname === '/api/entries' && req.method === 'GET') {
       const type = url.searchParams.get('type') || undefined;
       const status = url.searchParams.get('status') || undefined;
-      return json(res, 200, { entries: store.list({ type, status, chatId: WEB_CHAT }) });
+      return json(res, 200, { entries: store.list({ type, status, chatId: webChat() }) });
     }
 
     if (url.pathname === '/api/digest' && req.method === 'GET') {
-      return json(res, 200, await handleMessage(store, 'что у меня сегодня', new Date(), WEB_CHAT));
+      return json(res, 200, await handleMessage(store, 'что у меня сегодня', new Date(), webChat()));
+    }
+
+    // «Подключить Telegram»: выдаём одноразовый deep-link на бота
+    if (url.pathname === '/api/tg-link' && req.method === 'POST') {
+      const bot = store.data.meta.botUsername;
+      if (!bot) return json(res, 503, { error: 'Бот пока не подключён к серверу' });
+      const token = startTgLink(store);
+      return json(res, 200, { url: `https://t.me/${bot}?start=sm-${token}`, bot });
+    }
+
+    // Веб-напоминания: дела со временем, которым пришёл срок и которые ещё не
+    // показывались в вебе. Клиент опрашивает и показывает всплывашку.
+    if (url.pathname === '/api/reminders/due' && req.method === 'GET') {
+      const cid = webChat();
+      const now = Date.now();
+      const due = store.list({ status: 'open', chatId: cid })
+        .filter((e) => e.hasTime && e.due && !e.webShown && Date.parse(e.due) <= now && Date.parse(e.due) > now - 86400000);
+      for (const e of due) store.patch(e.id, { webShown: true });
+      return json(res, 200, {
+        reminders: due.map((e) => ({ id: e.id, title: e.title || e.counterparty || 'дело', due: e.due, type: e.type })),
+      });
     }
 
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'Нет такого метода' });
