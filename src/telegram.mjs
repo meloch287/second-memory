@@ -25,6 +25,7 @@ import { aiChartSpec, aiSplit } from './ai.mjs';
 import { createGroupHandler } from './group.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
+import { parseTgExport, importIntoStore } from './importchat.mjs';
 
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
@@ -928,6 +929,21 @@ export function startTelegramBot(store, token, log = console) {
       const name = doc.file_name || 'документ';
       if ((doc.file_size || 0) > 15 * 1024 * 1024) {
         return send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли что-нибудь полегче?');
+      }
+      // Экспорт истории Telegram (result.json) - заливаем прошлое в память
+      if (name.toLowerCase().endsWith('.json')) {
+        try {
+          const buf = Buffer.from(await downloadBase64(doc.file_id), 'base64');
+          const parsed = parseTgExport(buf);
+          if (parsed) {
+            const r = importIntoStore(store, String(chatId), parsed);
+            const skipped = r.total > r.count ? ` (взял последние ${r.count} из ${r.total})` : '';
+            return send(chatId, `Импортировал историю: ${r.count} сообщений с ${esc(r.first)} по ${esc(r.last)}${skipped} 📚\n\nТеперь помню и то, что было раньше. Фоном переварю в факты - спрашивай.`);
+          }
+        } catch (e) {
+          log.error('[telegram] import', e.message);
+          return send(chatId, 'Файл похож на JSON, но прочитать не смог. Это точно экспорт из Telegram Desktop?');
+        }
       }
       if (!mime.startsWith('audio/')) {
         if (!audioEnabled()) return send(chatId, 'Документы пока не читаю: нет ключа ИИ.');

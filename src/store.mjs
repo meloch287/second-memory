@@ -254,6 +254,22 @@ export class Store {
     return item;
   }
 
+  // Пакетная заливка истории (импорт экспорта Telegram): один save на всё,
+  // вставка В НАЧАЛО (это старые сообщения) - ротация не выест живую переписку.
+  addRawBulk(chatId, items) {
+    const rows = items.map((it) => ({
+      id: ++this.data.seq,
+      chatId,
+      text: String(it.text).slice(0, 1500),
+      ts: it.ts || new Date().toISOString(),
+      processed: false,
+    }));
+    this.data.raw.unshift(...rows);
+    if (this.data.raw.length > 2000) this.data.raw.splice(0, this.data.raw.length - 2000);
+    this.save();
+    return rows.length;
+  }
+
   unprocessedRaw(limit = 30) {
     return this.data.raw.filter((r) => !r.processed).slice(0, limit);
   }

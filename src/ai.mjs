@@ -461,6 +461,13 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   const memberLine = user?.isGroup && user.members
     ? Object.values(user.members).map((m) => m.name + (m.username ? ` (@${m.username})` : '')).join(', ')
     : null;
+  // свежая переписка, которую воркер ещё не переварил в факты: без неё бот
+  // «не видит» только что сказанное и свежеимпортированную историю
+  const factTs = new Set(facts.map((f) => f.ts));
+  const fresh = store.data.raw
+    .filter((r) => r.chatId === chatId && !r.processed)
+    .slice(user?.isGroup ? -40 : -20)
+    .filter((r) => !factTs.has(r.ts));
   return [
     nowLine(off, now),
     '',
@@ -471,6 +478,9 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
       ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [люди: ${f.people.join(', ')}]` : ''} (${fmtUser(f.ts, off, false)})`)
       : ['- пока пусто -']),
     '',
+    ...(fresh.length
+      ? ['НЕДАВНЯЯ ПЕРЕПИСКА (сырьё, ещё не разложено в память):', ...fresh.map((r) => `- ${r.text.slice(0, 200)} (${fmtUser(r.ts, off, false)})`), '']
+      : []),
     'ДЕЛА И ДОЛГИ (структурированные записи):',
     ...(open.length ? open.map((e) => fmtEntry(e, off)) : ['- пока пусто -']),
     '',

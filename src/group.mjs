@@ -4,6 +4,7 @@
 // Фабрика: все внешние зависимости приходят из telegram.mjs.
 
 import { parseGroupCmd, findMember } from './parser.mjs';
+import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { captureEntry, handleMessage } from './brain.mjs';
 import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
@@ -176,6 +177,29 @@ export function createGroupHandler(deps) {
         if (docAddressed) await send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли полегче?');
         return;
       }
+
+      // Экспорт истории Telegram (result.json): заливаем прошлое группы в
+      // память. Только админ - импорт меняет общую память задним числом.
+      if (name.toLowerCase().endsWith('.json')) {
+        try {
+          const buf = Buffer.from(await downloadBase64(doc.file_id), 'base64');
+          const parsed = parseTgExport(buf);
+          if (parsed) {
+            if (!(await callerIsAdmin(chatId, msg.from.id))) {
+              return send(chatId, 'Импорт истории - только для админов группы 🙂');
+            }
+            const r = importIntoStore(store, key, parsed);
+            const skipped = r.total > r.count ? ` (взял последние ${r.count} из ${r.total})` : '';
+            return send(
+              chatId,
+              `Импортировал историю: ${r.count} сообщений с ${esc(r.first)} по ${esc(r.last)}${skipped} 📚\n\nТеперь я помню, что было до меня. Фоном переварю это в факты - через часок буду отвечать по старой переписке совсем уверенно, но спрашивать можно уже сейчас.`
+            );
+          }
+        } catch (e) {
+          log.error('[telegram] group import', e.message);
+          return send(chatId, 'Файл похож на JSON, но прочитать не смог. Это точно экспорт из Telegram Desktop?');
+        }
+      }
       if (!audioEnabled()) {
         if (docAddressed) await send(chatId, 'Документы пока не читаю: нет ключа ИИ.');
         return;
@@ -223,7 +247,7 @@ export function createGroupHandler(deps) {
       if (slash === '/help' || slash === '/start') {
         return send(
           chatId,
-          `Я общая память этой группы 🙂 Слежу за чатом 24/7, запоминаю дела, долги и договорённости, понимаю голосовые, читаю файлы (PDF, DOCX).\n\nТегни @${botUsername} и спроси что угодно: «что мы решили по бюджету?», «баланс», «траты», «найди про...», «нарисуй график трат», «тегни Никиту», «тегни всех», «устрой опрос: пицца или суши», «кто сколько скинул на подарок?».\n\nАдминам: «закрепи» (ответом), «кикни», «замуть на час», «переименуй в ...», «дай ссылку». /summary - итоги, /reset - стереть память группы (только админ).`
+          `Я общая память этой группы 🙂 Слежу за чатом 24/7, запоминаю дела, долги и договорённости, понимаю голосовые, читаю файлы (PDF, DOCX). Хочешь, чтобы я знал, что было ДО меня - экспортируй историю чата в Telegram Desktop (JSON) и кинь сюда result.json (только админ).\n\nТегни @${botUsername} и спроси что угодно: «что мы решили по бюджету?», «баланс», «траты», «найди про...», «нарисуй график трат», «тегни Никиту», «тегни всех», «устрой опрос: пицца или суши», «кто сколько скинул на подарок?».\n\nАдминам: «закрепи» (ответом), «кикни», «замуть на час», «переименуй в ...», «дай ссылку». /summary - итоги, /reset - стереть память группы (только админ).`
         );
       }
       return; // чужие/неизвестные команды в группе молча пропускаем
