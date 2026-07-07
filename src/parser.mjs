@@ -109,6 +109,25 @@ export function parseMessage(text, now = new Date()) {
   const search = parseSearch(raw, t);
   if (search) return search;
 
+  // Опрос (№4): «устрой опрос: пицца или суши», «опрос: вопрос? вар1, вар2»
+  const poll = parsePoll(raw, t);
+  if (poll) return poll;
+
+  // Сплит (№2): «кто сколько скинул», «раздели 6000 на троих», «кто не сдал»
+  if (/раздели(?:ть)?\s+\d|подели(?:ть)?\s+\d|кто\s+(?:не\s+)?(?:сдал|скинул|сбросил)|кто\s+сколько\s+(?:скинул|сдал|должен\s+за)/.test(t)) {
+    return { kind: 'split', request: raw };
+  }
+
+  // Бюджеты (№8): «бюджет на кофе 5000», «лимит на такси 3000 в месяц»
+  let bm;
+  if ((bm = t.match(/^(?:бюджет|лимит)\s+на\s+(.+?)\s+(\d[\d\s]*)(?:\s*(?:руб|₽|р))?(?:\s+в\s+месяц)?[!.]*$/))) {
+    const amount = Number(bm[2].replace(/\s/g, ''));
+    if (amount > 0) return { kind: 'setbudget', category: cap(bm[1].trim()).slice(0, 40), amount };
+  }
+  if (/^(?:мои\s+)?(?:бюджеты|лимиты)[!?.]*$/.test(t)) {
+    return { kind: 'budgets' };
+  }
+
   // График: «нарисуй график трат», «диаграмма долгов», «построй график ...»
   if (/(?:нарисуй|построй|сделай|покажи|составь)?\s*(?:график|диаграмм|чарт)/.test(t) && /график|диаграмм|чарт/.test(t)) {
     return { kind: 'chart', request: raw };
@@ -246,6 +265,31 @@ function parseQuery(raw, t, now) {
 
 function entry(type, fields) {
   return { kind: 'entry', entry: { type, ...fields } };
+}
+
+// Опрос: «устрой опрос: пицца или суши?», «опрос: куда едем? Сочи, Питер, Казань»
+export function parsePoll(raw, t) {
+  if (!/(?:^|[\s,!])(?:опрос|голосовани|проголосуем)/.test(t)) return null;
+  const after = raw.replace(/^.*?(?:опрос|голосование|голосования|проголосуем)\s*[:,-]?\s*/i, '').trim();
+  if (!after) return null;
+  let question = 'Голосуем!';
+  let optionsPart = after;
+  const qm = after.match(/^(.+?\?)\s*(.*)$/s);
+  if (qm && qm[2]) {
+    question = qm[1].trim();
+    optionsPart = qm[2].trim();
+  }
+  let options = optionsPart
+    .split(/\s*(?:,|;|(?<![а-яa-z])или(?![а-яa-z]))\s*/i)
+    .map((s) => s.trim().replace(/[?!.]+$/, ''))
+    .filter(Boolean);
+  if (options.length < 2) {
+    // варианты могли остаться внутри вопроса: «пицца или суши?»
+    options = after.replace(/\?$/, '').split(/\s*(?:,|(?<![а-яa-z])или(?![а-яa-z]))\s*/i).map((s) => s.trim()).filter(Boolean);
+    question = 'Голосуем!';
+  }
+  if (options.length < 2) return null;
+  return { kind: 'poll', question: question.slice(0, 300), options: options.slice(0, 10).map((o) => o.slice(0, 100)) };
 }
 
 // Поиск участника группы по имени/username с учётом падежа («никиту» -> Никита).

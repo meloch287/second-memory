@@ -345,6 +345,38 @@ export async function aiChartSpec(store, chatId, request, now = new Date()) {
   }
 }
 
+// Сплит расходов по памяти группы (№2): кто сколько скинул/должен.
+// Арифметику модель обязана посчитать точно и показать.
+export async function aiSplit(store, chatId, request, now = new Date()) {
+  const user = store.getUser(chatId);
+  const off = userOffset(user);
+  const facts = store.factsFor(chatId, request, 25);
+  const fresh = store.data.raw.filter((r) => r.chatId === chatId).slice(-60);
+  const ctx = [
+    `Сейчас: ${fmtUser(now.toISOString(), off, true)}.`,
+    '',
+    'ФАКТЫ ИЗ ПАМЯТИ:',
+    ...facts.map((f) => `- ${f.text}`),
+    '',
+    'СВЕЖАЯ ПЕРЕПИСКА:',
+    ...fresh.map((r) => `- ${r.text.slice(0, 200)}`),
+  ].join('\n');
+  return ask(
+    [
+      {
+        role: 'system',
+        content:
+          'Ты считаешь складчины и делёж расходов по переписке группы. Отвечай коротко и СТРОГО по данным: кто сколько скинул/сдал, кто ещё нет, кто кому сколько должен. ' +
+          'Арифметику считай аккуратно и показывай (например: 6000 / 3 = 2000 с каждого). ' +
+          'ИМЕНА бери ТОЛЬКО из данных: если кто-то не назван по имени, НЕ придумывай имя - пиши «ещё N человек не отметились». Если данных не хватает - скажи, чего именно. ' +
+          STYLE_FMT,
+      },
+      { role: 'user', content: ctx + `\n\nВопрос: ${request}` },
+    ],
+    { maxTokens: 600, timeoutMs: 30000, retryDelays: [0, 5000] }
+  );
+}
+
 // Передать сообщение участнику группы своими словами: не дословная копия
 // («он лох»), а прямое обращение к адресату от лица бота-друга.
 export async function aiRelay(store, chatId, targetName, fromName, message) {

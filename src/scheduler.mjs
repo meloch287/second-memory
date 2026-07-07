@@ -113,6 +113,32 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       store.save();
       await nightJobs(now);
     }
+
+    // --- Мониторинг баланса ИИ (№12): раз в сутки, алерт владельцу ---
+    if (bot && process.env.OWNER_CHAT_ID && now.getHours() === 7 && store.data.meta.lastBalanceCheck !== serverDay) {
+      store.data.meta.lastBalanceCheck = serverDay;
+      store.save();
+      await checkAiBalance().catch((e) => log.error('[scheduler] balance', e.message));
+    }
+  };
+
+  // Баланс polza: предупреждаем владельца заранее, а не когда ИИ отвалится.
+  const checkAiBalance = async () => {
+    const key = process.env.AI_API_KEY;
+    const base = process.env.AI_BASE_URL || '';
+    if (!key || !base.includes('polza')) return;
+    const res = await fetch(`${base.replace(/\/$/, '')}/balance`, { headers: { authorization: `Bearer ${key}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const amount = Number(data?.amount);
+    if (!Number.isFinite(amount)) return;
+    const threshold = Number(process.env.BALANCE_ALERT_RUB || 100);
+    if (amount < threshold) {
+      await bot.sendText(
+        process.env.OWNER_CHAT_ID,
+        `⚠️ Баланс polza.ai: ${amount.toFixed(2)} ₽ (порог ${threshold} ₽). Пополни, иначе я скоро замолчу: polza.ai/settings`
+      );
+    }
   };
 
   const perUser = async (chatId, user, now) => {

@@ -32,6 +32,36 @@ export function expensesReport(store, chatId, offsetMin = 180, now = Date.now())
   return lines.join('\n');
 }
 
+// Потрачено за текущий месяц по категории (нечёткое совпадение названия).
+export function monthCategorySpent(store, chatId, category, offsetMin = 180, now = Date.now()) {
+  const w = new Date(now + offsetMin * 60000);
+  const monthStart = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), 1) - offsetMin * 60000;
+  const cat = String(category).toLowerCase().replace(/ё/g, 'е');
+  return store
+    .list({ type: 'expense', chatId })
+    .filter((e) => Date.parse(e.createdAt) >= monthStart)
+    .filter((e) => {
+      const c = String(e.category || e.title || '').toLowerCase().replace(/ё/g, 'е');
+      return c === cat || c.includes(cat) || cat.includes(c);
+    })
+    .reduce((s, e) => s + (e.amount || 0), 0);
+}
+
+// Бюджеты пользователя с текущим прогрессом месяца (№8).
+export function budgetsReport(store, chatId, offsetMin = 180, now = Date.now()) {
+  const budgets = store.getUser(chatId)?.budgets || {};
+  const cats = Object.entries(budgets);
+  if (!cats.length) return 'Бюджетов пока нет. Скажи «бюджет на кофе 5000» - буду следить.';
+  const lines = ['📊 Бюджеты на месяц:', ''];
+  for (const [cat, limit] of cats) {
+    const spent = monthCategorySpent(store, chatId, cat, offsetMin, now);
+    const pct = Math.round((spent / limit) * 100);
+    const mark = pct >= 100 ? '🔴' : pct >= 80 ? '🟡' : '🟢';
+    lines.push(`${mark} ${cat}: ${money(spent)} из ${money(limit)} (${pct}%)`);
+  }
+  return lines.join('\n');
+}
+
 export function balanceReport(store, chatId, offsetMin = 180, now = Date.now()) {
   if (!chatId) return 'Долгов нет.'; // без chatId не агрегируем всех
   const debts = store.list({ type: 'debt', status: 'open', chatId });

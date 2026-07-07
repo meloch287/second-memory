@@ -18,10 +18,10 @@ import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, co
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
-import { balanceReport, expensesReport } from './finance.mjs';
+import { balanceReport, expensesReport, monthCategorySpent, budgetsReport } from './finance.mjs';
 import { RUB } from './format.mjs';
 import { renderChart, chartAvailable } from './chart.mjs';
-import { aiChartSpec } from './ai.mjs';
+import { aiChartSpec, aiSplit } from './ai.mjs';
 import { createGroupHandler } from './group.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
@@ -309,7 +309,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (долги), «траты» (расходы за месяц), «найди про Петрова». «Скинь в календарь» - файл для календаря телефона. «Экспорт» - вся память (CSV, дневник, JSON).</blockquote>',
       '',
-      '<blockquote>💸 Трать словами: «потратил 500 на кофе» - учту. Кинь фото чека - распознаю сумму сам. Поправить память: «забудь про Петрова» или «это не так».</blockquote>',
+      '<blockquote>💸 Трать словами: «потратил 500 на кофе» - учту. «Бюджет на кофе 5000» - слежу за лимитом («бюджеты» - прогресс). Кинь фото чека - распознаю сумму сам. Поправить память: «забудь про Петрова» или «это не так».</blockquote>',
       '',
       '<blockquote>🎙 «Отвечай голосом» - буду отвечать войсами, «отвечай текстом» - обратно. Пишешь на другом языке - отвечу на нём.</blockquote>',
       '',
@@ -504,7 +504,50 @@ export function startTelegramBot(store, token, log = console) {
     if (p.kind === 'expense') {
       store.add({ type: 'expense', title: p.category, category: p.category, amount: p.amount, chatId: String(chatId), text: p.text, status: 'done' });
       store.addRaw(String(chatId), p.text); // пусть попадёт и в память дневника
-      await send(chatId, `Записал трату: ${esc(p.category)} - ${RUB.format(p.amount)} ₽ 💸`);
+      let note = '';
+      // бюджет (№8): предупреждаем при 80%, ругаемся при перерасходе
+      const budgets = store.getUser(String(chatId))?.budgets || {};
+      for (const [cat, limit] of Object.entries(budgets)) {
+        const c = cat.toLowerCase().replace(/ё/g, 'е');
+        const pc = p.category.toLowerCase().replace(/ё/g, 'е');
+        if (c === pc || c.includes(pc) || pc.includes(c)) {
+          const spent = monthCategorySpent(store, String(chatId), cat, userOffset(user));
+          if (spent > limit) note = `\n🔴 Бюджет «${esc(cat)}» пробит: ${RUB.format(spent)} из ${RUB.format(limit)} ₽!`;
+          else if (spent >= limit * 0.8) note = `\n🟡 Уже ${RUB.format(spent)} из ${RUB.format(limit)} ₽ по «${esc(cat)}» - аккуратнее.`;
+        }
+      }
+      await send(chatId, `Записал трату: ${esc(p.category)} - ${RUB.format(p.amount)} ₽ 💸${note}`);
+      return true;
+    }
+
+    if (p.kind === 'setbudget') {
+      const budgets = { ...(store.getUser(String(chatId))?.budgets || {}) };
+      budgets[p.category] = p.amount;
+      store.setUser(String(chatId), { budgets });
+      await send(chatId, `Принял: бюджет на «${esc(p.category)}» - ${RUB.format(p.amount)} ₽ в месяц. Предупрежу на 80%.`);
+      return true;
+    }
+
+    if (p.kind === 'budgets') {
+      await send(chatId, esc(budgetsReport(store, String(chatId), userOffset(user))));
+      return true;
+    }
+
+    if (p.kind === 'poll') {
+      const r = await api('sendPoll', { chat_id: chatId, question: p.question, options: p.options.map((o) => ({ text: o })), is_anonymous: false });
+      if (!r.ok) await send(chatId, 'Опрос не создался: ' + esc(r.description || 'ошибка'));
+      return true;
+    }
+
+    if (p.kind === 'split') {
+      if (!aiEnabled()) { await send(chatId, 'Для подсчёта складчины нужен ИИ, а ключа нет.'); return true; }
+      try {
+        const answer = await withTyping(chatId, () => aiSplit(store, String(chatId), p.request));
+        await send(chatId, esc(answer));
+      } catch (e) {
+        log.error('[telegram] split', e.message);
+        await send(chatId, 'Не смог посчитать. Попробуй ещё раз?');
+      }
       return true;
     }
 

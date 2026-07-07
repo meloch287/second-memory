@@ -48,6 +48,6 @@ test('ai.mjs: экспортируемые ИИ-функции на месте',
 });
 
 test('scheduler.mjs / brain.mjs: ключевые функции на месте', () => {
-  assert.deepEqual(definesAll('scheduler.mjs', ['startScheduler', 'perUser', 'runTick', 'nightJobs', 'todayEvents', 'recurringDue']), []);
+  assert.deepEqual(definesAll('scheduler.mjs', ['startScheduler', 'perUser', 'runTick', 'nightJobs', 'todayEvents', 'recurringDue', 'checkAiBalance']), []);
   assert.deepEqual(definesAll('brain.mjs', ['handleMessage', 'route', 'captureEntry', 'saveEntry', 'runQuery', 'digest', 'debtsReply', 'fmtDate']), []);
 });
