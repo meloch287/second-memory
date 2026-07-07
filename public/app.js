@@ -24,9 +24,11 @@ let pending = false;
 let recState = null;
 let currentAudio = null;
 let vmCounter = 0;
+let motionOff = false; // ручной тумблер «меньше движения» (в дополнение к OS-настройке)
+let webSettings = { name: 'Вторая память', voiceReplies: false, voice: 'alloy', audio: false };
 
 function reducedMotion() {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return motionOff || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 function scrollLogToBottom() {
@@ -109,8 +111,10 @@ async function deliver(text) {
       clearChatLog();
     } else if (data.ai) {
       appendSummaryMessage(data.reply || '…', data.rag);
+      maybeSpeak(data.reply);
     } else {
       appendMessage('assistant', data.reply || '…');
+      maybeSpeak(data.reply);
     }
     setTimeout(refreshStats, 50);
   } catch {
@@ -672,10 +676,262 @@ log.addEventListener('keydown', (e) => {
   }
 });
 
-/* ---- Инициализация ---- */
+/* ---- Озвучка ответов (если включено в настройках) ---- */
 
-if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) {
-  micBtn.hidden = false;
+async function maybeSpeak(text) {
+  if (!webSettings.voiceReplies || !webSettings.audio || !text) return;
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: String(text).slice(0, 1500) }),
+    });
+    if (!res.ok) return;
+    const url = URL.createObjectURL(await res.blob());
+    const a = new Audio(url);
+    a.addEventListener('ended', () => URL.revokeObjectURL(url));
+    a.play().catch(() => URL.revokeObjectURL(url));
+  } catch { /* без озвучки, текст уже показан */ }
 }
 
-refreshStats();
+/* ---- Имя ассистента: шапка + вкладка (тихо, без объявления) ---- */
+
+const h1El = document.querySelector('.app-header .brand h1');
+function setAssistantName(name) {
+  const display = (name || '').trim() || 'Вторая память';
+  webSettings.name = display;
+  h1El.textContent = display;
+  document.title = `${display} — персональный ассистент для дел, встреч и долгов`;
+}
+
+/* ---- Вход ---- */
+
+const loginScreen = document.getElementById('login-screen');
+const appRoot = document.querySelector('.app');
+const loginForm = document.getElementById('login-form');
+const loginPwd = document.getElementById('login-password');
+const loginError = document.getElementById('login-error');
+
+function showLogin() {
+  appRoot.hidden = true;
+  loginScreen.hidden = false;
+  loginPwd.focus({ preventScroll: true });
+}
+
+function showApp(fromLogin) {
+  loginScreen.hidden = true;
+  appRoot.hidden = false;
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) micBtn.hidden = false;
+  applySettings();
+  refreshStats();
+  if (fromLogin) input.focus({ preventScroll: true });
+}
+
+function setLoginError(msg) {
+  loginError.textContent = msg;
+  loginError.hidden = false;
+  loginPwd.setAttribute('aria-invalid', 'true');
+  loginPwd.focus();
+}
+loginPwd.addEventListener('input', () => {
+  if (loginPwd.getAttribute('aria-invalid') === 'true') {
+    loginError.hidden = true;
+    loginError.textContent = '';
+    loginPwd.removeAttribute('aria-invalid');
+  }
+});
+
+loginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!loginPwd.value) return setLoginError('Введите пароль.');
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: loginPwd.value }),
+    });
+    if (res.status === 401) return setLoginError('Неверный пароль. Попробуйте ещё раз.');
+    if (!res.ok) throw new Error();
+    await loadSettings();
+    showApp(true);
+  } catch {
+    setLoginError('Не удалось войти. Проверьте соединение.');
+  }
+});
+
+// показать/скрыть пароль
+const loginPwToggle = document.getElementById('login-pw-toggle');
+loginPwToggle.addEventListener('click', () => {
+  const show = loginPwd.type === 'password';
+  loginPwd.type = show ? 'text' : 'password';
+  loginPwToggle.setAttribute('aria-pressed', String(show));
+  loginPwToggle.setAttribute('aria-label', show ? 'Скрыть пароль' : 'Показать пароль');
+});
+
+/* ---- Настройки: модальное окно ---- */
+
+const settingsTrigger = document.getElementById('settings-trigger');
+const settingsModal = document.getElementById('settings-modal');
+const settingsClose = document.getElementById('settings-close');
+const settingsLogout = document.getElementById('settings-logout');
+const nameInput = document.getElementById('assistant-name');
+const voiceToggle = document.getElementById('voice-replies');
+const voiceSelect = document.getElementById('voice-name');
+const reduceToggle = document.getElementById('reduce-motion');
+const loginNameInput = document.getElementById('login-name');
+let lastTrigger = null;
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/settings');
+    if (!res.ok) return false;
+    webSettings = await res.json();
+    return true;
+  } catch { return false; }
+}
+
+// Применить настройки к UI (шапка + поля формы).
+function applySettings() {
+  setAssistantName(webSettings.name);
+  nameInput.value = webSettings.name === 'Вторая память' ? '' : webSettings.name;
+  loginNameInput.value = webSettings.login || 'admin';
+  voiceToggle.checked = !!webSettings.voiceReplies;
+  voiceSelect.value = webSettings.voice || 'alloy';
+  syncVoiceEnabled();
+  motionOff = localStorage.getItem('sm_motion_off') === '1';
+  reduceToggle.checked = motionOff;
+  if (!webSettings.audio) { voiceToggle.disabled = true; voiceToggle.checked = false; }
+}
+
+function syncVoiceEnabled() {
+  const on = voiceToggle.checked && webSettings.audio;
+  if (!on && document.activeElement === voiceSelect) voiceToggle.focus();
+  voiceSelect.disabled = !on;
+}
+
+function saveSettings(patch) {
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => r.ok && r.json()).then((s) => { if (s) webSettings = { ...webSettings, ...s }; }).catch(() => {});
+}
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function focusableIn(root) {
+  return [...root.querySelectorAll(FOCUSABLE)].filter((el) => !el.hidden && el.offsetParent !== null);
+}
+
+function openSettings() {
+  lastTrigger = document.activeElement;
+  appRoot.inert = true;
+  settingsModal.showModal();
+  (focusableIn(settingsModal)[0] || settingsModal).focus();
+}
+function closeSettings() {
+  if (settingsModal.open) settingsModal.close();
+}
+
+settingsTrigger.addEventListener('click', openSettings);
+settingsClose.addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) closeSettings(); });
+settingsModal.addEventListener('close', () => {
+  appRoot.inert = false;
+  const t = lastTrigger || settingsTrigger;
+  if (t && document.contains(t)) t.focus();
+  lastTrigger = null;
+});
+// страховочный wrap Tab поверх нативного трапа
+settingsModal.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  const items = focusableIn(settingsModal);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
+// Имя: живое обновление шапки; сохраняем при изменении (blur)
+nameInput.addEventListener('input', () => setAssistantName(nameInput.value));
+nameInput.addEventListener('change', () => saveSettings({ name: nameInput.value.trim() || 'Вторая память' }));
+
+voiceToggle.addEventListener('change', () => {
+  syncVoiceEnabled();
+  saveSettings({ voiceReplies: voiceToggle.checked });
+  announce(voiceToggle.checked ? 'Ответы голосом включены' : 'Ответы голосом выключены');
+});
+voiceSelect.addEventListener('change', () => saveSettings({ voice: voiceSelect.value }));
+
+reduceToggle.addEventListener('change', () => {
+  motionOff = reduceToggle.checked;
+  localStorage.setItem('sm_motion_off', motionOff ? '1' : '0');
+});
+
+settingsLogout.addEventListener('click', async () => {
+  closeSettings();
+  try { await fetch('/api/logout', { method: 'POST' }); } catch {}
+  clearChatLog();
+  showLogin();
+});
+
+/* ---- Смена входа/пароля ---- */
+
+const pwForm = document.getElementById('pw-change-form');
+const pwCurrent = document.getElementById('pw-current');
+const pwNew = document.getElementById('pw-new');
+const pwConfirm = document.getElementById('pw-confirm');
+const pwSummary = document.getElementById('pw-validation');
+const pwStatus = document.getElementById('pw-status');
+
+function pwErr(input, msg) {
+  const id = input.getAttribute('aria-describedby').split(' ').pop();
+  const el = document.getElementById(id);
+  el.textContent = msg; el.hidden = false;
+  input.setAttribute('aria-invalid', 'true');
+}
+function pwClear(input) {
+  const id = input.getAttribute('aria-describedby').split(' ').pop();
+  const el = document.getElementById(id);
+  el.textContent = ''; el.hidden = true;
+  input.removeAttribute('aria-invalid');
+}
+[pwCurrent, pwNew, pwConfirm].forEach((el) => el.addEventListener('input', () => {
+  if (el.getAttribute('aria-invalid') === 'true') pwClear(el);
+}));
+
+pwForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  [pwCurrent, pwNew, pwConfirm].forEach(pwClear);
+  const errs = [];
+  if (!pwCurrent.value) { pwErr(pwCurrent, 'Введите текущий пароль.'); errs.push(pwCurrent); }
+  if (pwNew.value.length < 6) { pwErr(pwNew, 'Новый пароль - минимум 6 символов.'); errs.push(pwNew); }
+  if (pwConfirm.value !== pwNew.value) { pwErr(pwConfirm, 'Пароли не совпадают.'); errs.push(pwConfirm); }
+  if (errs.length) {
+    pwSummary.textContent = 'Исправьте поля формы.'; pwSummary.hidden = false;
+    errs[0].focus();
+    return;
+  }
+  pwSummary.hidden = true; pwSummary.textContent = '';
+  try {
+    const res = await fetch('/api/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ current: pwCurrent.value, next: pwNew.value, login: loginNameInput.value.trim() }),
+    });
+    if (res.status === 403) { pwErr(pwCurrent, 'Текущий пароль неверный.'); pwCurrent.focus(); return; }
+    if (!res.ok) throw new Error();
+    pwStatus.textContent = 'Вход обновлён.';
+    pwForm.reset();
+    webSettings.login = loginNameInput.value.trim() || webSettings.login;
+  } catch {
+    pwStatus.textContent = 'Не удалось сохранить. Попробуйте ещё раз.';
+  }
+});
+
+/* ---- Старт ---- */
+
+(async function boot() {
+  const ok = await loadSettings();
+  if (ok) showApp(false);
+  else showLogin();
+})();

@@ -11,6 +11,11 @@ import { memoryStats } from './ragmeter.mjs';
 import { startTelegramBot } from './telegram.mjs';
 import { startFactWorker } from './worker.mjs';
 import { startScheduler } from './scheduler.mjs';
+import { aiTts, audioEnabled } from './ai.mjs';
+import {
+  ensureAuth, verifyPassword, setPassword, makeSession, validSession,
+  parseCookies, sessionCookie, clearCookie, getWebSettings, setWebSettings,
+} from './webauth.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -54,11 +59,67 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// Пароль веб-панели: из env при первом старте, иначе дефолт (сменить в UI).
+ensureAuth(store, process.env.WEB_PASSWORD);
+
+const authed = (req) => validSession(store, parseCookies(req.headers.cookie).sm_session);
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
     if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true });
+
+    // Вход: пароль -> сессионная кука
+    if (url.pathname === '/api/login' && req.method === 'POST') {
+      let p;
+      try { p = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'bad json' }); }
+      if (!verifyPassword(store, p?.password || '')) return json(res, 401, { error: 'Неверный пароль' });
+      res.setHeader('set-cookie', sessionCookie(makeSession(store)));
+      return json(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/logout' && req.method === 'POST') {
+      res.setHeader('set-cookie', clearCookie());
+      return json(res, 200, { ok: true });
+    }
+
+    // Все прочие /api/* требуют валидной сессии
+    if (url.pathname.startsWith('/api/') && !authed(req)) {
+      return json(res, 401, { error: 'Нужен вход' });
+    }
+
+    if (url.pathname === '/api/settings' && req.method === 'GET') {
+      return json(res, 200, { ...getWebSettings(store), audio: audioEnabled() });
+    }
+    if (url.pathname === '/api/settings' && req.method === 'POST') {
+      let p;
+      try { p = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'bad json' }); }
+      return json(res, 200, setWebSettings(store, p || {}));
+    }
+    if (url.pathname === '/api/password' && req.method === 'POST') {
+      let p;
+      try { p = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'bad json' }); }
+      if (!verifyPassword(store, p?.current || '')) return json(res, 403, { error: 'Текущий пароль неверный' });
+      if (typeof p?.next !== 'string' || p.next.length < 6) return json(res, 400, { error: 'Новый пароль - минимум 6 символов' });
+      setPassword(store, p.next);
+      if (typeof p.login === 'string' && p.login.trim()) setWebSettings(store, { login: p.login });
+      res.setHeader('set-cookie', sessionCookie(makeSession(store))); // обновляем сессию
+      return json(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/tts' && req.method === 'POST') {
+      if (!audioEnabled()) return json(res, 503, { error: 'Озвучка недоступна' });
+      let p;
+      try { p = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'bad json' }); }
+      if (typeof p?.text !== 'string' || !p.text.trim()) return json(res, 400, { error: 'нет текста' });
+      try {
+        const voice = getWebSettings(store).voice;
+        const ogg = await aiTts(p.text.slice(0, 1500), voice);
+        res.writeHead(200, { 'content-type': 'audio/ogg' });
+        return res.end(ogg);
+      } catch (e) {
+        return json(res, 502, { error: 'Не удалось озвучить' });
+      }
+    }
 
     if (url.pathname === '/api/message' && req.method === 'POST') {
       let payload;

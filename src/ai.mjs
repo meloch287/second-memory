@@ -736,7 +736,7 @@ export async function aiMorningPing(user, eventLines, now = new Date()) {
 /* ---------- Озвучка ответа (TTS) ---------- */
 
 // polza возвращает JSON {"audio": base64}; на всякий случай понимаем и бинарь.
-export async function aiTts(text) {
+export async function aiTts(text, voice) {
   const cfg = AUDIO();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 25000); // без таймаута озвучка могла зависать
@@ -749,7 +749,7 @@ export async function aiTts(text) {
       body: JSON.stringify({
         model: process.env.AI_TTS_MODEL || 'openai/gpt-4o-mini-tts',
         input: String(text).slice(0, 1500),
-        voice: process.env.AI_TTS_VOICE || 'alloy',
+        voice: voice || process.env.AI_TTS_VOICE || 'alloy',
         response_format: 'opus',
       }),
     });
