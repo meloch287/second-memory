@@ -93,6 +93,38 @@ test('ics: fold считает байты utf-8, не символы', async () 
   }
 });
 
+test('связка имени с ником в любом порядке + защита от не-имён', () => {
+  const SEP = '\\s*(?:-|—|–|=|,|это|:)?\\s*(?:это\\s+)?';
+  const NAME = '[А-Яа-яЁёA-Za-z]{2,20}';
+  const UN = '@([A-Za-z][A-Za-z0-9_]{3,31})';
+  const linkOf = (text) => {
+    let link = text.match(new RegExp(`^(?:запомни[:,]?\\s*)?(${NAME})${SEP}${UN}[!.]*$`, 'i'));
+    let name = link?.[1], un = link?.[2];
+    if (!link) { link = text.match(new RegExp(`^(?:запомни[:,]?\\s*)?${UN}${SEP}(${NAME})[!.]*$`, 'i')); un = link?.[1]; name = link?.[2]; }
+    if (link && name && un && !/^(?:это|он|она|зовут)$/i.test(name)) return { name: name[0].toUpperCase() + name.slice(1), un };
+    return null;
+  };
+  assert.deepEqual(linkOf('Никита это @pxpusk'), { name: 'Никита', un: 'pxpusk' });
+  assert.deepEqual(linkOf('@pxpusk это Никита'), { name: 'Никита', un: 'pxpusk' });
+  assert.deepEqual(linkOf('@pxpusk Саша'), { name: 'Саша', un: 'pxpusk' });
+  assert.deepEqual(linkOf('запомни Никита = @pxpusk'), { name: 'Никита', un: 'pxpusk' });
+  assert.equal(linkOf('привет как дела'), null);
+});
+
+test('reply-identity: имя с заглавной / @ник, не «это круто»', () => {
+  const rrx = /^(?:это|эт[оа]\s+же|он|она|его зовут|её зовут|ее зовут|зовут|запомни[:,]?\s*(?:это\s+)?)\s+([А-Яа-яЁёA-Za-z@][А-Яа-яЁёA-Za-z0-9_]{1,31})[!.]*$/i;
+  const ok = (text, addressed = false) => {
+    const rm = text.match(rrx);
+    return !!(rm && (rm[1].startsWith('@') || /^[А-ЯЁA-Z]/.test(rm[1]) || addressed));
+  };
+  assert.ok(ok('это Саша'), 'имя с заглавной');
+  assert.ok(ok('её зовут Лена'));
+  assert.ok(ok('это @pxpusk'), '@ник');
+  assert.ok(ok('это саша', true), 'строчное имя - только при обращении к боту');
+  assert.ok(!ok('это круто'), 'прилагательное строчное - не связка');
+  assert.ok(!ok('это правда'));
+});
+
 test('parseGroupCmd: обычные фразы - не команды', () => {
   assert.equal(parseGroupCmd(norm('что мы решили по бюджету?')), null);
   assert.equal(parseGroupCmd(norm('напомни завтра про созвон')), null);
