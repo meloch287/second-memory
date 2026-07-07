@@ -128,7 +128,15 @@ async function route(store, text, now, chatId = 'web') {
     }
     case 'clearchat':
       store.clearHistory(chatId);
-      return { reply: 'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы забыть что-то конкретное, скажи «забудь про ...».', cleared: true };
+      return { reply: 'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы стереть всё, скажи «очисти память».', cleared: true };
+    case 'wipe': {
+      const n = store.wipeMemory(chatId);
+      const parts = [];
+      if (n.facts) parts.push(`${n.facts} ${plural(n.facts, ['факт', 'факта', 'фактов'])}`);
+      if (n.entries) parts.push(`${n.entries} ${plural(n.entries, ['запись', 'записи', 'записей'])}`);
+      const what = parts.length ? `Удалил ${parts.join(' и ')}. ` : 'Память и так была пуста. ';
+      return { reply: `Стёр всю память по этому чату. ${what}Начинаем с чистого листа.`, cleared: true };
+    }
     case 'entry': {
       // Фраза со знаком «?» — это вопрос, а не запись: отдаём ИИ с контекстом
       // базы (иначе «у кого из должников горит срок?» станет мусорным долгом).

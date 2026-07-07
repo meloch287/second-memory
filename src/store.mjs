@@ -304,6 +304,22 @@ export class Store {
     this.save();
   }
 
+  // «Очисти память»: стереть факты, сырьё, записи, историю и досье чата, НО
+  // оставить профиль пользователя (в отличие от clearChatData). Сырьё чистим
+  // тоже - иначе фоновый worker пересоберёт факты и память «восстановится».
+  wipeMemory(chatId) {
+    const facts = this.data.facts.filter((f) => f.chatId === chatId).length;
+    const entries = this.data.entries.filter((e) => (e.chatId || 'web') === chatId).length;
+    this.data.facts = this.data.facts.filter((f) => f.chatId !== chatId);
+    this.data.raw = this.data.raw.filter((r) => r.chatId !== chatId);
+    this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
+    this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
+    this.data.recurring = this.data.recurring.filter((r) => r.chatId !== chatId);
+    delete this.data.personas[chatId];
+    this.save();
+    return { facts, entries };
+  }
+
   // Досье людей (обновляет ночная консолидация).
   getPersonas(chatId) {
     return this.data.personas[chatId] || {};

@@ -319,19 +319,27 @@ async function refreshStats() {
 // поэтому промежуточные значения скринридер не читает. При reduced-motion -
 // сразу финал (rAF невидим для CSS @media, проверяем в JS).
 let countRaf = 0;
+let lastCounts = null; // предыдущие значения - анимируем ОТ них, а не от нуля
 function setCounters(entries, facts, days) {
   const el = document.getElementById('memory-counters');
   const finalText = `Записей: ${entries} · Фактов: ${facts} · Дней: ${days}`;
   cancelAnimationFrame(countRaf);
-  if (reducedMotion()) { el.textContent = finalText; return; }
-  const DURATION = 600;
+  const from = lastCounts;
+  lastCounts = { entries, facts, days };
+  // без анимации: reduced-motion, первый показ, либо значения не изменились
+  // (иначе панель мигала «0 → N» на каждом обновлении - выглядело как стирание)
+  if (reducedMotion() || !from || (from.entries === entries && from.facts === facts && from.days === days)) {
+    el.textContent = finalText;
+    return;
+  }
+  const DURATION = 500;
   const start = performance.now();
+  const lerp = (a, b, t) => Math.round(a + (b - a) * t);
   const tick = (now) => {
     const t = Math.min(1, (now - start) / DURATION);
-    const e = Math.round(entries * t), f = Math.round(facts * t), d = Math.round(days * t);
-    el.textContent = `Записей: ${e} · Фактов: ${f} · Дней: ${d}`;
+    el.textContent = `Записей: ${lerp(from.entries, entries, t)} · Фактов: ${lerp(from.facts, facts, t)} · Дней: ${lerp(from.days, days, t)}`;
     if (t < 1) countRaf = requestAnimationFrame(tick);
-    else el.textContent = finalText; // гарантируем точный финал
+    else el.textContent = finalText;
   };
   countRaf = requestAnimationFrame(tick);
 }
