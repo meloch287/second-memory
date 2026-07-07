@@ -66,12 +66,36 @@ function addToLog(node) {
   if (nearBottom) scrollLogToBottom();
 }
 
+// Визуальный индикатор «печатает»: три точки, декоративные (aria-hidden -
+// не читаются скринридером, слова идут только через #chat-status). Точки
+// вставляются в лог и убираются на любом пути завершения.
+function showTyping() {
+  if (document.getElementById('typing-dots')) return;
+  const dots = document.createElement('div');
+  dots.id = 'typing-dots';
+  dots.className = 'typing-dots';
+  dots.setAttribute('aria-hidden', 'true');
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  addToLog(dots);
+}
+function hideTyping() {
+  const dots = document.getElementById('typing-dots');
+  if (dots) dots.remove(); // идемпотентно, без removeChild
+}
+
 // Общий путь доставки текста «мозгу»: печать, ответ ассистента, панель.
 async function deliver(text) {
   pending = true;
+  let announced = false;
   const typingTimer = setTimeout(() => {
-    announce('Ассистент печатает…');
-  }, 2000);
+    showTyping();
+    if (!announced) { announce('Ассистент печатает…'); announced = true; }
+  }, 700);
+  const cleanup = () => {
+    clearTimeout(typingTimer);
+    hideTyping();
+    statusEl.textContent = '';
+  };
   try {
     const res = await fetch('/api/message', {
       method: 'POST',
@@ -80,8 +104,7 @@ async function deliver(text) {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    clearTimeout(typingTimer);
-    statusEl.textContent = '';
+    cleanup(); // убираем точки и статус ДО вставки ответа - он и объявляется
     if (data.cleared) {
       clearChatLog();
     } else if (data.ai) {
@@ -91,8 +114,7 @@ async function deliver(text) {
     }
     setTimeout(refreshStats, 50);
   } catch {
-    clearTimeout(typingTimer);
-    statusEl.textContent = '';
+    cleanup();
     appendMessage('assistant', 'Нет ответа от сервера. Попробуйте ещё раз.');
   } finally {
     pending = false;
@@ -280,12 +302,34 @@ async function refreshStats() {
     return; // панель просто не обновится, чат продолжает работать
   }
   const meter = document.getElementById('memory-meter');
+  // aria-значение метра ставим ОДИН раз к финалу (не по кадрам) - анимируется
+  // только визуальная ширина через CSS-переход
   meter.setAttribute('aria-valuenow', String(s.score));
   meter.setAttribute('aria-valuetext', `${s.score} процентов, ${METER_LABELS[s.level] || ''}`.trim());
   document.getElementById('meter-fill').style.width = s.score + '%';
   document.getElementById('memory-status').textContent = s.label;
-  document.getElementById('memory-counters').textContent =
-    `Записей: ${s.counts.entries} · Фактов: ${s.counts.facts} · Дней: ${s.counts.days}`;
+  setCounters(s.counts.entries, s.counts.facts, s.counts.days);
+}
+
+// Плавный count-up чисел. #memory-counters - обычный <p> (не live-регион),
+// поэтому промежуточные значения скринридер не читает. При reduced-motion -
+// сразу финал (rAF невидим для CSS @media, проверяем в JS).
+let countRaf = 0;
+function setCounters(entries, facts, days) {
+  const el = document.getElementById('memory-counters');
+  const finalText = `Записей: ${entries} · Фактов: ${facts} · Дней: ${days}`;
+  cancelAnimationFrame(countRaf);
+  if (reducedMotion()) { el.textContent = finalText; return; }
+  const DURATION = 600;
+  const start = performance.now();
+  const tick = (now) => {
+    const t = Math.min(1, (now - start) / DURATION);
+    const e = Math.round(entries * t), f = Math.round(facts * t), d = Math.round(days * t);
+    el.textContent = `Записей: ${e} · Фактов: ${f} · Дней: ${d}`;
+    if (t < 1) countRaf = requestAnimationFrame(tick);
+    else el.textContent = finalText; // гарантируем точный финал
+  };
+  countRaf = requestAnimationFrame(tick);
 }
 
 /* ---- Запись голосового сообщения ---- */
