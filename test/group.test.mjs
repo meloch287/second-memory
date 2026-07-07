@@ -187,3 +187,39 @@ test('группа: «это мама» реплаем регистрирует,
   await groupFlow({ chat, from: me, text: 'это круто', message_id: 4, reply_to_message: { message_id: 1, from: { id: 888, first_name: 'Z', is_bot: false } } });
   assert.notEqual(store.getUser('-7').members['888']?.name, 'Круто', 'прилагательное не стало именем');
 });
+
+test('extractIdentityPairs: несколько пар за раз, защита от не-имён', async () => {
+  const { extractIdentityPairs } = await import('../src/group.mjs');
+  const p = extractIdentityPairs('@meloch287 это мама запомни\n@Jjoopes это сергей');
+  assert.deepEqual(p, [{ un: 'meloch287', name: 'Мама' }, { un: 'Jjoopes', name: 'Сергей' }]);
+  assert.deepEqual(extractIdentityPairs('Никита это @pxpusk'), [{ un: 'pxpusk', name: 'Никита' }]);
+  assert.deepEqual(extractIdentityPairs('@serg - Сергей'), [{ un: 'serg', name: 'Сергей' }]);
+  assert.deepEqual(extractIdentityPairs('@jjoopes это видео'), [], 'не-имя не связывается');
+  assert.deepEqual(extractIdentityPairs('@jjoopes привет всем'), [], 'без связки не срабатывает');
+  assert.deepEqual(extractIdentityPairs('глянь это @jjoopes'), [], 'глагол не имя');
+});
+
+test('группа: одно сообщение с двумя «@ник это Имя» -> оба в реестр -> тегаются', async () => {
+  const { createGroupHandler } = await import('../src/group.mjs');
+  const sent = [];
+  const store = freshStore();
+  const { groupFlow } = createGroupHandler({
+    api: async (m) => (m === 'getMe' ? { result: { username: 'bot', id: 42 } } : { ok: true }),
+    send: async (c, t) => { sent.push(t); return { ok: true }; }, esc: (s) => s, store,
+    log: { error() {}, info() {} }, withTyping: (c, fn) => fn(), handleIntent: async () => false,
+    sendSummary: async () => {}, askReset: async () => {}, readDoc: async () => null,
+    downloadBase64: async () => '', sleepyText: () => '...', maybeReact: () => {}, deliver: async () => {},
+  });
+  const chat = { id: -9, type: 'supergroup', title: 'Банда' };
+  const me = { id: 1, first_name: 'Саня' };
+  await groupFlow({ chat, from: { id: 50, first_name: 'Аня', username: 'meloch287' }, text: 'привет', message_id: 1 });
+  await groupFlow({ chat, from: { id: 51, first_name: 'Серёга', username: 'Jjoopes' }, text: 'хай', message_id: 2 });
+  await groupFlow({ chat, from: me, text: '@bot @meloch287 это мама запомни\n@Jjoopes это сергей', message_id: 3 });
+  assert.equal(store.getUser('-9').members['50'].name, 'Мама');
+  assert.equal(store.getUser('-9').members['51'].name, 'Сергей');
+  sent.length = 0;
+  await groupFlow({ chat, from: me, text: '@bot тегни маму', message_id: 4 });
+  assert.match(sent[sent.length - 1], /meloch287/, 'тегает маму (Аню)');
+  await groupFlow({ chat, from: me, text: '@bot тегни сергея', message_id: 5 });
+  assert.match(sent[sent.length - 1], /Jjoopes/, 'тегает сергея по падежу');
+});

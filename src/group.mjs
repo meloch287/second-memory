@@ -21,6 +21,51 @@ const RELATIONSHIP = new Set(
 );
 const isRelName = (w) => RELATIONSHIP.has(REL_STEM(w));
 
+// Частые русские имена (+ уменьшительные) - чтобы отличить «@ник это сергей»
+// (имя) от «@ник это видео» (не имя) в строчном виде.
+const COMMON_NAMES = new Set(
+  ['сергей', 'серега', 'сережа', 'андрей', 'андрюха', 'андрюша', 'дмитрий', 'дима', 'димон', 'александр', 'саша', 'саня', 'шура',
+   'алексей', 'леха', 'леша', 'михаил', 'миша', 'иван', 'ваня', 'николай', 'коля', 'владимир', 'вова', 'володя', 'анна', 'аня', 'нюра',
+   'елена', 'лена', 'ольга', 'оля', 'наталья', 'наташа', 'ирина', 'ира', 'татьяна', 'таня', 'мария', 'маша', 'маруся', 'екатерина', 'катя',
+   'юлия', 'юля', 'дарья', 'даша', 'анастасия', 'настя', 'ксения', 'ксюша', 'виктор', 'витя', 'павел', 'паша', 'роман', 'рома', 'денис',
+   'максим', 'макс', 'никита', 'артем', 'тема', 'кирилл', 'егор', 'игорь', 'олег', 'антон', 'глеб', 'петр', 'петя', 'борис', 'боря',
+   'георгий', 'гоша', 'жора', 'константин', 'костя', 'валерий', 'валера', 'вадим', 'руслан', 'тимур', 'марат', 'вера', 'надежда', 'надя',
+   'галина', 'галя', 'светлана', 'света', 'оксана', 'алина', 'полина', 'поля', 'вероника', 'ника', 'кристина', 'валентина', 'валя', 'зоя',
+   'инна', 'лидия', 'лида', 'тамара', 'жанна', 'степан', 'стас', 'станислав', 'федор', 'федя', 'семен', 'сема', 'тимофей', 'тима', 'лев',
+   'марк', 'даниил', 'даня', 'арсений', 'сеня', 'матвей', 'влад', 'владислав', 'элина', 'диана', 'карина', 'милана', 'ева', 'варвара', 'варя'].map((s) => s.replace(/ё/g, 'е'))
+);
+
+// Извлечь все пары «@ник -> Имя» из текста (в т.ч. несколько строк):
+// «@meloch287 это мама», «@jjoopes это сергей», «Никита = @pxpusk», «@ник - Имя».
+// Требуем явную связку (это/-/=/зовут) рядом с @ником и что «Имя» похоже на имя,
+// иначе «@ник это видео/круто» ложно бы переименовывало человека.
+const _NAME = '[А-Яа-яЁёA-Za-z][А-Яа-яЁёA-Za-z0-9_]{1,19}';
+const _UN = '@([A-Za-z][A-Za-z0-9_]{3,31})';
+const _CONN = '(?:[-—–=:]|это|эт[оа]\\s+это|зовут)';
+const _RE_UN_NAME = new RegExp(`${_UN}\\s*${_CONN}\\s+(${_NAME})`, 'i'); // @ник это Имя
+const _RE_NAME_UN = new RegExp(`(?:^|\\s)(${_NAME})\\s*${_CONN}\\s*${_UN}`, 'i'); // Имя это @ник
+const _STOP = new Set(['это', 'он', 'она', 'оно', 'они', 'зовут', 'запомни', 'видео', 'фото', 'кружок', 'голосовое', 'круто', 'правда', 'верно', 'точно', 'вот', 'тут', 'там', 'сам', 'сама']);
+export function extractIdentityPairs(text) {
+  const explicit = /запомни|зовут/i.test(text);
+  const okName = (n) => {
+    const low = n.toLowerCase().replace(/ё/g, 'е');
+    if (_STOP.has(low)) return false;
+    return /^[А-ЯЁA-Z]/.test(n) || isRelName(n) || COMMON_NAMES.has(low) || explicit;
+  };
+  const pairs = [];
+  const seen = new Set();
+  for (const seg of String(text).split(/[\n;]+/).map((s) => s.replace(/\bзапомни(?:те)?[:,]?/gi, ' ').trim()).filter(Boolean)) {
+    let un, name, m;
+    if ((m = seg.match(_RE_UN_NAME))) { un = m[1]; name = m[2]; }
+    else if ((m = seg.match(_RE_NAME_UN))) { name = m[1]; un = m[2]; }
+    if (un && name && okName(name) && !seen.has(un.toLowerCase())) {
+      seen.add(un.toLowerCase());
+      pairs.push({ un, name: name[0].toUpperCase() + name.slice(1) });
+    }
+  }
+  return pairs;
+}
+
 export function createGroupHandler(deps) {
   const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver } = deps;
 
@@ -309,6 +354,27 @@ export function createGroupHandler(deps) {
       }
     }
 
+    // Связка «@ник это Имя» / «Имя это @ник», в т.ч. НЕСКОЛЬКО пар за раз по
+    // строкам: «@meloch287 это мама\n@jjoopes это сергей». Люди реально
+    // становятся Мамой и Сергеем в реестре -> потом «тегни маму» их пингует.
+    // Работает и без обращения к боту (явная команда запомнить).
+    const pairs = extractIdentityPairs(text);
+    if (pairs.length) {
+      const members2 = { ...(g.members || {}) };
+      for (const { un, name } of pairs) {
+        const existing = Object.entries(members2).find(([, x]) => (x.username || '').toLowerCase() === un.toLowerCase());
+        if (existing) members2[existing[0]] = { ...existing[1], name };
+        else members2['u:' + un.toLowerCase()] = { name, username: un };
+      }
+      g = store.setUser(key, { members: members2 });
+      store.addFacts(pairs.map(({ un, name }) => ({ chatId: key, text: `${name} - это @${un}`, people: [name] })));
+      if (addressed) {
+        const list = pairs.map(({ un, name }) => `${esc(name)} - @${esc(un)}`).join(', ');
+        return send(chatId, `Запомнил: ${list} 👌`);
+      }
+      return;
+    }
+
     if (!addressed) return; // без обращения молчим, только запоминаем
 
     // «Тегни всех» (№3): пинг всех из реестра, кулдаун 10 минут от спама
@@ -334,29 +400,6 @@ export function createGroupHandler(deps) {
         return send(chatId, `${mentionOf({ username: t.username, name: t.first_name }, t.id)}, тебя ${esc(fromName)} зовёт 🙂`);
       }
       return send(chatId, 'Ответь командой «тегни его» на сообщение самого человека - тогда пойму, кого звать.');
-    }
-
-    // Связка имени с ником в ЛЮБОМ порядке: «Никита это @pxpusk»,
-    // «@pxpusk это Никита», «Никита = @pxpusk», «запомни Никита - @pxpusk».
-    const SEP = '\\s*(?:-|—|–|=|,|это|:)?\\s*(?:это\\s+)?';
-    const NAME = '[А-Яа-яЁёA-Za-z]{2,20}';
-    const UN = '@([A-Za-z][A-Za-z0-9_]{3,31})';
-    let link = text.match(new RegExp(`^(?:запомни[:,]?\\s*)?(${NAME})${SEP}${UN}[!.]*$`, 'i')); // имя ... @ник
-    let name = link?.[1], un = link?.[2];
-    if (!link) {
-      link = text.match(new RegExp(`^(?:запомни[:,]?\\s*)?${UN}${SEP}(${NAME})[!.]*$`, 'i')); // @ник ... имя
-      un = link?.[1];
-      name = link?.[2];
-    }
-    if (link && name && un && !/^(?:это|он|она|зовут)$/i.test(name)) {
-      name = name[0].toUpperCase() + name.slice(1);
-      const members2 = { ...(g.members || {}) };
-      const existing = Object.entries(members2).find(([, x]) => (x.username || '').toLowerCase() === un.toLowerCase());
-      if (existing) members2[existing[0]] = { ...existing[1], name };
-      else members2['u:' + un.toLowerCase()] = { name, username: un };
-      g = store.setUser(key, { members: members2 });
-      store.addFacts([{ chatId: key, text: `${name} - это @${un}`, people: [name] }]);
-      return send(chatId, `Запомнил: ${esc(name)} - это @${esc(un)} 👌`);
     }
 
     // Тегнуть участника: «тегни Никиту», «серег, тегни никиту и скажи что...».
