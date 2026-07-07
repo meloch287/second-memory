@@ -189,13 +189,16 @@ const STYLE = 'Пиши по-русски. ' + STYLE_FMT;
 
 const SYSTEM_WEB = `Ты «Вторая память» - умный личный ассистент человека, свободный как ChatGPT. Тебе дают выгрузку его базы: долги («должны нам» = ему должны, «мы должны» = он должен), встречи, задачи, заметки и последние сообщения диалога - это твоя память о нём, всегда учитывай её как контекст. Когда вопрос про его дела - отвечай по базе; на общие вопросы, просьбы и разговоры отвечай свободно и по делу, своими знаниями. ${STYLE}`;
 
-function buildContext(store, now) {
-  const entries = store.list();
-  const open = entries.filter((e) => e.status === 'open');
-  const done = entries.filter((e) => e.status !== 'open').slice(-15);
-  const history = store.recentHistory(30, 'web');
+function buildContext(store, now, chatId = null, query = '') {
+  const open = store.list({ status: 'open', chatId });
+  const done = store.list({ chatId }).filter((e) => e.status !== 'open').slice(-15);
+  const history = store.recentHistory(30, chatId || 'web');
+  const facts = store.factsFor(chatId, query, 30);
   return [
     `Сейчас: ${fmtLocal(now.toISOString(), true)} (локальное время пользователя).`,
+    '',
+    `ПАМЯТЬ О ЧЕЛОВЕКЕ (факты из прошлых разговоров, ${facts.length}):`,
+    ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''}`) : ['- пока пусто -']),
     '',
     `ОТКРЫТЫЕ ЗАПИСИ (${open.length}):`,
     ...(open.length ? open.map(fmtEntry) : ['- пусто -']),
@@ -210,22 +213,22 @@ function buildContext(store, now) {
   ].join('\n');
 }
 
-export async function aiSummary(store, now = new Date()) {
+export async function aiSummary(store, now = new Date(), chatId = null) {
   return ask([
     { role: 'system', content: SYSTEM_WEB },
     {
       role: 'user',
       content:
-        buildContext(store, now) +
+        buildContext(store, now, chatId) +
         '\n\nСделай деловое саммари моей базы: 1) долги - кто и сколько должен мне, что должен я, что просрочено; 2) ближайшие встречи; 3) задачи по срокам (долги в задачи не дублируй); 4) одна-две строки рекомендаций. Коротко, с заголовками строк. Даты уже в локальном времени, используй как есть.',
     },
   ]);
 }
 
-export async function aiAnswer(store, question, now = new Date()) {
+export async function aiAnswer(store, question, now = new Date(), chatId = null) {
   return ask([
     { role: 'system', content: SYSTEM_WEB },
-    { role: 'user', content: buildContext(store, now) + `\n\nВопрос: ${question}\nЕсли вопрос про его дела, долги, встречи - ответь по данным выше. Если общий - ответь свободно и умно, как ChatGPT. Не выдумывай только конкретные записи, которых нет в базе.` },
+    { role: 'user', content: buildContext(store, now, chatId, question) + `\n\nВопрос: ${question}\nЕсли вопрос про него, его дела, долги, встречи - ответь по памяти и данным выше (перечисли, что знаешь). Если общий - ответь свободно и умно, как ChatGPT. Не выдумывай только конкретные записи, которых нет в базе.` },
   ]);
 }
 

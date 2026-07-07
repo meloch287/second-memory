@@ -33,7 +33,7 @@ export function parseMessage(text, now = new Date()) {
   if (/^(?:ии[- ]?саммари|саммари|резюме|анализ)/.test(t) || t.includes('саммари')) {
     return { kind: 'summary' };
   }
-  if (/^очисти(?:ть)?\s+(?:чат|историю)/.test(t)) {
+  if (/^(?:очисти(?:ть)?|сотри|обнули)\s+(?:чат|историю|переписку|память|памяти)/.test(t)) {
     return { kind: 'clearchat' };
   }
 

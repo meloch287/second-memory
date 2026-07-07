@@ -30,6 +30,10 @@ try {
 
 const PUBLIC = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 8790);
+// Веб-панель однопользовательская: чтобы она делила память с личным чатом
+// бота в Telegram (а не жила отдельным пустым юзером 'web'), задай WEB_CHAT_ID
+// = свой Telegram chatId в .env. Без него - изолированное пространство 'web'.
+const WEB_CHAT = process.env.WEB_CHAT_ID || 'web';
 
 const store = new Store(process.env.SM_DATA || join(ROOT, 'data', 'memory.json'));
 
@@ -133,26 +137,26 @@ const server = createServer(async (req, res) => {
       if (typeof payload?.text !== 'string') {
         return json(res, 400, { error: 'Поле text должно быть строкой' });
       }
-      return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000)));
+      return json(res, 200, await handleMessage(store, payload.text.slice(0, 2000), new Date(), WEB_CHAT));
     }
 
     if (url.pathname === '/api/memory-stats' && req.method === 'GET') {
-      return json(res, 200, memoryStats(store));
+      return json(res, 200, memoryStats(store, WEB_CHAT));
     }
 
     if (url.pathname === '/api/history/clear' && req.method === 'POST') {
-      store.clearHistory();
+      store.clearHistory(WEB_CHAT);
       return json(res, 200, { ok: true });
     }
 
     if (url.pathname === '/api/entries' && req.method === 'GET') {
       const type = url.searchParams.get('type') || undefined;
       const status = url.searchParams.get('status') || undefined;
-      return json(res, 200, { entries: store.list({ type, status }) });
+      return json(res, 200, { entries: store.list({ type, status, chatId: WEB_CHAT }) });
     }
 
     if (url.pathname === '/api/digest' && req.method === 'GET') {
-      return json(res, 200, await handleMessage(store, 'что у меня сегодня'));
+      return json(res, 200, await handleMessage(store, 'что у меня сегодня', new Date(), WEB_CHAT));
     }
 
     if (url.pathname.startsWith('/api/')) return json(res, 404, { error: 'Нет такого метода' });

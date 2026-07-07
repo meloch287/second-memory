@@ -5,10 +5,10 @@ import { normText } from './dates.mjs';
 
 const dayOf = (iso) => String(iso).slice(0, 10);
 
-export function memoryStats(store) {
-  const entries = store.list();
-  const facts = store.data.facts;
-  const history = store.data.history;
+export function memoryStats(store, chatId = null) {
+  const entries = store.list({ chatId });
+  const facts = store.data.facts.filter((f) => !chatId || f.chatId === chatId);
+  const history = store.data.history.filter((h) => !chatId || (h.chatId || 'web') === chatId);
 
   const days = new Set([
     ...entries.map((e) => dayOf(e.createdAt || '')),
@@ -61,8 +61,8 @@ export function memoryStats(store) {
 
 // Насколько память покрывает конкретный вопрос: сколько источников
 // (записей, фактов, сообщений) совпало со словами вопроса.
-export function questionCoverage(store, question) {
-  const base = memoryStats(store);
+export function questionCoverage(store, question, chatId = null) {
+  const base = memoryStats(store, chatId);
   if (base.score === 0) {
     return { score: 0, matched: 0, label: 'в памяти пока ничего нет по этому вопросу' };
   }
@@ -72,9 +72,9 @@ export function questionCoverage(store, question) {
     .filter((w) => w.length > 3);
 
   const haystacks = [
-    ...store.list().map((e) => [e.title, e.counterparty, e.text].filter(Boolean).join(' ')),
-    ...store.data.facts.map((f) => f.text + ' ' + (f.people || []).join(' ') + ' ' + (f.tags || []).join(' ')),
-    ...store.data.history.filter((h) => h.role === 'user').slice(-60).map((h) => h.text),
+    ...store.list({ chatId }).map((e) => [e.title, e.counterparty, e.text].filter(Boolean).join(' ')),
+    ...store.data.facts.filter((f) => !chatId || f.chatId === chatId).map((f) => f.text + ' ' + (f.people || []).join(' ') + ' ' + (f.tags || []).join(' ')),
+    ...store.data.history.filter((h) => h.role === 'user' && (!chatId || (h.chatId || 'web') === chatId)).slice(-60).map((h) => h.text),
   ].map(normText);
 
   // Лёгкий стемминг: русские падежи меняют окончания («Ромашка» / «про Ромашку»),

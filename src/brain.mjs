@@ -94,6 +94,17 @@ async function route(store, text, now, chatId = 'web') {
   const u = store.getUser(chatId);
   const off = u ? userOffset(u) : null;
   const p = parseMessage(text, now);
+  // «что ты обо мне знаешь / какие факты / что помнишь» -> ответ ИИ по RAG-фактам,
+  // а не пустой дайджест записей (факты жили в памяти, но нигде не показывались)
+  if (
+    aiEnabled() &&
+    /(?:обо мне|про меня|какие факты|что ты (?:зна|помн))/.test(normText(text)) &&
+    (p.kind === 'digest' || p.kind === 'query' || p.kind === 'search' || (p.kind === 'entry' && p.entry.type === 'note'))
+  ) {
+    try {
+      return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) };
+    } catch { /* ИИ недоступен - обычный маршрут ниже */ }
+  }
   switch (p.kind) {
     case 'empty':
       return {
@@ -109,22 +120,22 @@ async function route(store, text, now, chatId = 'web') {
         };
       }
       try {
-        const stats = memoryStats(store);
-        return { reply: await aiSummary(store, now), ai: true, rag: { score: stats.score, label: stats.label } };
+        const stats = memoryStats(store, chatId);
+        return { reply: await aiSummary(store, now, chatId), ai: true, rag: { score: stats.score, label: stats.label } };
       } catch (e) {
         return { reply: `Не получилось связаться с ИИ (${e.message}). Попробуйте ещё раз.` };
       }
     }
     case 'clearchat':
-      store.clearHistory();
-      return { reply: 'Чат очищен. Записи в памяти остались.', cleared: true };
+      store.clearHistory(chatId);
+      return { reply: 'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы забыть что-то конкретное, скажи «забудь про ...».', cleared: true };
     case 'entry': {
       // Фраза со знаком «?» — это вопрос, а не запись: отдаём ИИ с контекстом
       // базы (иначе «у кого из должников горит срок?» станет мусорным долгом).
       if (aiEnabled() && /\?\s*$/.test(String(text).trim())) {
         try {
-          const rag = questionCoverage(store, text);
-          return { reply: await aiAnswer(store, text, now), ai: true, rag };
+          const rag = questionCoverage(store, text, chatId);
+          return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag };
         } catch {
           // ИИ недоступен — обрабатываем по правилам ниже
         }
