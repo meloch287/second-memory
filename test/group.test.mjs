@@ -61,6 +61,38 @@ test('renderChart: PNG из спецификации (если есть python+m
   assert.equal(png.subarray(1, 4).toString(), 'PNG', 'сигнатура PNG');
 });
 
+test('review-фиксы: parser и findMember', async () => {
+  const { parseMessage } = await import('../src/parser.mjs');
+  const N = new Date('2026-07-07T09:00:00Z');
+  // «удали из памяти X» - forget, не delete (была мёртвая ветка)
+  assert.equal(parseMessage('удали из памяти Петрова', N).kind, 'forget');
+  assert.equal(parseMessage('удали 5', N).kind, 'delete');
+  // «мой баланс / мои финансы»
+  assert.equal(parseMessage('мой баланс', N).kind, 'balance');
+  assert.equal(parseMessage('мои финансы', N).kind, 'balance');
+  // месячный повтор: «каждое 5 число»
+  const rec = parseMessage('каждое 5 число оплата хостинга в 12:00', N);
+  assert.equal(rec.kind, 'recurring');
+  assert.equal(rec.rule.kind, 'monthly');
+  assert.equal(rec.rule.day, 5);
+  // мут на день
+  assert.equal(parseGroupCmd('замуть на 1 день').minutes, 1440);
+  // findMember: точное совпадение приоритетнее префикса
+  const mm = { 1: { name: 'Сашенька', username: null }, 2: { name: 'Саша', username: null } };
+  assert.equal(findMember(mm, 'Саша')?.id, '2', 'точный Саша, не Сашенька');
+});
+
+test('ics: fold считает байты utf-8, не символы', async () => {
+  const { buildIcs } = await import('../src/ics.mjs');
+  const ics = buildIcs(
+    [{ id: 1, title: 'Очень длинное название встречи с командой по проекту автоматизации отчётности и аналитики продаж', due: '2026-07-10T12:00:00Z', hasTime: true }],
+    '2026-07-07T00:00:00Z'
+  );
+  for (const line of ics.split('\r\n')) {
+    assert.ok(Buffer.byteLength(line, 'utf8') <= 75, `строка длиннее 75 октетов: ${line.slice(0, 40)}...`);
+  }
+});
+
 test('parseGroupCmd: обычные фразы - не команды', () => {
   assert.equal(parseGroupCmd(norm('что мы решили по бюджету?')), null);
   assert.equal(parseGroupCmd(norm('напомни завтра про созвон')), null);

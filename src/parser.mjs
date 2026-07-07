@@ -19,6 +19,11 @@ export function parseMessage(text, now = new Date()) {
   if ((m = t.match(/^(?:готово|сделано|выполнено|закрой)\s+(.+)$/))) {
     return { kind: 'done', target: m[1].trim() };
   }
+  // «удали из памяти X» - это forget, проверяем ДО общего delete (иначе мёртвая ветка)
+  if (/^(?:забудь|удали из памяти|сотри из памяти)\s+/.test(t)) {
+    const target = raw.replace(/^\s*(?:забудь|удали из памяти|сотри из памяти)\s+(?:про|о|об)?\s*/i, '').trim();
+    if (target) return { kind: 'forget', target };
+  }
   if ((m = t.match(/^удали(?:ть)?\s+(.+)$/))) {
     return { kind: 'delete', target: m[1].trim() };
   }
@@ -55,8 +60,8 @@ export function parseMessage(text, now = new Date()) {
   }
 
   // Поправить память (№2): «забудь про X» / «это не так». Регистр из raw.
-  if (/^(?:забудь|удали из памяти|сотри)\s+/.test(t)) {
-    const target = raw.replace(/^\s*(?:забудь|удали из памяти|сотри)\s+(?:про|о|об)?\s*/i, '').trim();
+  if (/^(?:забудь|сотри)\s+/.test(t)) {
+    const target = raw.replace(/^\s*(?:забудь|сотри)\s+(?:про|о|об)?\s*/i, '').trim();
     if (target) return { kind: 'forget', target };
   }
   if (/^(?:нет,?\s*)?(?:это не так|я такого не говорил|ты не так понял|это неправда|неправда|ты перепутал)/.test(t)) {
@@ -74,7 +79,7 @@ export function parseMessage(text, now = new Date()) {
   if (/^(?:покажи |дай )?(?:экспорт|выгрузи(?:\s+(?:вс[её]|память|дела|данные))?|скачать(?:\s+память)?|скачай(?:\s+память)?|export)[.!?]*$/.test(t)) {
     return { kind: 'export' };
   }
-  if (/^(?:покажи |дай )?(?:баланс|финансы|сводка по долгам|денежный баланс|долги итого)[.!?]*$/.test(t)) {
+  if (/^(?:покажи |дай )?(?:мо[йи] |наши? )?(?:баланс|финансы|сводка по долгам|денежный баланс|долги итого)[.!?]*$/.test(t)) {
     return { kind: 'balance' };
   }
   if (/^(?:мои )?настройки[.!?]*$/.test(t) || t === '/settings') {
@@ -154,7 +159,7 @@ export function parseRecurring(raw, t) {
   const hm = extractHm(t) || { hour: 9, min: 0 };
   let rule = null;
 
-  const dom = t.match(/(\d{1,2})[- ]?(?:го)?\s*числа/);
+  const dom = t.match(/(\d{1,2})[- ]?(?:го)?\s*числ[оа]/);
   if (/ежемесячн|кажд(?:ый|ое)\s+месяц/.test(t) || dom) {
     rule = { kind: 'monthly', day: dom ? Math.min(28, +dom[1]) : 1, hour: hm.hour, min: hm.min };
   } else if (/ежедневн|кажд(?:ый|ое)\s+(?:день|утро|вечер)/.test(t)) {
@@ -170,7 +175,7 @@ export function parseRecurring(raw, t) {
     .replace(/кажд(?:ый|ую|ое|ые)\s+\S+/gi, '')
     .replace(/по\s+(?:пн|вт|ср|чт|пт|сб|вс|понедельник\S*|вторник\S*|сред\S*|четверг\S*|пятниц\S*|суббот\S*|воскресень\S*)/gi, '')
     .replace(/ежедневн\S*|ежемесячн\S*/gi, '')
-    .replace(/\d{1,2}[- ]?(?:го)?\s*числа/gi, '')
+    .replace(/\d{1,2}[- ]?(?:го)?\s*числ[оа]/gi, '')
     .replace(/(?:в|к)\s*\d{1,2}(?::\d{2})?(?:\s*час[а-я]*)?/gi, '')
     .replace(/напомни(?:ть)?(?:\s+мне)?/gi, '')
     .replace(/\s{2,}/g, ' ')
@@ -259,7 +264,13 @@ export function findMember(members, query) {
   }
   const qs = stem(q);
   if (qs.length < 2) return null;
-  const match = (n) => n && (n === qs || n.startsWith(qs) || qs.startsWith(n) || toLat(n) === toLat(qs) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
+  // сначала точное совпадение основы (иначе «Саша» может уехать в «Сашенька»
+  // по порядку вставки), потом префиксы и транслит
+  for (const [id, m] of Object.entries(members || {})) {
+    const n = stem(m.name || '');
+    if (n && (n === qs || toLat(n) === toLat(qs))) return { id, ...m };
+  }
+  const match = (n) => n && (n.startsWith(qs) || qs.startsWith(n) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
   for (const [id, m] of Object.entries(members || {})) {
     if (match(stem(m.name || ''))) return { id, ...m };
   }
@@ -277,11 +288,11 @@ export function parseGroupCmd(t) {
   if (/^(?:дай|создай|скинь|сделай)\s+(?:инвайт|ссылку|приглашение)/.test(t) || /^(?:инвайт|ссылка)[!?.]*$/.test(t)) return { cmd: 'invite' };
   if (/^(?:кикни|выгони|удали из группы)/.test(t)) return { cmd: 'kick', needsReply: true };
   if (/^(?:забань|заблокируй)/.test(t)) return { cmd: 'ban', needsReply: true };
-  if ((m = t.match(/^(?:замуть|мут)(?:\s+на\s+(\d+)\s*(минут|мин|час[а-я]*|дн[а-я]*))?/))) {
+  if ((m = t.match(/^(?:замуть|мут)(?:\s+на\s+(\d+)\s*(минут|мин|час[а-я]*|д(?:ень|н[а-я]*)))?/))) {
     let mins = 60;
     if (m[1]) {
       const n = +m[1];
-      mins = /час/.test(m[2]) ? n * 60 : /дн/.test(m[2]) ? n * 1440 : n;
+      mins = /час/.test(m[2]) ? n * 60 : /^д/.test(m[2]) ? n * 1440 : n; // д- = день/дня/дней
     }
     return { cmd: 'mute', minutes: Math.min(mins, 366 * 1440), needsReply: true };
   }

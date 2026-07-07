@@ -19,12 +19,12 @@ import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
+import { RUB } from './format.mjs';
 import { renderChart, chartAvailable } from './chart.mjs';
 import { aiChartSpec, aiRelay } from './ai.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
 
-const RUB = new Intl.NumberFormat('ru-RU');
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
 const hasFfmpeg = (() => {
@@ -165,7 +165,7 @@ export function startTelegramBot(store, token, log = console) {
   // «Печатает…» держится, пока готовим ответ: Telegram гасит статус через
   // ~5 секунд, поэтому шлём его циклом до самой отправки сообщения.
   function typingLoop(chat_id, action = 'typing') {
-    const ping = () => api('sendChatAction', { chat_id, action }).catch(() => {});
+    const ping = () => api('sendChatAction', { chat_id, action, ...threadExtra(chat_id) }).catch(() => {});
     ping();
     const interval = setInterval(ping, 4500);
     return () => clearInterval(interval);
@@ -175,6 +175,8 @@ export function startTelegramBot(store, token, log = console) {
   async function sendVoice(chat_id, oggBuffer, caption) {
     const form = new FormData();
     form.append('chat_id', String(chat_id));
+    const _th = activeThread.get(String(chat_id));
+    if (_th) form.append('message_thread_id', String(_th));
     form.append('voice', new Blob([oggBuffer], { type: 'audio/ogg' }), 'reply.ogg');
     if (caption) form.append('caption', String(caption).slice(0, 1000));
     const res = await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: form });
@@ -963,8 +965,15 @@ export function startTelegramBot(store, token, log = console) {
       const doc = msg.document;
       const mime = String(doc.mime_type || '');
       const name = doc.file_name || 'документ';
-      if ((doc.file_size || 0) > 15 * 1024 * 1024 || !audioEnabled()) return;
       const docAddressed = mentionsBot(msg.caption || '');
+      if ((doc.file_size || 0) > 15 * 1024 * 1024) {
+        if (docAddressed) await send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли полегче?');
+        return;
+      }
+      if (!audioEnabled()) {
+        if (docAddressed) await send(chatId, 'Документы пока не читаю: нет ключа ИИ.');
+        return;
+      }
       const summary = await (docAddressed ? withTyping(chatId, () => readDoc(doc, mime, name)) : readDoc(doc, mime, name)).catch((e) => {
         log.error('[telegram] group doc', e.message);
         return null;
@@ -1004,10 +1013,8 @@ export function startTelegramBot(store, token, log = console) {
     store.addRaw(key, `${fromName}: ${text}`);
     captureEntry(store, text, new Date(), key, userOffset(g));
 
-    if (!addressed) return; // без обращения молчим, только запоминаем
-
-    // «я Никита» - человек представился: имя в реестр + факт в память группы
-    // (RAG знает сразу, не дожидаясь воркера)
+    // «я Никита» - работает и БЕЗ обращения к боту: человек просто
+    // представился в чате; имя в реестр + факт (RAG знает сразу)
     const iam = text.match(/^(?:я|меня зовут)\s+([А-Яа-яЁёA-Za-z]{2,20})[!.]*$/i);
     if (iam && msg.from) {
       const newName = iam[1][0].toUpperCase() + iam[1].slice(1);
@@ -1015,8 +1022,11 @@ export function startTelegramBot(store, token, log = console) {
       members2[msg.from.id] = { ...(members2[msg.from.id] || {}), name: newName, username: msg.from.username || members2[msg.from.id]?.username || null };
       g = store.setUser(key, { members: members2 });
       store.addFacts([{ chatId: key, text: `Участника${msg.from.username ? ` @${msg.from.username}` : ''} зовут ${newName}`, people: [newName] }]);
-      return send(chatId, `Принял, ${esc(newName)}! Теперь знаю тебя по имени 🙂`);
+      if (addressed) return send(chatId, `Принял, ${esc(newName)}! Теперь знаю тебя по имени 🙂`);
+      return; // тихо запомнили, не влезаем в разговор
     }
+
+    if (!addressed) return; // без обращения молчим, только запоминаем
 
     // «тегни его/её» ответом на чьё-то сообщение - тегаем автора того сообщения
     if (/^(?:тегни|тэгни|пингани|позови|призови)\s+(?:его|её|ее)[!?.\s]*$/i.test(text)) {
@@ -1054,7 +1064,7 @@ export function startTelegramBot(store, token, log = console) {
         who = say[1].trim();
         relay = say[2].trim();
       }
-      who = who.replace(/[!?.\s]+$/, '');
+      who = who.replace(/[,!?.\s]+$/, '');
       // передача: ИИ формулирует реплику адресату сам («он лох» -> «ты лох» в
       // своём стиле), дословный текст - только запасной вариант
       const relayText = async (targetName) => {
@@ -1085,7 +1095,9 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     // Смена имени бота в группе: «ты теперь Серега», «тебя зовут Макс»
-    const nm = text.match(/(?:ты теперь|(?:теперь )?тебя зовут)\s+([А-Яа-яЁёA-Za-z0-9_-]{2,20})/i);
+    // только целое короткое сообщение-команда, иначе обычные фразы
+    // с «тебя зовут...» случайно переименовывали бота
+    const nm = text.match(/^(?:ты теперь|(?:теперь )?тебя зовут|зовись)\s+([А-Яа-яЁёA-Za-z0-9_-]{2,20})[!.)]*$/i);
     if (nm) {
       const newName = nm[1][0].toUpperCase() + nm[1].slice(1);
       store.setUser(key, { botName: newName });
@@ -1318,6 +1330,11 @@ export function startTelegramBot(store, token, log = console) {
     // Экспорт памяти в выбранном формате
     if (cb.data === 'exp_no') return send(chatId, 'Ок. Скажешь «экспорт» - выгружу.');
     if (cb.data === 'exp_csv' || cb.data === 'exp_md' || cb.data === 'exp_json') {
+      // экспорт памяти ГРУППЫ - только админам (данные уходят файлом наружу)
+      const prof = store.getUser(chatId);
+      if (prof?.isGroup && !(await callerIsAdmin(chatId, cb.from.id))) {
+        return send(chatId, 'Экспорт памяти группы - только для админов 🙂');
+      }
       try {
         if (cb.data === 'exp_csv') await sendDocumentText(chatId, toCsv(store, chatId), 'pamyat.csv', 'text/csv', 'Таблица дел и долгов. Открывается в Excel 📊');
         else if (cb.data === 'exp_md') await sendDocumentText(chatId, toMarkdown(store, chatId), 'dnevnik.md', 'text/markdown', 'Твой дневник по дням 📝');

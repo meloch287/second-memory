@@ -61,7 +61,9 @@ export function parseTz(text) {
     if (off >= -720 && off <= 840) return off;
   }
   for (const [city, off] of Object.entries(CITY_OFFSETS)) {
-    if (t.includes(city)) return off;
+    // граница слова слева: «омск» не должен ловиться внутри «томск(а)»
+    // (\b с кириллицей в JS не работает - lookbehind, как в dates.mjs)
+    if (new RegExp(`(?<![а-яa-z])${city}`).test(t)) return off;
   }
   if (/москв|как у теб|по москв|по дефолту|не знаю|всеравно|все равно/.test(t)) return DEFAULT_OFFSET;
   return null;

@@ -1,9 +1,7 @@
 // Финансовая сводка по долгам пользователя: сколько должны тебе, сколько
 // должен ты, чистый баланс, крупнейший должник, просрочка.
 
-const RUB = new Intl.NumberFormat('ru-RU');
-const money = (v) => `${RUB.format(v)} ₽`;
-const pad = (n) => String(n).padStart(2, '0');
+import { money, pad } from './format.mjs';
 const fmtDay = (iso, off = 180) => {
   const d = new Date(new Date(iso).getTime() + off * 60000);
   return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;

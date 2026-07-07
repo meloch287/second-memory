@@ -759,6 +759,7 @@ export async function aiExtractFacts(rawItems, now = new Date()) {
           '"entries":[{"type":"debt|task|meeting","title":"...","counterparty":"Имя или null","amount":числоИлиNull,' +
           '"direction":"in|out","due":"YYYY-MM-DD или null"}]}\n' +
           'В entries клади ТОЛЬКО явные дела: долг с суммой, задачу с действием, встречу. Болтовню и эмоции - только в facts. ' +
+          'ВАЖНО: долг (debt) - только если деньги ЕЩЁ должны («должен», «занял», «до пятницы отдать»). Уже совершённая оплата («заплатил», «оплатил», «купил») - это НЕ долг, такое только в facts. ' +
           'Пустые массивы, если ничего нет.\n\nЗАПИСИ:\n' +
           list,
       },

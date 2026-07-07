@@ -15,18 +15,31 @@ function escapeIcs(s) {
   return String(s).replace(/([,;\\])/g, '\\$1').replace(/\n/g, '\\n');
 }
 
-function fold(line) {
-  // RFC 5545: строки длиннее 75 октетов складываются
-  if (line.length <= 74) return line;
-  const parts = [];
-  let rest = line;
-  parts.push(rest.slice(0, 74));
-  rest = rest.slice(74);
-  while (rest.length > 73) {
-    parts.push(' ' + rest.slice(0, 73));
-    rest = rest.slice(73);
+// Отрезает от строки кусок не длиннее limit БАЙТ (utf-8), не разрывая символ:
+// кириллица - 2 байта на букву, счёт по символам ломал RFC-лимит.
+function takeBytes(s, limit) {
+  let bytes = 0;
+  let i = 0;
+  for (const ch of s) {
+    const b = Buffer.byteLength(ch, 'utf8');
+    if (bytes + b > limit) break;
+    bytes += b;
+    i += ch.length;
   }
-  if (rest) parts.push(' ' + rest);
+  return [s.slice(0, i), s.slice(i)];
+}
+
+function fold(line) {
+  // RFC 5545: строки длиннее 75 октетов складываются (считаем октеты!)
+  if (Buffer.byteLength(line, 'utf8') <= 74) return line;
+  const parts = [];
+  let [head, rest] = takeBytes(line, 74);
+  parts.push(head);
+  while (rest) {
+    const [h, r] = takeBytes(rest, 73);
+    parts.push(' ' + h);
+    rest = r;
+  }
   return parts.join('\r\n');
 }
 

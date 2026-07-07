@@ -7,9 +7,7 @@ import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
 import { memoryStats, questionCoverage } from './ragmeter.mjs';
 import { resolveWallDate, userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
-const RUB = new Intl.NumberFormat('ru-RU');
-const money = (v) => `${RUB.format(v)} ₽`;
-const pad = (n) => String(n).padStart(2, '0');
+import { money, pad } from './format.mjs';
 
 const TYPE_LABEL = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 const LIST_LABEL = { meeting: 'Встречи', task: 'Задачи', note: 'Заметки' };

@@ -22,10 +22,12 @@ export class Store {
   load() {
     if (!existsSync(this.file)) return;
     let wasPlaintext = false;
+    let isEncrypted = false;
     try {
       const buf = readFileSync(this.file);
       let text;
       if (buf.length >= ENC_MAGIC.length && buf.subarray(0, ENC_MAGIC.length).equals(ENC_MAGIC)) {
+        isEncrypted = true;
         const key = encKey();
         if (!key) throw new Error('данные зашифрованы, но SM_ENCRYPTION_KEY не задан');
         const iv = buf.subarray(ENC_MAGIC.length, ENC_MAGIC.length + 12);
@@ -49,8 +51,14 @@ export class Store {
         if (!Array.isArray(parsed.recurring)) parsed.recurring = [];
         this.data = parsed;
       }
-    } catch {
-      // повреждённый файл откладываем в сторону, данные не затираем молча
+    } catch (e) {
+      // Зашифрованный файл не расшифровался (неверный/потерянный ключ) -
+      // падаем сразу: иначе процесс стартует с пустой памятью и первый же
+      // save() перезапишет настоящие данные.
+      if (isEncrypted) {
+        throw new Error(`не удалось расшифровать ${this.file}: ${e.message}. Проверь SM_ENCRYPTION_KEY - данные НЕ тронуты.`);
+      }
+      // повреждённый открытый JSON откладываем в сторону, данные не затираем молча
       copyFileSync(this.file, this.file + '.corrupt-' + Date.now());
       return;
     }
