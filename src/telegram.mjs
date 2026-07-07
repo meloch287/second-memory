@@ -1035,7 +1035,8 @@ export function startTelegramBot(store, token, log = console) {
           if (parsed) {
             const r = importIntoStore(store, String(chatId), parsed);
             const skipped = r.total > r.count ? ` (взял последние ${r.count} из ${r.total})` : '';
-            return send(chatId, `Импортировал историю: ${r.count} сообщений с ${esc(r.first)} по ${esc(r.last)}${skipped} 📚\n\nТеперь помню и то, что было раньше. Фоном переварю в факты - спрашивай.`);
+            const scope = parsed.full ? `все чаты (${parsed.chatCount})` : 'историю';
+            return send(chatId, `Импортировал ${scope}: ${r.count} сообщений с ${esc(r.first)} по ${esc(r.last)}${skipped} 📚\n\nТеперь помню и то, что было раньше. Фоном переварю в факты - спрашивай.`);
           }
         } catch (e) {
           log.error('[telegram] import', e.message);

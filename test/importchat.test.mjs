@@ -60,3 +60,38 @@ test('importIntoStore: raw одной пачкой, участники в рее
   assert.equal(m['777'].name, 'Дима');
   assert.equal(m['482961058'].username, 'pxpusk', 'существующий не перетёрт');
 });
+
+test('parseTgExport: полный экспорт аккаунта (chats.list)', () => {
+  const full = {
+    about: 'Telegram export',
+    chats: { list: [
+      { name: 'Мама', type: 'personal_chat', id: 1, messages: [
+        { id: 1, type: 'message', date: '2025-02-01T10:00:00', from: 'Мама', from_id: 'user2', text: 'купи хлеб и молоко' },
+        { id: 2, type: 'message', date: '2025-02-01T10:05:00', from: 'Саша', from_id: 'user1', text: 'ок куплю' },
+      ]},
+      { name: 'Работа', type: 'private_group', id: 2, messages: [
+        { id: 3, type: 'message', date: '2025-02-02T12:00:00', from: 'Босс', from_id: 'user9', text: 'дедлайн по проекту в пятницу' },
+        { id: 4, type: 'service', date: '2025-02-02T12:01:00', action: 'pin_message' },
+      ]},
+      { name: 'Пустой', type: 'personal_chat', id: 3, messages: [] },
+    ] },
+  };
+  const p = parseTgExport(Buffer.from(JSON.stringify(full)));
+  assert.equal(p.full, true);
+  assert.equal(p.chatCount, 2, 'пустой чат не считается');
+  assert.equal(p.messages.length, 3);
+  assert.ok(p.messages.some((m) => m.chat === 'Мама' && m.text.includes('хлеб')));
+  assert.ok(p.messages.some((m) => m.chat === 'Работа' && m.text.includes('дедлайн')));
+  assert.ok(p.messages[0].ts <= p.messages[2].ts, 'отсортировано по времени');
+});
+
+test('importIntoStore: полный экспорт помечает чат в тексте', () => {
+  const s = new Store(tmpFile());
+  const full = { chats: { list: [{ name: 'Мама', type: 'personal_chat', id: 1, messages: [
+    { id: 1, type: 'message', date: '2025-02-01T10:00:00', from: 'Мама', from_id: 'user2', text: 'купи хлеб' },
+  ] }] } };
+  const p = parseTgExport(Buffer.from(JSON.stringify(full)));
+  importIntoStore(s, 'web', p);
+  const raw = s.data.raw.find((r) => r.chatId === 'web');
+  assert.match(raw.text, /^\[Мама\] Мама: купи хлеб/, 'префикс чата в тексте');
+});
