@@ -44,6 +44,16 @@ const stripThink = (s) =>
 
 import { userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
+// Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
+// формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
+export function stripFakeSave(s) {
+  return String(s)
+    .replace(/(?:^|[\s])(?:сохранил|сохранила|записал|записала|запомнил|запомнила|добавил|добавила)\s+(?:себе\s+|это\s+)?(?:заметк\S*|запис\S*|в память|в базу)[^.!?\n]*[.!?]?/gi, ' ')
+    .replace(/(?:^|[\s])заметка сохранена[.!?]?/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // Модель упорно вставляет СОБСТВЕННОЕ имя бота как обращение к человеку
 // («держи, Братан», «удачи, Братан») - имя бота ≠ имя юзера. Детерминированно
 // срезаем имя бота, когда оно стоит как вокатив (в начале реплики или после
@@ -212,7 +222,10 @@ const systemWeb = (name) =>
 function buildContext(store, now, chatId = null, query = '') {
   const open = store.list({ status: 'open', chatId });
   const done = store.list({ chatId }).filter((e) => e.status !== 'open').slice(-15);
-  const history = store.recentHistory(30, chatId || 'web');
+  // Старые системные подтверждения («Сохранил заметку №N», «Записал долг»)
+  // выкидываем из контекста - иначе модель копирует этот формат в живой ответ.
+  const history = store.recentHistory(30, chatId || 'web')
+    .filter((h) => !(h.role === 'assistant' && /^\s*(?:сохранил|записал|запомнил|готово|удалил|заметк|очистил|стёр|стер)/i.test(h.text)));
   const facts = store.factsFor(chatId, query, 30);
   return [
     `Сейчас: ${fmtLocal(now.toISOString(), true)} (локальное время пользователя).`,
@@ -250,7 +263,8 @@ export async function aiAnswer(store, question, now = new Date(), chatId = null)
     { role: 'system', content: systemWeb(webName(store)) },
     { role: 'user', content: buildContext(store, now, chatId, question) + `\n\nВопрос: ${question}\nЕсли вопрос про него, его дела, долги, встречи - ответь по памяти и данным выше (перечисли, что знаешь). Если общий - ответь свободно и умно, как ChatGPT. Не выдумывай только конкретные записи, которых нет в базе.` },
   ]);
-  return stripBotVocative(reply, webName(store)); // имя ассистента не должно стоять как обращение к человеку
+  const clean = stripFakeSave(stripBotVocative(reply, webName(store)));
+  return clean || stripBotVocative(reply, webName(store)); // если срез убрал всё - вернём исходное
 }
 
 /* ---------- Бот-друг (неформальный тон) ---------- */
