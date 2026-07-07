@@ -12,6 +12,8 @@ const WORD_HOURS = {
   'четыре': 4, 'четырёх': 4, 'четырех': 4, 'пять': 5, 'пяти': 5, 'шесть': 6, 'шести': 6,
   'семь': 7, 'семи': 7, 'восемь': 8, 'восьми': 8, 'девять': 9, 'девяти': 9,
   'десять': 10, 'десяти': 10, 'одиннадцать': 11, 'одиннадцати': 11, 'двенадцать': 12, 'двенадцати': 12,
+  'тринадцать': 13, 'четырнадцать': 14, 'пятнадцать': 15, 'шестнадцать': 16, 'семнадцать': 17,
+  'восемнадцать': 18, 'девятнадцать': 19, 'двадцать': 20,
 };
 
 const re = (pattern, flags = '') => new RegExp(pattern, flags);
@@ -68,6 +70,7 @@ export function extractDate(text, base = new Date()) {
   let src = String(text);
   let day = null;
   let hasTime = false;
+  let dayWordMatched = false;
   let hh = 0;
   let mm = 0;
 
@@ -75,6 +78,29 @@ export function extractDate(text, base = new Date()) {
   const cut = (m) => {
     src = src.slice(0, m.index) + ' ' + src.slice(m.index + m[0].length);
   };
+
+  // Относительное время: «через 10 минут», «через 2 часа», «через час»,
+  // «через полчаса», а также таймер/будильник «на N минут/часов». Даёт точный
+  // момент now+offset с hasTime=true - для таких экземпляров дальше не парсим.
+  {
+    const t = low();
+    let relMs = null;
+    let m;
+    if ((m = t.match(re(B + '(?:через|спустя|таймер\\s+на|будильник\\s+на|засеки?\\s+(?:на\\s+)?|засечь\\s+(?:на\\s+)?)\\s*пол\\s?часа' + E)))) {
+      relMs = 30 * 60000;
+    } else if ((m = t.match(re(B + '(?:через|спустя|таймер\\s+на|будильник\\s+на|засеки?\\s+(?:на\\s+)?|засечь\\s+(?:на\\s+)?)\\s*час(?:ик)?' + E)))) {
+      relMs = 3600000;
+    } else if ((m = t.match(re(B + '(?:(?:через|спустя)\\s+|(?:таймер|будильник|засеки?|засечь)\\s+(?:на\\s+)?)(\\d{1,4})\\s*(минут[а-я]*|мин' + E + '|час[а-я]*|ч' + E + ')')))) {
+      const n = +m[1];
+      relMs = /^ч|^час/.test(m[2]) ? n * 3600000 : n * 60000;
+    }
+    if (relMs != null) {
+      cut(m);
+      const when = new Date(base.getTime() + relMs);
+      const rest = src.replace(/\s{2,}/g, ' ').replace(re('\\s+(до|к|на|в|во|и)\\s*$'), '').trim().replace(/^[\s,.:;!?–—-]+/, '').replace(/[\s,.:;–—-]+$/, '');
+      return { when, hasTime: true, rest };
+    }
+  }
 
   const dayMatchers = [
     [re(B + P + 'послезавтра' + E), () => addDays(base, 2)],
@@ -137,21 +163,27 @@ export function extractDate(text, base = new Date()) {
     const d = make(m);
     if (!d) continue;
     day = d;
+    dayWordMatched = true;
     cut(m);
     break;
   }
 
+  let hadSuffix = false;
+  // словесные часы: длинные формы раньше коротких (часу перед час, четырёх перед четыре)
+  const WORD_KEYS = Object.keys(WORD_HOURS).sort((a, b) => b.length - a.length).join('|');
   {
     const t = low();
     const shift = (suffix) => {
+      if (!suffix) return;
+      hadSuffix = true;
       if (suffix === 'вечера' && hh < 12) hh += 12;
       if (suffix === 'дня' && hh > 0 && hh <= 6) hh += 12;
       if (suffix === 'утра' && hh === 12) hh = 0;
-      if (suffix === 'ночи' && (hh === 12 || hh <= 4)) hh = hh === 12 ? 0 : hh;
+      if (suffix === 'ночи') { if (hh === 12) hh = 0; else if (hh >= 9 && hh <= 11) hh += 12; }
     };
     // 1) HH:MM, а также HH.MM и «в 16 00» (разделитель точка/пробел - только с предлогом)
     let m = t.match(/(?:(?<![0-9a-zа-я])(?:в|к|ко|на)\s+)?(\d{1,2}):(\d{2})(?![\d.:])/);
-    if (!m) {
+    if (!hasTime && !m) {
       const m2 = t.match(/(?<![0-9a-zа-я])(?:в|к|ко|на)\s+(\d{1,2})[.\s](\d{2})(?![\d.:])/);
       if (m2 && +m2[1] <= 23 && +m2[2] <= 59) m = m2;
     }
@@ -160,9 +192,17 @@ export function extractDate(text, base = new Date()) {
       mm = +m[2];
       hasTime = true;
       cut(m);
-    } else {
+    } else if (!hasTime) {
+      // 1.5) «на 7 утра» (будильник): предлог «на» только с явным суффиксом суток
+      const mna = t.match(re(B + 'на\\s+(\\d{1,2})\\s+(утра|вечера|дня|ночи)' + E));
+      if (mna && +mna[1] <= 23) {
+        hh = +mna[1];
+        hasTime = true;
+        shift(mna[2]);
+        cut(mna);
+      }
       // 2) «в/к 16», «в 4 часа», с суффиксом времени суток
-      m = t.match(
+      m = hasTime ? null : t.match(
         re(
           B +
             '(?:в|к|ко)\\s+(\\d{1,2})(\\s*час(?:а|ов)?|\\s*ч' + E + ')?(\\s+утра|\\s+вечера|\\s+дня|\\s+ночи)?' +
@@ -174,14 +214,10 @@ export function extractDate(text, base = new Date()) {
         hasTime = true;
         shift((m[3] || '').trim());
         cut(m);
-      } else {
+      } else if (!hasTime) {
         // 3) словом: «в четыре», «к пяти часам», «в полдень»
         m = t.match(
-          re(
-            B +
-              '(?:в|к|ко)\\s+(полдень|полночь|' + Object.keys(WORD_HOURS).join('|') + ')' +
-              '(\\s*час(?:а|ов|ам)?)?(\\s+утра|\\s+вечера|\\s+дня|\\s+ночи)?'
-          )
+          re(B + '(?:в|к|ко)\\s+(полдень|полночь|' + WORD_KEYS + ')(\\s*час(?:а|ов|ам)?)?(\\s+утра|\\s+вечера|\\s+дня|\\s+ночи)?')
         );
         if (m) {
           const w = m[1];
@@ -198,6 +234,19 @@ export function extractDate(text, base = new Date()) {
 
   let when = null;
   if (day) when = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hh, mm);
+
+  // Время без явного дня уже прошло сегодня («в 4» в 9 утра): без суффикса
+  // сдвигаем на вечер (+12), с суффиксом (или если PM тоже прошёл) - на завтра.
+  // Так напоминание никогда не оказывается в прошлом.
+  if (when && hasTime && !dayWordMatched && when.getTime() <= base.getTime()) {
+    if (!hadSuffix && hh < 12) {
+      const pm = new Date(when.getTime());
+      pm.setHours(pm.getHours() + 12);
+      when = pm.getTime() > base.getTime() ? pm : new Date(when.getTime() + 86400000);
+    } else {
+      when = new Date(when.getTime() + 86400000);
+    }
+  }
 
   const rest = src
     .replace(/\s{2,}/g, ' ')

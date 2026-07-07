@@ -80,6 +80,13 @@ export function captureEntry(store, text, now = new Date(), chatId = 'web', offs
       entry.hasTime = r.hasTime;
     }
   }
+  // Задача-напоминание с датой, но без времени («напомни завтра оплатить») иначе
+  // никогда не сработает точным напоминанием - ставим полдень по поясу юзера.
+  if (entry.type === 'task' && entry.due && !entry.hasTime) {
+    const d = new Date(new Date(entry.due).getTime() + offsetMin * 60000); // настенное
+    entry.due = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0) - offsetMin * 60000).toISOString();
+    entry.hasTime = true;
+  }
   return store.add(entry);
 }
 

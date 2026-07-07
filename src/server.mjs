@@ -13,7 +13,7 @@ import { startFactWorker } from './worker.mjs';
 import { startScheduler } from './scheduler.mjs';
 import { aiTts, audioEnabled } from './ai.mjs';
 import {
-  ensureAuth, verifyPassword, setPassword, makeSession, validSession,
+  ensureAuth, verifyPassword, setPassword, makeSession, validSession, bumpEpoch,
   parseCookies, sessionCookie, clearCookie, getWebSettings, setWebSettings,
 } from './webauth.mjs';
 
@@ -79,6 +79,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (url.pathname === '/api/logout' && req.method === 'POST') {
+      bumpEpoch(store); // обесцениваем старый токен на сервере, не только в куке
       res.setHeader('set-cookie', clearCookie());
       return json(res, 200, { ok: true });
     }
@@ -103,7 +104,8 @@ const server = createServer(async (req, res) => {
       if (typeof p?.next !== 'string' || p.next.length < 6) return json(res, 400, { error: 'Новый пароль - минимум 6 символов' });
       setPassword(store, p.next);
       if (typeof p.login === 'string' && p.login.trim()) setWebSettings(store, { login: p.login });
-      res.setHeader('set-cookie', sessionCookie(makeSession(store))); // обновляем сессию
+      bumpEpoch(store); // старые сессии с другими устройств недействительны
+      res.setHeader('set-cookie', sessionCookie(makeSession(store))); // новая сессия для текущего устройства
       return json(res, 200, { ok: true });
     }
     if (url.pathname === '/api/tts' && req.method === 'POST') {

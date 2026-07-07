@@ -364,7 +364,7 @@ export function createGroupHandler(deps) {
 
     // Создание тем (топиков) форума: «создай топик X», «добавь топик: X, Y, Z».
     // Реально дёргаем createForumTopic (нужен форум + бот-админ с правами).
-    const topicM = text.match(/^(?:созда(?:й|ть)|добавь|заведи|сделай)\s+топик[иов]*\b[:\s-]*(.+)$/i);
+    const topicM = text.match(/^(?:созда(?:й|ть)|добавь|заведи|сделай)\s+топик[иов]*(?=[\s:,-]|$)[:\s-]*(.+)$/i);
     if (topicM) {
       if (!msg.chat?.is_forum) {
         return send(chatId, 'В этой группе темы (топики) выключены. Включи их в настройках группы («Темы»), и я создам.');
@@ -372,7 +372,7 @@ export function createGroupHandler(deps) {
       if (!(await callerIsAdmin(chatId, msg.from.id))) {
         return send(chatId, 'Создавать темы может админ группы 🙂');
       }
-      const names = topicM[1].split(/\s*(?:,|;|\bи\b)\s*/i).map((s) => s.trim().replace(/^["«»]|["«»]$/g, '')).filter(Boolean).slice(0, 8);
+      const names = topicM[1].split(/\s*(?:,|;|(?<=\s|^)и(?=\s|$))\s*/i).map((s) => s.trim().replace(/^["«»]|["«»]$/g, '')).filter(Boolean).slice(0, 8);
       if (!names.length) return send(chatId, 'Как назвать темы? Напиши «создай топик Флудилка, Задачи».');
       const made = [];
       for (const name of names) {

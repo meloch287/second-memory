@@ -83,10 +83,20 @@ export function setWebSettings(store, patch) {
   return getWebSettings(store);
 }
 
-// --- Сессии: подписанный токен в куке sm_session ---
+// --- Сессии: подписанный токен «эпоха.время.подпись». Смена пароля или выход
+// поднимают epoch, обесценивая все старые токены (серверная инвалидация). ---
+
+function epoch(store) {
+  return cfg(store).sessionEpoch || 0;
+}
+export function bumpEpoch(store) {
+  const c = cfg(store);
+  c.sessionEpoch = (c.sessionEpoch || 0) + 1;
+  store.save();
+}
 
 export function makeSession(store) {
-  const payload = `${Date.now()}`;
+  const payload = `${epoch(store)}.${Date.now()}`;
   const sig = createHmac('sha256', secret(store)).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
@@ -101,7 +111,9 @@ export function validSession(store, token) {
   const a = Buffer.from(sig);
   const b = Buffer.from(want);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
-  const ts = Number(payload);
+  const [ep, tsStr] = payload.split('.');
+  if (Number(ep) !== epoch(store)) return false; // токен из старой эпохи - недействителен
+  const ts = Number(tsStr);
   return Number.isFinite(ts) && Date.now() - ts < SESSION_TTL * 1000;
 }
 
