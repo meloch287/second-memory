@@ -15,7 +15,7 @@ import { aiTts, audioEnabled } from './ai.mjs';
 import {
   ensureAuth, verifyPassword, setPassword, makeSession, validSession, bumpEpoch,
   parseCookies, sessionCookie, clearCookie, getWebSettings, setWebSettings,
-  startTgLink, linkedChatId,
+  startTgLink, linkedChatId, unlinkTg,
 } from './webauth.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -160,12 +160,21 @@ const server = createServer(async (req, res) => {
       return json(res, 200, await handleMessage(store, 'что у меня сегодня', new Date(), webChat()));
     }
 
-    // «Подключить Telegram»: выдаём одноразовый deep-link на бота
+    // «Подключить Telegram»: выдаём одноразовый deep-link на бота.
+    // dir: 'web' - перенести память из веба в TG; 'tg' - показать память из TG в вебе.
     if (url.pathname === '/api/tg-link' && req.method === 'POST') {
       const bot = store.data.meta.botUsername;
       if (!bot) return json(res, 503, { error: 'Бот пока не подключён к серверу' });
-      const token = startTgLink(store);
+      let dir = 'web';
+      try { dir = (JSON.parse(await readBody(req))?.dir === 'tg') ? 'tg' : 'web'; } catch {}
+      const token = startTgLink(store, dir);
       return json(res, 200, { url: `https://t.me/${bot}?start=sm-${token}`, bot });
+    }
+
+    // «Отключить Telegram»: разрываем связку, веб возвращается в своё 'web'.
+    if (url.pathname === '/api/tg-unlink' && req.method === 'POST') {
+      unlinkTg(store);
+      return json(res, 200, { ok: true });
     }
 
     // Веб-напоминания: дела со временем, которым пришёл срок и которые ещё не

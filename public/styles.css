@@ -901,3 +901,20 @@ h1::after {
 .reminder-toast__close:hover { background: rgba(255, 253, 248, 0.18); }
 .reminder-toast__close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .reminder-toast { animation: none; } }
+
+/* Выбор направления памяти при подключении Telegram */
+.tg-dir-choice {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tg-dir-choice legend { font-size: 0.9rem; font-weight: 600; padding: 0 4px; color: var(--ink); }
+.tg-dir-opt { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; cursor: pointer; color: var(--ink); }
+.tg-dir-opt input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+.tg-dir-opt input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn-ghost--danger { color: #B3261E; }
+.btn-ghost--danger:hover { background: rgba(179, 38, 30, 0.08); }

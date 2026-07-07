@@ -1095,10 +1095,17 @@ export function startTelegramBot(store, token, log = console) {
       // этот чат к веб-профилю и переносим ВСЮ веб-память сюда (общая память).
       const param = text.split(/\s+/)[1] || '';
       const tok = param.startsWith('sm-') ? param.slice(3) : null;
-      if (tok && consumeTgLink(store, tok, chatId)) {
-        const moved = store.migrateChat('web', String(chatId));
+      const dir = tok ? consumeTgLink(store, tok, chatId) : null;
+      if (dir) {
         if (!store.getUser(String(chatId))) store.setUser(String(chatId), { name: '', botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
-        return send(chatId, `✅ Подключил веб-профиль! Перенёс ${moved} ${moved === 1 ? 'запись' : 'записей/фактов'} - теперь память общая: что в вебе, то и тут. Напоминания и уведомления буду слать сюда. 🔔`);
+        if (dir === 'web') {
+          const moved = store.migrateChat('web', String(chatId));
+          return send(chatId, `✅ Подключил веб-профиль! Перенёс из веба ${moved} ${moved === 1 ? 'запись' : 'записей/фактов'} - теперь память общая: что в вебе, то и тут. Напоминания буду слать сюда. 🔔`);
+        }
+        // dir === 'tg': веб начинает показывать память ЭТОГО чата (ничего не переношу)
+        const cnt = store.list({ chatId: String(chatId) }).length;
+        const fcnt = store.data.facts.filter((f) => f.chatId === String(chatId)).length;
+        return send(chatId, `✅ Подключил! Память из Telegram (${cnt} ${cnt === 1 ? 'дело' : 'дел'}, ${fcnt} ${fcnt === 1 ? 'факт' : 'фактов'}) теперь видна и в вебе - общая. Напоминания идут и туда, и сюда. 🔔`);
       }
       // повторный /start не сбрасывает друга - он просто здоровается
       if (user && !user.step) return helloAgain(String(chatId), user);

@@ -77,21 +77,23 @@ export function getWebSettings(store) {
 // --- Связка веб-профиля с Telegram («Подключить Telegram-алерты») ---
 // Одноразовый токен: веб генерит, отдаёт deep-link t.me/<bot>?start=sm-<token>,
 // бот при /start sm-<token> подтверждает и привязывает свой chatId.
-export function startTgLink(store) {
+export function startTgLink(store, dir = 'web') {
   const c = cfg(store);
   const token = randomBytes(9).toString('base64url');
-  c.linkToken = { token, exp: Date.now() + 15 * 60000 };
+  c.linkToken = { token, exp: Date.now() + 15 * 60000, dir: dir === 'tg' ? 'tg' : 'web' };
   store.save();
   return token;
 }
+// Возвращает направление переноса ('web'|'tg') при успехе, иначе null.
 export function consumeTgLink(store, token, chatId) {
   const c = cfg(store);
   const lt = c.linkToken;
-  if (!lt || lt.token !== token || Date.now() > lt.exp) return false;
+  if (!lt || lt.token !== token || Date.now() > lt.exp) return null;
   c.linkedChatId = String(chatId);
+  const dir = lt.dir || 'web';
   delete c.linkToken;
   store.save();
-  return true;
+  return dir;
 }
 export function linkedChatId(store) {
   return cfg(store).linkedChatId || null;

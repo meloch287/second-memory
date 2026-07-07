@@ -927,34 +927,77 @@ function saveSettings(patch) {
 /* ---- Подключение Telegram (уведомления + общая память) ---- */
 
 const tgConnect = document.getElementById('tg-connect');
+const tgDirChoice = document.getElementById('tg-dir-choice');
+const tgConnectGo = document.getElementById('tg-connect-go');
+const tgUnlink = document.getElementById('tg-unlink');
 const tgStatus = document.getElementById('tg-status');
 
 function applyTgStatus() {
   if (webSettings.tgLinked) {
-    tgConnect.textContent = 'Переподключить Telegram';
+    tgConnect.hidden = true;
+    tgDirChoice.hidden = true;
+    tgConnect.setAttribute('aria-expanded', 'false');
+    tgUnlink.hidden = false;
     tgStatus.textContent = 'Подключено ✓ — напоминания приходят и в Telegram, память общая.';
   } else {
-    tgConnect.textContent = 'Подключить Telegram';
+    tgConnect.hidden = false;
+    tgUnlink.hidden = true;
+    if (tgStatus.textContent.startsWith('Подключено')) tgStatus.textContent = '';
   }
 }
 
-tgConnect.addEventListener('click', async () => {
-  tgConnect.disabled = true;
+// «Подключить» раскрывает выбор направления памяти
+tgConnect.addEventListener('click', () => {
+  const willOpen = tgDirChoice.hidden;
+  tgDirChoice.hidden = !willOpen;
+  tgConnect.setAttribute('aria-expanded', String(willOpen));
+  if (willOpen) tgDirChoice.querySelector('input[name="tg-dir"]:checked')?.focus();
+});
+
+// «Продолжить» - генерим ссылку с выбранным направлением и открываем бота
+tgConnectGo.addEventListener('click', async () => {
+  const dir = tgDirChoice.querySelector('input[name="tg-dir"]:checked')?.value || 'web';
+  tgConnectGo.disabled = true;
   tgStatus.textContent = 'Готовлю ссылку…';
   try {
-    const res = await fetch('/api/tg-link', { method: 'POST' });
+    const res = await fetch('/api/tg-link', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dir }),
+    });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.url) {
       window.open(data.url, '_blank', 'noopener');
+      tgDirChoice.hidden = true;
+      tgConnect.setAttribute('aria-expanded', 'false');
       tgStatus.textContent = 'Открыл Telegram — нажми «Старт» (Start) у бота, чтобы подключить.';
-      setTimeout(async () => { if (await loadSettings()) applyTgStatus(); }, 7000);
+      setTimeout(async () => { if (await loadSettings()) { applyTgStatus(); refreshStats(); } }, 7000);
     } else {
       tgStatus.textContent = data.error || 'Не удалось создать ссылку. Попробуй ещё раз.';
     }
   } catch {
     tgStatus.textContent = 'Ошибка сети. Попробуй ещё раз.';
   } finally {
-    tgConnect.disabled = false;
+    tgConnectGo.disabled = false;
+  }
+});
+
+// «Отключить Telegram» - разрываем связку (данные у бота остаются)
+tgUnlink.addEventListener('click', async () => {
+  if (!confirm('Отключить Telegram? Веб вернётся к своей отдельной памяти. Данные в Telegram у бота останутся.')) return;
+  tgUnlink.disabled = true;
+  try {
+    const res = await fetch('/api/tg-unlink', { method: 'POST' });
+    if (res.ok) {
+      await loadSettings();
+      applyTgStatus();
+      refreshStats();
+      tgStatus.textContent = 'Telegram отключён. Веб снова на своей памяти.';
+    } else {
+      tgStatus.textContent = 'Не удалось отключить. Попробуй ещё раз.';
+    }
+  } catch {
+    tgStatus.textContent = 'Ошибка сети.';
+  } finally {
+    tgUnlink.disabled = false;
   }
 });
 

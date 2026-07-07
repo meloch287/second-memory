@@ -193,7 +193,17 @@
       <div class="field field--tg">
         <span id="tg-label" class="field-label">Уведомления в Telegram</span>
         <p class="field-hint" id="tg-hint">Подключишь бота — напоминания и вся память будут и здесь, и в Telegram. Работает и там, и там.</p>
-        <button type="button" id="tg-connect" class="btn-ghost" aria-describedby="tg-hint">Подключить Telegram</button>
+        <button type="button" id="tg-connect" class="btn-ghost" aria-describedby="tg-hint"
+                aria-expanded="false" aria-controls="tg-dir-choice">Подключить Telegram</button>
+
+        <fieldset id="tg-dir-choice" class="tg-dir-choice" hidden>
+          <legend>Откуда взять память при подключении?</legend>
+          <label class="tg-dir-opt"><input type="radio" name="tg-dir" value="web" checked> Из веба — перенести в Telegram</label>
+          <label class="tg-dir-opt"><input type="radio" name="tg-dir" value="tg"> Из Telegram — показать память бота в вебе</label>
+          <button type="button" id="tg-connect-go" class="btn-ghost">Продолжить в Telegram →</button>
+        </fieldset>
+
+        <button type="button" id="tg-unlink" class="btn-ghost btn-ghost--danger" hidden>Отключить Telegram</button>
         <p id="tg-status" class="field-status" role="status" aria-live="polite"></p>
       </div>
 
