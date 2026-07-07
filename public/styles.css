@@ -257,6 +257,33 @@ h1::after {
   color: var(--surface-bg);
 }
 
+/* Кнопка «показать расшифровку» (как →A в Telegram) - в конце строки плеера */
+.voice-msg__transcribe-toggle {
+  flex: none;
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 253, 248, 0.18);
+  color: var(--surface-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.voice-msg__transcribe-toggle svg { stroke: currentColor; }
+.voice-msg__transcribe-toggle:hover { background: rgba(255, 253, 248, 0.30); }
+.voice-msg__transcribe-toggle[aria-expanded="true"] {
+  background: var(--surface-bg);
+  color: var(--ink);
+}
+.voice-msg__transcribe-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px #FFFFFF;
+}
+
 .voice-transcript {
   margin: 8px 0 0;
   padding-top: 8px;

@@ -531,6 +531,8 @@ document.addEventListener('keydown', (e) => {
 
 const ICON_PLAY = '<svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+// «показать текст» - три строки, как кнопка расшифровки в Telegram
+const ICON_TRANSCRIBE = '<svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h9"/></svg>';
 
 function resamplePeaks(peaks, buckets) {
   if (!peaks.length) return new Array(buckets).fill(0.15);
@@ -580,6 +582,7 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
   const player = document.createElement('div');
   player.className = 'voice-player';
   player.setAttribute('role', 'group');
+  player.setAttribute('aria-label', `Голосовое сообщение, ${clock}`);
 
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -602,20 +605,43 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
 
   player.append(btn, canvas, dur);
 
-  const tLabel = document.createElement('span');
-  tLabel.className = 'visually-hidden';
-  tLabel.textContent = 'Расшифровка:';
+  // Расшифровка скрыта по умолчанию (как в Telegram - только войс). Кнопка «A»
+  // раскрывает её по запросу. Если расшифровки нет - кнопки и текста нет вовсе.
+  const hasTranscript = !!(transcript && transcript.trim());
+  if (hasTranscript) {
+    const transcriptId = `voice-transcript-vm-${id}`;
 
-  const tText = document.createElement('p');
-  tText.className = 'voice-transcript';
-  tText.id = `voice-transcript-vm-${id}`;
-  tText.textContent =
-    transcript ||
-    (SR
-      ? 'Расшифровка пуста: речь не распознана.'
-      : 'Расшифровка недоступна: браузер не поддерживает распознавание речи');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'voice-msg__transcribe-toggle';
+    toggle.tabIndex = -1; // roving tabindex: как и play, доступна стрелками в логе
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-controls', transcriptId);
+    toggle.setAttribute('aria-label', 'Расшифровка голосового сообщения');
+    toggle.innerHTML = ICON_TRANSCRIBE;
+    player.append(toggle);
 
-  vm.append(player, tLabel, tText);
+    const tLabel = document.createElement('span');
+    tLabel.className = 'visually-hidden';
+    tLabel.textContent = 'Расшифровка:';
+
+    const tText = document.createElement('p');
+    tText.className = 'voice-transcript';
+    tText.id = transcriptId;
+    tText.hidden = true; // hidden = убрано и визуально, и из дерева доступности
+    tText.textContent = transcript.trim();
+
+    toggle.addEventListener('click', () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      tText.hidden = expanded; // было развёрнуто -> скрываем, и наоборот
+    });
+
+    vm.append(player, tLabel, tText);
+  } else {
+    vm.append(player);
+  }
+
   wrap.append(who, vm);
   addToLog(wrap);
 
@@ -666,19 +692,28 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
 
 /* ---- Roving tabindex для плееров в логе ---- */
 
+// 2D-roving: ↑/↓ переходят между голосовыми (всегда на кнопку play), ←/→
+// переключают play↔«показать расшифровку» внутри одного сообщения. Во всём
+// логе ровно один элемент имеет tabindex=0. Home/End - первое/последнее сообщение.
 log.addEventListener('keydown', (e) => {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
-  const players = [...log.querySelectorAll('.voice-msg__play')];
-  if (!players.length) return;
-  const idx = players.indexOf(document.activeElement);
+  if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const rows = [...log.querySelectorAll('.voice-message')]
+    .map((el) => ({ play: el.querySelector('.voice-msg__play'), toggle: el.querySelector('.voice-msg__transcribe-toggle') }))
+    .filter((r) => r.play);
+  if (!rows.length) return;
+  const active = document.activeElement;
+  const ri = rows.findIndex((r) => r.play === active || r.toggle === active);
+  const inToggle = ri >= 0 && rows[ri].toggle === active;
   let target = null;
-  if (e.key === 'ArrowDown') target = idx < 0 ? players[0] : players[Math.min(idx + 1, players.length - 1)];
-  else if (e.key === 'ArrowUp') target = idx < 0 ? players[players.length - 1] : players[Math.max(idx - 1, 0)];
-  else if (e.key === 'Home') target = players[0];
-  else target = players[players.length - 1];
-  if (target && target !== document.activeElement) {
+  if (e.key === 'ArrowDown') target = rows[ri < 0 ? 0 : Math.min(ri + 1, rows.length - 1)].play;
+  else if (e.key === 'ArrowUp') target = rows[ri < 0 ? rows.length - 1 : Math.max(ri - 1, 0)].play;
+  else if (e.key === 'Home') target = rows[0].play;
+  else if (e.key === 'End') target = rows[rows.length - 1].play;
+  else if (e.key === 'ArrowRight') { if (ri >= 0 && !inToggle && rows[ri].toggle) target = rows[ri].toggle; }
+  else if (e.key === 'ArrowLeft') { if (inToggle) target = rows[ri].play; }
+  if (target && target !== active) {
     e.preventDefault();
-    players.forEach((p) => (p.tabIndex = -1));
+    for (const r of rows) { r.play.tabIndex = -1; if (r.toggle) r.toggle.tabIndex = -1; }
     target.tabIndex = 0;
     target.focus();
   }
