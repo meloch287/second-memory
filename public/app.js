@@ -71,14 +71,20 @@ function addToLog(node) {
 // Визуальный индикатор «печатает»: три точки, декоративные (aria-hidden -
 // не читаются скринридером, слова идут только через #chat-status). Точки
 // вставляются в лог и убираются на любом пути завершения.
-function showTyping() {
+function showTyping(voice = false) {
   if (document.getElementById('typing-dots')) return;
-  const dots = document.createElement('div');
-  dots.id = 'typing-dots';
-  dots.className = 'typing-dots';
-  dots.setAttribute('aria-hidden', 'true');
-  dots.innerHTML = '<span></span><span></span><span></span>';
-  addToLog(dots);
+  const el = document.createElement('div');
+  el.id = 'typing-dots';
+  el.setAttribute('aria-hidden', 'true');
+  if (voice) {
+    // «записывает голосовое»: пульсирующая дорожка (как в Telegram при записи)
+    el.className = 'typing-voice';
+    el.innerHTML = '<span class="rec-dot"></span>' + '<span></span>'.repeat(6);
+  } else {
+    el.className = 'typing-dots';
+    el.innerHTML = '<span></span><span></span><span></span>';
+  }
+  addToLog(el);
 }
 function hideTyping() {
   const dots = document.getElementById('typing-dots');
@@ -89,10 +95,11 @@ function hideTyping() {
 async function deliver(text) {
   pending = true;
   let announced = false;
+  const voice = voiceReplyOn();
   const typingTimer = setTimeout(() => {
-    showTyping();
-    if (!announced) { announce('Ассистент печатает…'); announced = true; }
-  }, 700);
+    showTyping(voice);
+    if (!announced) { announce(voice ? 'Ассистент записывает голосовое…' : 'Ассистент печатает…'); announced = true; }
+  }, voice ? 250 : 700);
   const cleanup = () => {
     clearTimeout(typingTimer);
     hideTyping();
@@ -148,6 +155,15 @@ form.addEventListener('submit', (event) => {
   input.value = '';
   input.focus();
   deliver(text);
+});
+
+// Enter в поле - отправить (Shift+Enter не трогаем; IME-композицию не рвём).
+// Явно, чтобы не зависеть от неявной отправки формы в разных браузерах.
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
 });
 
 input.addEventListener('input', () => {

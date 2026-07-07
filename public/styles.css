@@ -168,6 +168,44 @@ h1::after {
   30% { transform: translateY(-5px); opacity: 1; }
 }
 
+/* «Ассистент записывает голосовое»: красная точка + пульсирующая дорожка */
+.typing-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-start;
+  padding: 12px 14px;
+  background: rgba(38, 34, 27, 0.06);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  animation: msg-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.typing-voice .rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #B3261E;
+  margin-right: 6px;
+  animation: rec-blink 1s ease-in-out infinite;
+}
+.typing-voice span:not(.rec-dot) {
+  width: 3px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: tv-bar 0.9s ease-in-out infinite;
+}
+.typing-voice span:nth-child(3) { animation-delay: 0.1s; }
+.typing-voice span:nth-child(4) { animation-delay: 0.2s; }
+.typing-voice span:nth-child(5) { animation-delay: 0.3s; }
+.typing-voice span:nth-child(6) { animation-delay: 0.15s; }
+.typing-voice span:nth-child(7) { animation-delay: 0.25s; }
+@keyframes tv-bar { 0%, 100% { height: 6px; } 50% { height: 18px; } }
+@keyframes rec-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .typing-voice span, .typing-voice .rec-dot { animation: none; }
+}
+
 .message p {
   margin: 0;
   max-width: 88%;

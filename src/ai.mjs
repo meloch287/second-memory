@@ -204,7 +204,10 @@ const STYLE = 'Пиши по-русски. ' + STYLE_FMT;
 
 /* ---------- Веб-ассистент (деловой тон) ---------- */
 
-const SYSTEM_WEB = `Ты «Вторая память» - умный личный ассистент человека, свободный как ChatGPT. Тебе дают выгрузку его базы: долги («должны нам» = ему должны, «мы должны» = он должен), встречи, задачи, заметки и последние сообщения диалога - это твоя память о нём, всегда учитывай её как контекст. Когда вопрос про его дела - отвечай по базе; на общие вопросы, просьбы и разговоры отвечай свободно и по делу, своими знаниями. ${STYLE}`;
+// Имя ассистента веб-панели человек задаёт в настройках (шестерёнка).
+const webName = (store) => (store?.data?.meta?.web?.assistantName || '').trim() || 'Вторая память';
+const systemWeb = (name) =>
+  `Ты «${name}» - умный личный ассистент человека, свободный как ChatGPT. Человек назвал тебя «${name}» - ЭТО ТВОЁ ИМЯ: откликайся на него и представляйся им (на вопрос «кто ты» отвечай, что ты «${name}», а не как-то иначе). Тебе дают выгрузку его базы: долги («должны нам» = ему должны, «мы должны» = он должен), встречи, задачи, заметки и последние сообщения диалога - это твоя память о нём, всегда учитывай её как контекст. Когда вопрос про его дела - отвечай по базе; на общие вопросы, просьбы и разговоры отвечай свободно и по делу, своими знаниями. ${STYLE}`;
 
 function buildContext(store, now, chatId = null, query = '') {
   const open = store.list({ status: 'open', chatId });
@@ -232,7 +235,7 @@ function buildContext(store, now, chatId = null, query = '') {
 
 export async function aiSummary(store, now = new Date(), chatId = null) {
   return ask([
-    { role: 'system', content: SYSTEM_WEB },
+    { role: 'system', content: systemWeb(webName(store)) },
     {
       role: 'user',
       content:
@@ -244,7 +247,7 @@ export async function aiSummary(store, now = new Date(), chatId = null) {
 
 export async function aiAnswer(store, question, now = new Date(), chatId = null) {
   return ask([
-    { role: 'system', content: SYSTEM_WEB },
+    { role: 'system', content: systemWeb(webName(store)) },
     { role: 'user', content: buildContext(store, now, chatId, question) + `\n\nВопрос: ${question}\nЕсли вопрос про него, его дела, долги, встречи - ответь по памяти и данным выше (перечисли, что знаешь). Если общий - ответь свободно и умно, как ChatGPT. Не выдумывай только конкретные записи, которых нет в базе.` },
   ]);
 }
