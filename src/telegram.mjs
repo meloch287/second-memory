@@ -1075,7 +1075,7 @@ export function startTelegramBot(store, token, log = console) {
     }
     let reply;
     try {
-      reply = await withTyping(chatId, () => aiFriendReply(store, key, `${fromName}: ${text}`));
+      reply = await withTyping(chatId, () => aiFriendReply(store, key, text, new Date(), null, fromName));
     } catch (e) {
       log.error('[telegram] group friend', e.message);
     }

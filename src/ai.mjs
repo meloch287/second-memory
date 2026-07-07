@@ -304,6 +304,9 @@ export async function aiChartSpec(store, chatId, request, now = new Date()) {
   const off = userOffset(user);
   const facts = store.factsFor(chatId, request, 30);
   const entries = store.list({ chatId }).slice(-60);
+  // свежая переписка: воркер переваривает raw в факты раз в ~10 минут,
+  // без неё «только что накиданные» данные не попадали в график
+  const fresh = store.data.raw.filter((r) => r.chatId === chatId).slice(-80);
   const ctx = [
     `Сейчас: ${fmtUser(now.toISOString(), off, true)}.`,
     '',
@@ -312,6 +315,9 @@ export async function aiChartSpec(store, chatId, request, now = new Date()) {
     '',
     'ЗАПИСИ (долги/встречи/задачи/траты):',
     ...entries.map((e) => `- [${e.type}] ${e.title || e.counterparty || ''} ${e.amount != null ? e.amount + ' руб' : ''} ${e.category || ''} ${e.due ? 'срок ' + fmtUser(e.due, off, e.hasTime) : ''} ${e.status} (создано ${fmtUser(e.createdAt, off, false)})`),
+    '',
+    'СВЕЖАЯ ПЕРЕПИСКА (последние сообщения, тоже источник данных):',
+    ...fresh.map((r) => `- ${r.text.slice(0, 200)}`),
   ].join('\n');
   const text = await ask(
     [
@@ -429,16 +435,20 @@ function nonRussian(text) {
   return letters >= 4 && cyr / letters < 0.3;
 }
 
-export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null) {
+// author - имя автора в группе: передаётся отдельным полем, а не префиксом
+// «Имя: текст» (модель зеркалила префикс в своих ответах).
+export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null, author = null) {
   const user = store.getUser(chatId);
   const smartFacts = await smartRecall(store, chatId, text);
   const langHint = nonRussian(text)
     ? '\n\n[Reply in the SAME language as the message above, not in Russian.]'
     : '';
+  const who = author ? `от ${author}` : 'от него';
+  const addressee = author ? ` Обратись к ${author} по имени, но НЕ начинай ответ с «${author}:».` : '';
   return ask(
     [
       { role: 'system', content: friendSystem(user) },
-      { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение от него: «${text}»\nОтветь как друг.${langHint}` },
+      { role: 'user', content: friendContext(store, chatId, text, now, smartFacts) + `\n\nНовое сообщение ${who}: «${text}»\nОтветь как друг.${addressee}${langHint}` },
     ],
     { maxTokens: 1200, onDelta, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
