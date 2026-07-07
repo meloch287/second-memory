@@ -1044,6 +1044,20 @@ function startReminderPolling() {
   reminderTimer = setInterval(pollReminders, 45000);
 }
 
+/* ---- Полноэкранный чат (развернуть / свернуть) ---- */
+
+const focusToggle = document.getElementById('focus-toggle');
+const ICON_EXPAND = '<svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+const ICON_COLLAPSE = '<svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v3a2 2 0 0 1-2 2H4M15 4v3a2 2 0 0 0 2 2h3M9 20v-3a2 2 0 0 0-2-2H4M15 20v-3a2 2 0 0 1 2-2h3"/></svg>';
+focusToggle.addEventListener('click', () => {
+  const on = appRoot.classList.toggle('app--focus');
+  focusToggle.setAttribute('aria-pressed', String(on));
+  focusToggle.setAttribute('aria-label', on ? 'Свернуть чат' : 'Развернуть чат на весь экран');
+  focusToggle.innerHTML = on ? ICON_COLLAPSE : ICON_EXPAND;
+  announce(on ? 'Чат развёрнут на весь экран' : 'Обычный вид');
+  input.focus({ preventScroll: true });
+});
+
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 function focusableIn(root) {
   return [...root.querySelectorAll(FOCUSABLE)].filter((el) => !el.hidden && el.offsetParent !== null);

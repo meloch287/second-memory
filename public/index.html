@@ -50,12 +50,20 @@
           </svg>
           <h1>Вторая память</h1>
         </div>
-        <button type="button" id="settings-trigger" class="icon-btn"
-                aria-haspopup="dialog" aria-label="Настройки">
-          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.4 4a6.5 6.5 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a6.6 6.6 0 0 0-2.2-1.3l-.4-2.6H9.7l-.4 2.6a6.6 6.6 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a6.6 6.6 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a6.6 6.6 0 0 0 2.2 1.3l.4 2.6h4.6l.4-2.6a6.6 6.6 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.06-.43.1-.86.1-1.3z"/>
-          </svg>
-        </button>
+        <div class="header-actions">
+          <button type="button" id="focus-toggle" class="icon-btn" aria-pressed="false"
+                  aria-label="Развернуть чат на весь экран">
+            <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
+            </svg>
+          </button>
+          <button type="button" id="settings-trigger" class="icon-btn"
+                  aria-haspopup="dialog" aria-label="Настройки">
+            <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.4 4a6.5 6.5 0 0 0-.1-1.3l2-1.6-2-3.4-2.4 1a6.6 6.6 0 0 0-2.2-1.3l-.4-2.6H9.7l-.4 2.6a6.6 6.6 0 0 0-2.2 1.3l-2.4-1-2 3.4 2 1.6a6.6 6.6 0 0 0 0 2.6l-2 1.6 2 3.4 2.4-1a6.6 6.6 0 0 0 2.2 1.3l.4 2.6h4.6l.4-2.6a6.6 6.6 0 0 0 2.2-1.3l2.4 1 2-3.4-2-1.6c.06-.43.1-.86.1-1.3z"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <p class="tagline">Пишите или говорите. Я запишу долги, встречи и задачи. Спросите. Отвечу сразу.</p>
     </header>

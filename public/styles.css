@@ -247,6 +247,8 @@ h1::after {
   white-space: pre-line;
   overflow-wrap: anywhere;
   max-width: none;
+  border-left: none; /* линию рисует контейнер .summary-body - иначе было две */
+  padding: 0;
 }
 .summary-body p + p { margin-top: 10px; }
 
@@ -918,3 +920,9 @@ h1::after {
 .tg-dir-opt input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn-ghost--danger { color: #B3261E; }
 .btn-ghost--danger:hover { background: rgba(179, 38, 30, 0.08); }
+
+/* Кнопки в шапке рядом + полноэкранный («фокус») чат */
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.app--focus { grid-template-columns: 1fr; }
+.app--focus > .panel { display: none; }
+.app--focus .tagline { display: none; }
