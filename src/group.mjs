@@ -10,7 +10,7 @@ import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
 
 export function createGroupHandler(deps) {
-  const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact } = deps;
+  const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver } = deps;
 
   let botUsername = null;
   let botId = null;
@@ -362,6 +362,28 @@ export function createGroupHandler(deps) {
       return send(chatId, `Принято, теперь я тут ${esc(newName)} 😎`);
     }
 
+    // Создание тем (топиков) форума: «создай топик X», «добавь топик: X, Y, Z».
+    // Реально дёргаем createForumTopic (нужен форум + бот-админ с правами).
+    const topicM = text.match(/^(?:созда(?:й|ть)|добавь|заведи|сделай)\s+топик[иов]*\b[:\s-]*(.+)$/i);
+    if (topicM) {
+      if (!msg.chat?.is_forum) {
+        return send(chatId, 'В этой группе темы (топики) выключены. Включи их в настройках группы («Темы»), и я создам.');
+      }
+      if (!(await callerIsAdmin(chatId, msg.from.id))) {
+        return send(chatId, 'Создавать темы может админ группы 🙂');
+      }
+      const names = topicM[1].split(/\s*(?:,|;|\bи\b)\s*/i).map((s) => s.trim().replace(/^["«»]|["«»]$/g, '')).filter(Boolean).slice(0, 8);
+      if (!names.length) return send(chatId, 'Как назвать темы? Напиши «создай топик Флудилка, Задачи».');
+      const made = [];
+      for (const name of names) {
+        const r = await api('createForumTopic', { chat_id: chatId, name: name.slice(0, 128) });
+        if (r.ok) made.push(name);
+        else log.error('[telegram] createForumTopic', r.description || '');
+      }
+      if (!made.length) return send(chatId, 'Не смог создать темы. Проверь, что я админ с правом «Управление темами».');
+      return send(chatId, `Готово, создал ${made.length === 1 ? 'тему' : 'темы'}: ${made.map((n) => `«${esc(n)}»`).join(', ')} 📂`);
+    }
+
     // 1) команды управления группой
     const gc = parseGroupCmd(text.toLowerCase().replace(/ё/g, 'е').trim());
     if (gc) return runGroupCmd(chatId, msg, gc);
@@ -394,7 +416,8 @@ export function createGroupHandler(deps) {
     }
     store.pushHistory('user', `${fromName}: ${text}`, key);
     store.pushHistory('assistant', reply, key);
-    return send(chatId, esc(reply));
+    // голосом, если у группы включён режим (иначе текст) - как в личке
+    return deliver(chatId, reply, store.getUser(key));
   }
 
   return { groupFlow, isGroupChat, callerIsAdmin };

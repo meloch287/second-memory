@@ -54,3 +54,28 @@ test('stickerMood: редкий и по эмоции', () => {
   assert.equal(stickerMood('обычный текст', always), null);
   assert.equal(stickerMood('ахаха', () => 0.9), null, '80% случаев - без стикера');
 });
+
+/* Расширенный парсинг времени (баг «не напомнил в 4») */
+test('время: форматы 16 00 / 16.00 / к 4 / словом', async () => {
+  const { captureEntry } = await import('../src/brain.mjs');
+  const { Store } = await import('../src/store.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const s = new Store(join(mkdtempSync(join(tmpdir(), 'sm-time-')), 'm.json'));
+  const now = new Date('2026-07-07T09:00:00Z');
+  const cases = [
+    ['напомни в 16 00 позвонить', 13],
+    ['напомни в 16.00 позвонить', 13],
+    ['напомни позвонить к 4', 1],
+    ['напомни в четыре позвонить', 1],
+    ['напомни к пяти позвонить', 2],
+    ['напомни в полдень обед', 9],
+    ['напомни в 16:00 зал', 13],
+  ];
+  for (const [t, hourZ] of cases) {
+    const e = captureEntry(s, t, now, '1', 180);
+    assert.ok(e && e.hasTime, `${t}: время должно извлечься`);
+    assert.equal(new Date(e.due).getUTCHours(), hourZ, `${t}: час UTC`);
+  }
+});

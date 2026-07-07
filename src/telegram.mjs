@@ -948,7 +948,7 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Групповой режим: вынесен в src/group.mjs ---- */
   const { groupFlow, isGroupChat, callerIsAdmin } = createGroupHandler({
-    api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact,
+    api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
   });
 
   async function onMessage(msg) {

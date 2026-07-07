@@ -16,6 +16,10 @@
 
 * { box-sizing: border-box; }
 
+/* hidden должен побеждать любые display из классов (.app = grid перебивал его,
+   из-за чего экран входа и приложение показывались одновременно) */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -721,11 +725,14 @@ h1::after {
   }
   .send-text { display: none; }
   .send-icon { display: block; }
-  .recording-panel .btn-send {
-    width: auto;
+  .recording-panel .btn-send,
+  .login-submit {
+    width: 100%;
+    min-width: 0;
     padding: 0 16px;
     border-radius: 10px;
   }
+  .recording-panel .btn-send { width: auto; }
   .menu-popover {
     position: fixed;
     left: 12px;
@@ -734,6 +741,20 @@ h1::after {
     min-width: 0;
   }
   .panel { padding: 16px; }
+
+  /* Настройки на мобиле - лист снизу на всю ширину */
+  .settings-modal {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    margin-top: auto;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    max-height: 92vh;
+  }
+  .settings-modal__panel { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .login-card { padding: 28px 20px 24px; }
+  .app-header__top .brand h1 { font-size: 1.3rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
