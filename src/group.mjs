@@ -3,7 +3,7 @@
 // @тегу или reply, команды управления группой от админов, теги участников.
 // Фабрика: все внешние зависимости приходят из telegram.mjs.
 
-import { parseGroupCmd, findMember } from './parser.mjs';
+import { parseGroupCmd, parseTopicCmd, findMember } from './parser.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { captureEntry, handleMessage } from './brain.mjs';
 import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
@@ -450,30 +450,58 @@ export function createGroupHandler(deps) {
       return send(chatId, `Принято, теперь я тут ${esc(newName)} 😎`);
     }
 
-    // Создание тем (топиков) форума: «создай топик X», «добавь топик: X, Y, Z».
-    // Реально дёргаем createForumTopic (нужен форум + бот-админ с правами).
-    const topicM = text.match(/^(?:созда(?:й|ть)|добавь|заведи|сделай)\s+топик[иов]*(?=[\s:,-]|$)[:\s-]*(.+)$/i);
-    if (topicM) {
+    // Темы (топики) форума: создать / переименовать / закрыть / открыть / удалить.
+    // create - создаёт новые; остальное - над ТЕКУЩЕЙ темой (msg.message_thread_id).
+    const tc = parseTopicCmd(text.replace(/ё/g, 'е').replace(/Ё/g, 'Е').trim());
+    if (tc) {
       if (!msg.chat?.is_forum) {
-        return send(chatId, 'В этой группе темы (топики) выключены. Включи их в настройках группы («Темы»), и я создам.');
+        return send(chatId, 'В этой группе темы (топики) выключены. Включи их в настройках группы («Темы»), и я всё сделаю.');
       }
       if (!(await callerIsAdmin(chatId, msg.from.id))) {
-        return send(chatId, 'Создавать темы может админ группы 🙂');
+        return send(chatId, 'Управлять темами может админ группы 🙂');
       }
-      const names = topicM[1].split(/\s*(?:,|;|(?<=\s|^)и(?=\s|$))\s*/i).map((s) => s.trim().replace(/^["«»]|["«»]$/g, '')).filter(Boolean).slice(0, 8);
-      if (!names.length) return send(chatId, 'Как назвать темы? Напиши «создай топик Флудилка, Задачи».');
-      const made = [];
-      for (const name of names) {
-        const r = await api('createForumTopic', { chat_id: chatId, name: name.slice(0, 128) });
-        if (r.ok) made.push(name);
-        else log.error('[telegram] createForumTopic', r.description || '');
+      const thread = msg.message_thread_id;
+      const failTopic = (r, what) => {
+        log.error('[telegram] topic', tc.op, r.description || '');
+        return send(chatId, `Не смог ${what}: ${esc(r.description || 'нет прав?')}. Нужно право «Управление темами».`);
+      };
+      if (tc.op === 'create') {
+        const names = tc.arg.split(/\s*(?:,|;|(?<=\s|^)и(?=\s|$))\s*/i).map((s) => s.trim().replace(/^["«»]|["«»]$/g, '')).filter(Boolean).slice(0, 8);
+        if (!names.length) return send(chatId, 'Как назвать темы? Напиши «создай топик Флудилка, Задачи».');
+        const made = [];
+        for (const name of names) {
+          const r = await api('createForumTopic', { chat_id: chatId, name: name.slice(0, 128) });
+          if (r.ok) made.push(name);
+          else log.error('[telegram] createForumTopic', r.description || '');
+        }
+        if (!made.length) return send(chatId, 'Не смог создать темы. Проверь, что я админ с правом «Управление темами».');
+        return send(chatId, `Готово, создал ${made.length === 1 ? 'тему' : 'темы'}: ${made.map((n) => `«${esc(n)}»`).join(', ')} 📂`);
       }
-      if (!made.length) return send(chatId, 'Не смог создать темы. Проверь, что я админ с правом «Управление темами».');
-      return send(chatId, `Готово, создал ${made.length === 1 ? 'тему' : 'темы'}: ${made.map((n) => `«${esc(n)}»`).join(', ')} 📂`);
+      if (!thread) {
+        return send(chatId, 'Напиши это ВНУТРИ нужной темы - тогда я её переименую/закрою/удалю. (Тему «General» так менять нельзя.)');
+      }
+      if (tc.op === 'rename') {
+        if (!tc.arg) return send(chatId, 'В какое имя переименовать тему? Напиши «переименуй топик в Название».');
+        const r = await api('editForumTopic', { chat_id: chatId, message_thread_id: thread, name: tc.arg });
+        return r.ok ? send(chatId, `Переименовал тему в «${esc(tc.arg)}» ✏️`) : failTopic(r, 'переименовать тему');
+      }
+      if (tc.op === 'close') {
+        const r = await api('closeForumTopic', { chat_id: chatId, message_thread_id: thread });
+        return r.ok ? send(chatId, 'Закрыл тему 🔒 - писать в неё больше нельзя.') : failTopic(r, 'закрыть тему');
+      }
+      if (tc.op === 'reopen') {
+        const r = await api('reopenForumTopic', { chat_id: chatId, message_thread_id: thread });
+        return r.ok ? send(chatId, 'Открыл тему заново 🔓') : failTopic(r, 'открыть тему');
+      }
+      if (tc.op === 'delete') {
+        const r = await api('deleteForumTopic', { chat_id: chatId, message_thread_id: thread });
+        return r.ok ? undefined : failTopic(r, 'удалить тему'); // Telegram сам покажет удаление
+      }
     }
 
-    // 1) команды управления группой
-    const gc = parseGroupCmd(text.toLowerCase().replace(/ё/g, 'е').trim());
+    // 1) команды управления группой (регистр сохраняем - иначе название группы
+    // ставилось строчным; парсер регистронезависим по флагу i)
+    const gc = parseGroupCmd(text.replace(/ё/g, 'е').replace(/Ё/g, 'Е').trim());
     if (gc) return runGroupCmd(chatId, msg, gc);
 
     // 2) общие интенты (траты, баланс, поиск, календарь, опрос...) на памяти группы
