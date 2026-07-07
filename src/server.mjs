@@ -168,7 +168,14 @@ const server = createServer(async (req, res) => {
 
     try {
       const data = await readFile(file);
-      res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' });
+      const ext = extname(file);
+      // html/js/css НЕ кэшируем - иначе после деплоя браузер показывает старый
+      // интерфейс из кэша (заголовков кэша раньше не было = эвристический кэш).
+      const noStore = ext === '.html' || ext === '.js' || ext === '.css' || ext === '.json';
+      res.writeHead(200, {
+        'content-type': MIME[ext] || 'application/octet-stream',
+        'cache-control': noStore ? 'no-store, must-revalidate' : 'public, max-age=86400',
+      });
       res.end(data);
     } catch {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
