@@ -345,6 +345,25 @@ export async function aiChartSpec(store, chatId, request, now = new Date()) {
   }
 }
 
+// Передать сообщение участнику группы своими словами: не дословная копия
+// («он лох»), а прямое обращение к адресату от лица бота-друга.
+export async function aiRelay(store, chatId, targetName, fromName, message) {
+  const user = store.getUser(chatId);
+  return ask(
+    [
+      { role: 'system', content: friendSystem(user) },
+      {
+        role: 'user',
+        content:
+          `${fromName} просит тебя передать сообщение для ${targetName}: «${message}».\n` +
+          `Сформулируй ОДНУ короткую реплику, обращённую напрямую к ${targetName} (на «ты», без «он/она»), передающую суть. ` +
+          `Можно с юмором, в твоём стиле. Упомяни, что это от ${fromName}. Не добавляй ничего кроме самой реплики.`,
+      },
+    ],
+    { maxTokens: 200, timeoutMs: 20000, retryDelays: [0] }
+  );
+}
+
 // Чек/счёт с фото -> структурированная трата/долг (№8). null, если не чек.
 export async function aiExtractReceipt(base64, mime = 'image/jpeg') {
   const text = await chatCompletion(

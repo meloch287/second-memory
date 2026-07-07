@@ -20,7 +20,7 @@ import { aiSearch } from './ai.mjs';
 import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
 import { renderChart, chartAvailable } from './chart.mjs';
-import { aiChartSpec } from './ai.mjs';
+import { aiChartSpec, aiRelay } from './ai.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
 
@@ -1055,11 +1055,22 @@ export function startTelegramBot(store, token, log = console) {
         relay = say[2].trim();
       }
       who = who.replace(/[!?.\s]+$/, '');
+      // передача: ИИ формулирует реплику адресату сам («он лох» -> «ты лох» в
+      // своём стиле), дословный текст - только запасной вариант
+      const relayText = async (targetName) => {
+        if (!relay) return null;
+        if (aiEnabled()) {
+          const phrased = await withTyping(chatId, () => aiRelay(store, key, targetName, fromName, relay)).catch(() => null);
+          if (phrased) return phrased.trim();
+        }
+        return `${fromName} просил передать: «${relay}»`;
+      };
       if (/^(?:его|её|ее)$/i.test(who)) {
         const t = msg.reply_to_message?.from;
         if (t && !t.is_bot) {
           const m2 = t.username ? `@${t.username}` : `<a href="tg://user?id=${t.id}">${esc(t.first_name || 'Эй')}</a>`;
-          return send(chatId, relay ? `${m2}, ${esc(fromName)} просил передать: «${esc(relay)}» 📣` : `${m2}, тебя ${esc(fromName)} зовёт 🙂`);
+          const phrase = await relayText(t.first_name || 'друг');
+          return send(chatId, phrase ? `${m2}, ${esc(phrase)}` : `${m2}, тебя ${esc(fromName)} зовёт 🙂`);
         }
         return send(chatId, 'Ответь командой на сообщение самого человека - пойму, кого звать.');
       }
@@ -1068,7 +1079,8 @@ export function startTelegramBot(store, token, log = console) {
         return send(chatId, `Не видел, чтобы ${esc(who)} тут писал. Пусть черкнёт разок, или скажи «${esc(who)} - это @ник», и я запомню.`);
       }
       const mention = hit.username ? `@${hit.username}` : `<a href="tg://user?id=${hit.id}">${esc(hit.name)}</a>`;
-      if (relay) return send(chatId, `${mention}, ${esc(fromName)} просил передать: «${esc(relay)}» 📣`);
+      const phrase = await relayText(hit.name || 'друг');
+      if (phrase) return send(chatId, `${mention}, ${esc(phrase)}`);
       return send(chatId, `${mention}, тебя ${esc(fromName)} зовёт 🙂`);
     }
 
