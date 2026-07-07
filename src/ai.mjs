@@ -345,6 +345,25 @@ export async function aiChartSpec(store, chatId, request, now = new Date()) {
   }
 }
 
+// Поздравление с днём рождения (№4): короткое, тёплое, с учётом памяти.
+export async function aiBirthday(store, chatId, who) {
+  const user = store.getUser(chatId);
+  const facts = store.factsFor(chatId, who, 10);
+  return ask(
+    [
+      { role: 'system', content: friendSystem(user) },
+      {
+        role: 'user',
+        content:
+          `Сегодня день рождения у ${who}. Вот что ты о нём знаешь:\n` +
+          (facts.length ? facts.map((f) => `- ${f.text}`).join('\n') : '- почти ничего -') +
+          `\n\nНапиши ОДНО короткое тёплое поздравление (1-2 предложения), обращаясь к ${who} на «ты». Начни сразу с поздравления, без имени в начале (оно уже будет подставлено). Без пафоса и открыточных клише.`,
+      },
+    ],
+    { maxTokens: 200, timeoutMs: 20000, retryDelays: [0] }
+  );
+}
+
 // Сплит расходов по памяти группы (№2): кто сколько скинул/должен.
 // Арифметику модель обязана посчитать точно и показать.
 export async function aiSplit(store, chatId, request, now = new Date()) {

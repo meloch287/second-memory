@@ -26,6 +26,8 @@ import { createGroupHandler } from './group.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
+import { currencyReply } from './currency.mjs';
+import { pickReaction, stickerMood } from './reactions.mjs';
 
 
 // ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
@@ -150,6 +152,49 @@ export function startTelegramBot(store, token, log = console) {
     if (caption) form.append('caption', String(caption).slice(0, 1000));
     const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
     return res.json();
+  }
+
+  /* ---- Реакции и выученные стикеры (№8) ---- */
+
+  // Ставим эмодзи-реакцию на сообщение по настроению (fire-and-forget).
+  function maybeReact(chatId, messageId, text) {
+    const emoji = pickReaction(text);
+    if (!emoji || !messageId) return;
+    api('setMessageReaction', {
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: 'emoji', emoji }],
+    }).catch(() => {});
+  }
+
+  // Библиотека стикеров, выученных у собеседников: emoji -> [file_id]
+  function learnSticker(s) {
+    if (!s?.file_id || !s.emoji) return;
+    const lib = { ...(store.data.meta.stickerLib || {}) };
+    const arr = lib[s.emoji] || [];
+    if (arr.includes(s.file_id)) return;
+    lib[s.emoji] = [...arr, s.file_id].slice(-10);
+    store.data.meta.stickerLib = lib;
+    store.save();
+  }
+
+  // Иногда докидываем выученный стикер под настроение (после текста ответа).
+  async function maybeSticker(chatId, userText) {
+    const moods = stickerMood(userText);
+    if (!moods) return;
+    const lib = store.data.meta.stickerLib || {};
+    for (const emoji of moods) {
+      const arr = lib[emoji];
+      if (arr?.length) {
+        const form = new FormData();
+        form.append('chat_id', String(chatId));
+        const th = activeThread.get(String(chatId));
+        if (th) form.append('message_thread_id', String(th));
+        form.append('sticker', arr[Math.floor(Math.random() * arr.length)]);
+        await fetch(`https://api.telegram.org/bot${token}/sendSticker`, { method: 'POST', body: form }).catch(() => {});
+        return;
+      }
+    }
   }
 
   /* ---- «Сон» при недоступном ИИ ---- */
@@ -308,7 +353,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>⏰ Напоминания: «напомни в 15:00 позвонить маме» - и я звякну ровно в это время. «Каждый понедельник созвон в 10:00» - буду напоминать регулярно. «Перенеси встречу на 16:00» или «отмени звонок» - подвину или уберу.</blockquote>',
       '',
-      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (долги), «траты» (расходы за месяц), «найди про Петрова». «Скинь в календарь» - файл для календаря телефона. «Экспорт» - вся память (CSV, дневник, JSON).</blockquote>',
+      '<blockquote>💬 Спрашивай что угодно: «что у меня завтра?», «баланс» (долги), «траты», «курс доллара», «у Димы др 15 августа» - поздравлю сам, «найди про Петрова». «Скинь в календарь» - файл для календаря телефона. «Экспорт» - вся память (CSV, дневник, JSON).</blockquote>',
       '',
       '<blockquote>💸 Трать словами: «потратил 500 на кофе» - учту. «Бюджет на кофе 5000» - слежу за лимитом («бюджеты» - прогресс). Кинь фото чека - распознаю сумму сам. Поправить память: «забудь про Петрова» или «это не так».</blockquote>',
       '',
@@ -472,6 +517,39 @@ export function startTelegramBot(store, token, log = console) {
 
     if (p.kind === 'balance') {
       await send(chatId, esc(balanceReport(store, String(chatId), userOffset(user))));
+      return true;
+    }
+
+    // Дни рождения (№4): сохранить и показать; поздравляет scheduler
+    if (p.kind === 'birthday') {
+      const who = p.person || user?.name || 'Ты';
+      const birthdays = { ...(store.getUser(String(chatId))?.birthdays || {}) };
+      birthdays[who] = `${p.day}.${p.month}`;
+      store.setUser(String(chatId), { birthdays });
+      store.addFacts([{ chatId: String(chatId), text: `День рождения ${who} - ${p.day}.${String(p.month).padStart(2, '0')}`, people: [who] }]);
+      await send(chatId, `Записал: др ${esc(who)} - ${p.day}.${String(p.month).padStart(2, '0')} 🎂 Поздравлю и напомню.`);
+      return true;
+    }
+    if (p.kind === 'birthdays') {
+      const birthdays = store.getUser(String(chatId))?.birthdays || {};
+      const list = Object.entries(birthdays);
+      if (!list.length) { await send(chatId, 'Пока ни одного др не знаю. Скажи «у Димы др 15 августа» - запомню.'); return true; }
+      const lines = list
+        .map(([who, dm]) => ({ who, dm, key: dm.split('.').reverse().map((x) => x.padStart(2, '0')).join('') }))
+        .sort((a, b) => a.key.localeCompare(b.key))
+        .map(({ who, dm }) => `🎂 ${who}: ${dm.split('.').map((x) => x.padStart(2, '0')).join('.')}`);
+      await send(chatId, esc('Дни рождения:\n' + lines.join('\n')));
+      return true;
+    }
+
+    // Курсы валют (№12)
+    if (p.kind === 'currency') {
+      try {
+        await send(chatId, esc(await currencyReply(p.request)));
+      } catch (e) {
+        log.error('[telegram] currency', e.message);
+        await send(chatId, 'Курс сейчас не достался. Попробуй через минуту?');
+      }
       return true;
     }
 
@@ -730,10 +808,31 @@ export function startTelegramBot(store, token, log = console) {
     store.pushHistory('user', text, String(chatId));
     store.pushHistory('assistant', reply, String(chatId));
     await deliver(chatId, reply, store.getUser(String(chatId)));
+    await maybeSticker(chatId, text); // иногда - выученный стикер под настроение
     await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
   }
 
   /* ---- Роутинг сообщений ---- */
+
+  // Видео/кружок -> звуковая дорожка -> расшифровка (ffmpeg).
+  async function videoTranscript(fileId) {
+    const b64 = await downloadBase64(fileId);
+    const stamp = Date.now();
+    const inFile = join(tmpdir(), `vid-${stamp}.mp4`);
+    const outFile = join(tmpdir(), `vid-${stamp}.ogg`);
+    try {
+      writeFileSync(inFile, Buffer.from(b64, 'base64'));
+      const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-vn', '-acodec', 'libopus', '-b:a', '32k', outFile], {
+        stdio: 'ignore',
+        timeout: 60000,
+      });
+      if (r.status !== 0) throw new Error('ffmpeg failed');
+      return aiTranscribe(readFileSync(outFile).toString('base64'), 'ogg');
+    } finally {
+      rmSync(inFile, { force: true });
+      rmSync(outFile, { force: true });
+    }
+  }
 
   // Длинное аудио режем ffmpeg на куски по 150 сек и расшифровываем по частям.
   async function transcribeLong(b64, format) {
@@ -849,7 +948,7 @@ export function startTelegramBot(store, token, log = console) {
 
   /* ---- Групповой режим: вынесен в src/group.mjs ---- */
   const { groupFlow, isGroupChat, callerIsAdmin } = createGroupHandler({
-    api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText,
+    api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact,
   });
 
   async function onMessage(msg) {
@@ -896,24 +995,7 @@ export function startTelegramBot(store, token, log = console) {
       if (!audioEnabled()) return send(chatId, 'Кружки пока не разбираю: нет ключа для расшифровки.');
       if (!hasFfmpeg) return send(chatId, 'Кружок получил, но без ffmpeg на сервере не разберу его звук. Скажи голосовым или текстом?');
       if ((msg.video_note.duration || 0) > 180) return send(chatId, 'Ого, длинный кружок. Давай покороче?');
-      const transcript = await withTyping(chatId, async () => {
-        const b64 = await downloadBase64(msg.video_note.file_id);
-        const stamp = Date.now();
-        const inFile = join(tmpdir(), `vn-${stamp}.mp4`);
-        const outFile = join(tmpdir(), `vn-${stamp}.ogg`);
-        try {
-          writeFileSync(inFile, Buffer.from(b64, 'base64'));
-          const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-vn', '-acodec', 'libopus', '-b:a', '32k', outFile], {
-            stdio: 'ignore',
-            timeout: 30000,
-          });
-          if (r.status !== 0) throw new Error('ffmpeg failed');
-          return aiTranscribe(readFileSync(outFile).toString('base64'), 'ogg');
-        } finally {
-          rmSync(inFile, { force: true });
-          rmSync(outFile, { force: true });
-        }
-      }).catch((e) => {
+      const transcript = await withTyping(chatId, () => videoTranscript(msg.video_note.file_id)).catch((e) => {
         log.error('[telegram] video_note', e.message);
         return null;
       });
@@ -921,6 +1003,21 @@ export function startTelegramBot(store, token, log = console) {
       if (user?.step) return onboardingStep(chatId, user, transcript);
       if (await handleIntent(String(chatId), user, transcript)) return; // команды из кружка тоже работают
       return friendFlow(String(chatId), transcript);
+    }
+
+    // Обычное видео (№14): вытаскиваем звук, расшифровываем, запоминаем
+    if (msg.video) {
+      if (!audioEnabled() || !hasFfmpeg) return send(chatId, 'Видео получил, но разобрать звук пока не могу.');
+      if ((msg.video.file_size || 0) > 15 * 1024 * 1024) return send(chatId, 'Видео тяжелее 15 МБ - не потяну. Можно покороче/пожатое?');
+      if ((msg.video.duration || 0) > 300) return send(chatId, 'Видео дольше 5 минут не осилю. Порежь?');
+      const transcript = await withTyping(chatId, () => videoTranscript(msg.video.file_id)).catch((e) => {
+        log.error('[telegram] video', e.message);
+        return null;
+      });
+      if (!transcript) return send(chatId, 'Видео посмотрел, но речи не разобрал. Расскажешь словами?');
+      const text = `[Прислал видео${msg.caption ? `, подпись: ${msg.caption}` : ''}] Что говорится: ${transcript}`;
+      if (await handleIntent(String(chatId), user, transcript)) return;
+      return friendFlow(String(chatId), text);
     }
 
     if (msg.document) {
@@ -960,6 +1057,7 @@ export function startTelegramBot(store, token, log = console) {
 
     if (msg.sticker) {
       const s = msg.sticker;
+      learnSticker(s); // учим стикеры собеседников, потом отвечаем ими сами
       if (!s.is_animated && !s.is_video) {
         return imageFlow(chatId, s.file_id, '[Прислал стикер]', s.emoji || '', 'image/webp');
       }
@@ -968,6 +1066,8 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (typeof msg.text !== 'string') return;
+    // живая реакция-эмодзи по настроению текста (не на команды)
+    if (!msg.text.startsWith('/')) maybeReact(chatId, msg.message_id, msg.text);
     let text = msg.text.trim();
     if (!text) return;
 
@@ -1162,6 +1262,11 @@ export function startTelegramBot(store, token, log = console) {
     },
     sendText(chatId, text) {
       return send(chatId, esc(text));
+    },
+    // Для сообщений с готовой HTML-разметкой (теги-упоминания): вызывающий
+    // сам отвечает за экранирование пользовательского текста внутри.
+    sendHtml(chatId, html) {
+      return send(chatId, html);
     },
     sendButtons(chatId, text, inline_keyboard) {
       return send(chatId, esc(text), { reply_markup: { inline_keyboard } });

@@ -24,7 +24,7 @@ test('telegram.mjs: критичные хелперы на месте', () => {
     'audioFlow', 'imageFlow', 'onMessage', 'onCallback', 'sendVoice', 'startOnboarding',
     'onboardingStep', 'helloAgain', 'askReset', 'helpText', 'sendSummary', 'typingLoop',
     'withTyping', 'downloadBase64', 'enqueue', 'kindOf', 'locationFlow', 'askLocation', 'deliver',
-    'sendPhoto', 'readDoc', 'threadExtra',
+    'sendPhoto', 'readDoc', 'threadExtra', 'maybeReact', 'learnSticker', 'maybeSticker', 'videoTranscript',
   ];
   const missing = definesAll('telegram.mjs', need);
   assert.deepEqual(missing, [], `не определены: ${missing.join(', ')}`);
@@ -41,7 +41,7 @@ test('ai.mjs: экспортируемые ИИ-функции на месте',
     'aiFriendReply', 'aiSearch', 'aiDiarySummary', 'aiFollowup', 'aiMorningPing',
     'aiExtractFacts', 'aiEmbed', 'smartRecall', 'aiConsolidate', 'aiTranscribe',
     'aiTts', 'aiDescribeImage', 'aiSummarizeDoc', 'aiSummarizeText', 'chatCompletion',
-    'aiCheckin', 'aiExtractReceipt',
+    'aiCheckin', 'aiExtractReceipt', 'aiSplit', 'aiRelay', 'aiBirthday', 'aiChartSpec',
   ];
   const missing = definesAll('ai.mjs', need);
   assert.deepEqual(missing, [], `не определены: ${missing.join(', ')}`);

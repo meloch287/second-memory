@@ -34,7 +34,7 @@ const MONTH_BY_STEM = {
   июн: 5, июл: 6, авг: 7, сен: 8, окт: 9, ноя: 10, дек: 11,
 };
 
-function monthIndex(word) {
+export function monthIndex(word) {
   const key = word.slice(0, 3);
   return key in MONTH_BY_STEM ? MONTH_BY_STEM[key] : -1;
 }

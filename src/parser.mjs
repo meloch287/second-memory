@@ -1,7 +1,7 @@
 // Разбор входящей фразы: запись (долг / встреча / задача / заметка),
 // запрос («покажи…», «сколько…»), команда («готово 3», «удали 5») или помощь.
 
-import { extractDate, extractAmount, normText } from './dates.mjs';
+import { extractDate, extractAmount, normText, monthIndex } from './dates.mjs';
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -108,6 +108,33 @@ export function parseMessage(text, now = new Date()) {
   // Поиск по памяти: «что я говорил про Петрова», «найди про отпуск», «вспомни…»
   const search = parseSearch(raw, t);
   if (search) return search;
+
+  // Дни рождения: «у Димы др 15 августа», «мой день рождения 1 января»
+  let bd;
+  if ((bd = t.match(/^(?:у\s+([а-яa-z]+)\s+|мо[йё]\s+)?(?:др|день рождения|деньрож|днюха)(?:\s+у\s+([а-яa-z]+))?\s+(\d{1,2})\s+([а-я]+)[!.]*$/))) {
+    const day = +bd[3];
+    const mon = monthIndex(bd[4]);
+    if (day >= 1 && day <= 31 && mon >= 0) {
+      const rawWho = bd[1] || bd[2];
+      // регистр имени из исходного текста
+      let person = null;
+      if (rawWho) {
+        const pm = raw.match(new RegExp(`у\\s+([А-Яа-яЁёA-Za-z]+)`, 'i'));
+        person = (pm ? pm[1] : rawWho).trim();
+        person = person[0].toUpperCase() + person.slice(1);
+      }
+      return { kind: 'birthday', person, day, month: mon + 1 };
+    }
+  }
+  if (/^(?:когда\s+)?(?:др|дни рождения|днюхи)(?:\s+у\s+(.+))?[!?.]*$/.test(t) && /дн[июя]|др/.test(t) && t.length < 40) {
+    const wm = t.match(/у\s+([а-яa-z]+)/);
+    return { kind: 'birthdays', person: wm ? wm[1] : null };
+  }
+
+  // Курсы валют: «курс доллара», «300$ в рублях», «100 евро в руб»
+  if (/^курс[ыа]?\s+/.test(t) || /(?:\d|\$|€)\s*(?:\$|€|доллар|евро|юан|тенге|фунт|франк|лир)[а-я]*\s+в\s+руб/.test(t)) {
+    return { kind: 'currency', request: raw };
+  }
 
   // Опрос (№4): «устрой опрос: пицца или суши», «опрос: вопрос? вар1, вар2»
   const poll = parsePoll(raw, t);

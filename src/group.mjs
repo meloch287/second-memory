@@ -10,7 +10,7 @@ import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
 
 export function createGroupHandler(deps) {
-  const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText } = deps;
+  const { api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact } = deps;
 
   let botUsername = null;
   let botId = null;
@@ -252,6 +252,9 @@ export function createGroupHandler(deps) {
       }
       return; // чужие/неизвестные команды в группе молча пропускаем
     }
+
+    // живая реакция-эмодзи по настроению (бот - участник чата)
+    if (!fromVoice && msg.message_id) maybeReact?.(chatId, msg.message_id, text);
 
     // всё в общую память группы (с автором), тихий захват дел/долгов
     store.addRaw(key, `${fromName}: ${text}`);

@@ -6,7 +6,8 @@
 // Всё считается в часовом поясе пользователя (tz.mjs).
 
 import { join, dirname } from 'node:path';
-import { aiEnabled, aiMorningPing, aiConsolidate, aiCheckin } from './ai.mjs';
+import { aiEnabled, aiMorningPing, aiConsolidate, aiCheckin, aiBirthday } from './ai.mjs';
+import { findMember } from './parser.mjs';
 import { exportVault } from './obsidian.mjs';
 import { wall, userDayBounds, userOffset, fmtUser } from './tz.mjs';
 import { todayWeather, weatherLine } from './weather.mjs';
@@ -166,6 +167,26 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       if (recurringDue(r, w, r.lastFired, today)) {
         store.markRecurringFired(r.id, today);
         await bot.sendText(chatId, `🔁 Напоминаю: ${r.title}`);
+      }
+    }
+
+    // 2.5) Дни рождения (№4): утром в 9 по поясу чата, работает и в группах
+    if (!quiet && hour === 9 && user.birthdays && user.lastBdayPing !== today) {
+      const dm = `${w.getUTCDate()}.${w.getUTCMonth() + 1}`;
+      const celebrants = Object.entries(user.birthdays).filter(([, d]) => d === dm).map(([who]) => who);
+      if (celebrants.length) {
+        store.setUser(chatId, { lastBdayPing: today });
+        const escH = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        for (const who of celebrants) {
+          let mention = escH(who);
+          if (user.isGroup && user.members) {
+            const hit = findMember(user.members, who);
+            if (hit) mention = hit.username ? `@${hit.username}` : `<a href="tg://user?id=${hit.id}">${escH(who)}</a>`;
+          }
+          const text = aiEnabled() ? await aiBirthday(store, chatId, who).catch(() => null) : null;
+          await bot.sendHtml(chatId, `🎂🎉 ${mention}, ${escH(text || 'с днём рождения! Пусть всё задуманное сбывается!')}`);
+          store.pushHistory('assistant', `Поздравил ${who} с днём рождения`, chatId);
+        }
       }
     }
 
