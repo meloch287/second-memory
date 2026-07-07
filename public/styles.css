@@ -921,8 +921,42 @@ h1::after {
 .btn-ghost--danger { color: #B3261E; }
 .btn-ghost--danger:hover { background: rgba(179, 38, 30, 0.08); }
 
-/* Кнопки в шапке рядом + полноэкранный («фокус») чат */
+/* Кнопки в шапке рядом */
 .header-actions { display: flex; gap: 8px; align-items: center; }
-.app--focus { grid-template-columns: 1fr; }
+
+/* Полноэкранный («фокус») чат: как в Telegram - на весь экран, максимум места.
+   .app из грида превращается в фиксированный оверлей-колонку во весь вьюпорт. */
+.app--focus {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px 12px;
+  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--page-bg);
+  overflow: hidden;
+}
 .app--focus > .panel { display: none; }
 .app--focus .tagline { display: none; }
+.app--focus .app-header { margin: 0; flex: none; }
+.app--focus > main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.app--focus .chat {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.app--focus .chat-log {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
