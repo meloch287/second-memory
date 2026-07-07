@@ -104,6 +104,11 @@ export function parseMessage(text, now = new Date()) {
   const search = parseSearch(raw, t);
   if (search) return search;
 
+  // График: «нарисуй график трат», «диаграмма долгов», «построй график ...»
+  if (/(?:нарисуй|построй|сделай|покажи|составь)?\s*(?:график|диаграмм|чарт)/.test(t) && /график|диаграмм|чарт/.test(t)) {
+    return { kind: 'chart', request: raw };
+  }
+
   // Сводка трат
   if (/^(?:траты|расходы|на что.*(?:трач|деньги|уход)|сколько потрат)/.test(t)) {
     return { kind: 'expenses' };

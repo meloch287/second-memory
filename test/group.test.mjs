@@ -44,6 +44,23 @@ test('findMember: кириллица находит латинское имя (N
   assert.equal(findMember(members, 'петю'), null);
 });
 
+test('parser: интент графика', async () => {
+  const { parseMessage } = await import('../src/parser.mjs');
+  const N = new Date();
+  assert.equal(parseMessage('нарисуй график трат', N).kind, 'chart');
+  assert.equal(parseMessage('построй диаграмму долгов по людям', N).kind, 'chart');
+  assert.equal(parseMessage('график', N).kind, 'chart');
+  assert.notEqual(parseMessage('добавь встречу завтра', N).kind, 'chart');
+});
+
+test('renderChart: PNG из спецификации (если есть python+matplotlib)', async () => {
+  const { renderChart, chartAvailable } = await import('../src/chart.mjs');
+  if (!chartAvailable()) return; // на машинах без matplotlib тест пропускается
+  const png = renderChart({ type: 'bar', title: 'Тест', labels: ['А', 'Б'], series: [{ name: 'x', values: [1, 2] }] });
+  assert.ok(png.length > 5000, 'PNG не пустой');
+  assert.equal(png.subarray(1, 4).toString(), 'PNG', 'сигнатура PNG');
+});
+
 test('parseGroupCmd: обычные фразы - не команды', () => {
   assert.equal(parseGroupCmd(norm('что мы решили по бюджету?')), null);
   assert.equal(parseGroupCmd(norm('напомни завтра про созвон')), null);

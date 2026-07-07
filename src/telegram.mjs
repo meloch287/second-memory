@@ -19,6 +19,8 @@ import { tzFromCoords, cityFromCoords } from './weather.mjs';
 import { aiSearch } from './ai.mjs';
 import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
+import { renderChart, chartAvailable } from './chart.mjs';
+import { aiChartSpec } from './ai.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { aiExtractReceipt } from './ai.mjs';
 
@@ -119,13 +121,34 @@ export function startTelegramBot(store, token, log = console) {
     }
   };
 
+  // Топики форум-групп: пока обрабатывается сообщение из темы, все ответы
+  // уходят в неё же (очередь per-chat последовательная, гонок нет).
+  const activeThread = new Map(); // chatKey -> message_thread_id
+  const threadExtra = (chat_id) => {
+    const th = activeThread.get(String(chat_id));
+    return th ? { message_thread_id: th } : {};
+  };
+
   const send = (chat_id, text, extra = {}) =>
     api('sendMessage', {
       chat_id,
       text: String(text).slice(0, 4000),
       parse_mode: 'HTML',
+      ...threadExtra(chat_id),
       ...extra,
     });
+
+  // Фото (сжатое, как обычная картинка, не документ)
+  async function sendPhoto(chat_id, pngBuffer, caption) {
+    const form = new FormData();
+    form.append('chat_id', String(chat_id));
+    const th = activeThread.get(String(chat_id));
+    if (th) form.append('message_thread_id', String(th));
+    form.append('photo', new Blob([pngBuffer], { type: 'image/png' }), 'chart.png');
+    if (caption) form.append('caption', String(caption).slice(0, 1000));
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
+    return res.json();
+  }
 
   /* ---- «Сон» при недоступном ИИ ---- */
   const sleepAnnounced = new Set();
@@ -340,9 +363,24 @@ export function startTelegramBot(store, token, log = console) {
     ].join('\n');
   }
 
+  // Скачивание и понимание документа (PDF/DOCX/текст) -> краткая суть или null.
+  async function readDoc(doc, mime, name) {
+    const b64 = await downloadBase64(doc.file_id);
+    if (mime === 'application/pdf') return aiSummarizeDoc(b64, mime, name);
+    if (name.toLowerCase().endsWith('.docx')) {
+      const text = extractDocxText(Buffer.from(b64, 'base64'));
+      if (!text) throw new Error('docx: пустой текст');
+      return aiSummarizeText(text, name);
+    }
+    if (mime.startsWith('text/')) return aiSummarizeText(Buffer.from(b64, 'base64').toString('utf8'), name);
+    return null;
+  }
+
   async function sendDocumentText(chatId, content, filename, mime, caption) {
     const form = new FormData();
     form.append('chat_id', String(chatId));
+    const _th = activeThread.get(String(chatId));
+    if (_th) form.append('message_thread_id', String(_th));
     form.append('document', new Blob([content], { type: mime }), filename);
     if (caption) form.append('caption', caption);
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
@@ -435,6 +473,28 @@ export function startTelegramBot(store, token, log = console) {
 
     if (p.kind === 'expenses') {
       await send(chatId, esc(expensesReport(store, String(chatId), userOffset(user))));
+      return true;
+    }
+
+    if (p.kind === 'chart') {
+      if (!aiEnabled()) { await send(chatId, 'Для графиков нужен ИИ, а ключа нет.'); return true; }
+      if (!chartAvailable()) { await send(chatId, 'Рисовалка графиков не настроена на сервере (нет matplotlib).'); return true; }
+      const stop = typingLoop(chatId, 'upload_photo');
+      try {
+        const spec = await aiChartSpec(store, String(chatId), p.request);
+        if (spec.refuse) {
+          await send(chatId, esc(`Пока не из чего рисовать: ${spec.refuse}. Накидай данных - и построю.`));
+          return true;
+        }
+        const png = renderChart(spec);
+        const r = await sendPhoto(chatId, png, spec.comment || spec.title || '');
+        if (!r.ok) throw new Error(r.description || 'sendPhoto failed');
+      } catch (e) {
+        log.error('[telegram] chart', e.message);
+        await send(chatId, 'График не собрался. Попробуй переформулировать?');
+      } finally {
+        stop();
+      }
       return true;
     }
 
@@ -539,6 +599,8 @@ export function startTelegramBot(store, token, log = console) {
     const ics = buildIcs(events, new Date().toISOString());
     const form = new FormData();
     form.append('chat_id', String(chatId));
+    const _th = activeThread.get(String(chatId));
+    if (_th) form.append('message_thread_id', String(_th));
     form.append('document', new Blob([ics], { type: 'text/calendar' }), filename);
     form.append('caption', 'Открой файл - события добавятся в календарь телефона 📅');
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
@@ -890,13 +952,34 @@ export function startTelegramBot(store, token, log = console) {
       );
     }
 
-    const rawText = msg.text || msg.caption || '';
-    if (!rawText) return; // медиа в группах пока не разбираем - только текст
-
     // имя автора: приоритет тому, как человек сам представился («я Саня»),
     // телеграмный first_name бывает ником или пустышкой
     const regName = msg.from && g.members?.[msg.from.id]?.name;
     const fromName = (regName && regName.trim()) || authorName(msg);
+
+    // Документы в группе: читаем и запоминаем (PDF, DOCX, текст). Бот следит
+    // за чатом - файл ложится в общую память; при @теге отвечаем сутью.
+    if (msg.document && !String(msg.document.mime_type || '').startsWith('audio/')) {
+      const doc = msg.document;
+      const mime = String(doc.mime_type || '');
+      const name = doc.file_name || 'документ';
+      if ((doc.file_size || 0) > 15 * 1024 * 1024 || !audioEnabled()) return;
+      const docAddressed = mentionsBot(msg.caption || '');
+      const summary = await (docAddressed ? withTyping(chatId, () => readDoc(doc, mime, name)) : readDoc(doc, mime, name)).catch((e) => {
+        log.error('[telegram] group doc', e.message);
+        return null;
+      });
+      if (!summary) {
+        if (docAddressed) await send(chatId, `«${esc(name)}» - такой формат не читаю. Понимаю PDF, DOCX и текст.`);
+        return;
+      }
+      store.addRaw(key, `${fromName} прислал документ «${name}». Суть: ${summary}`);
+      if (docAddressed) await send(chatId, `Прочитал «${esc(name)}». Суть: ${esc(summary)}`);
+      return;
+    }
+
+    const rawText = msg.text || msg.caption || '';
+    if (!rawText) return; // прочие медиа в группах пока не разбираем
     const addressed = mentionsBot(rawText) || msg.reply_to_message?.from?.id === botId;
     const text = addressed ? stripMention(rawText) : rawText;
 
@@ -911,7 +994,7 @@ export function startTelegramBot(store, token, log = console) {
       if (slash === '/help' || slash === '/start') {
         return send(
           chatId,
-          `Я общая память этой группы 🙂 Запоминаю дела, долги и договорённости.\n\nТегни @${botUsername} и спроси что угодно: «что мы решили по бюджету?», «баланс», «траты», «найди про...».\n\nАдминам: «закрепи» (ответом), «кикни», «замуть на час», «переименуй в ...», «дай ссылку». /summary - итоги, /reset - стереть память группы (только админ).`
+          `Я общая память этой группы 🙂 Слежу за чатом 24/7, запоминаю дела, долги и договорённости, читаю присланные файлы (PDF, DOCX).\n\nТегни @${botUsername} и спроси что угодно: «что мы решили по бюджету?», «баланс», «траты», «найди про...», «нарисуй график трат», «тегни Никиту».\n\nАдминам: «закрепи» (ответом), «кикни», «замуть на час», «переименуй в ...», «дай ссылку». /summary - итоги, /reset - стереть память группы (только админ).`
         );
       }
       return; // чужие/неизвестные команды в группе молча пропускаем
@@ -1009,7 +1092,15 @@ export function startTelegramBot(store, token, log = console) {
   }
 
   async function onMessage(msg) {
-    if (isGroupChat(msg)) return groupFlow(msg);
+    if (isGroupChat(msg)) {
+      // тема форум-группы: ответы уходят в неё же
+      if (msg.message_thread_id) activeThread.set(String(msg.chat.id), msg.message_thread_id);
+      try {
+        return await groupFlow(msg);
+      } finally {
+        activeThread.delete(String(msg.chat.id));
+      }
+    }
 
     const chatId = msg.chat.id;
     const user = store.getUser(String(chatId));
@@ -1080,19 +1171,7 @@ export function startTelegramBot(store, token, log = console) {
       }
       if (!mime.startsWith('audio/')) {
         if (!audioEnabled()) return send(chatId, 'Документы пока не читаю: нет ключа ИИ.');
-        const summary = await withTyping(chatId, async () => {
-          const b64 = await downloadBase64(doc.file_id);
-          if (mime === 'application/pdf') return aiSummarizeDoc(b64, mime, name);
-          if (name.toLowerCase().endsWith('.docx')) {
-            const text = extractDocxText(Buffer.from(b64, 'base64'));
-            if (!text) throw new Error('docx: пустой текст');
-            return aiSummarizeText(text, name);
-          }
-          if (mime.startsWith('text/')) {
-            return aiSummarizeText(Buffer.from(b64, 'base64').toString('utf8'), name);
-          }
-          return null;
-        }).catch((e) => {
+        const summary = await withTyping(chatId, () => readDoc(doc, mime, name)).catch((e) => {
           log.error('[telegram] document', e.message);
           return null;
         });
