@@ -893,7 +893,10 @@ export function startTelegramBot(store, token, log = console) {
     const rawText = msg.text || msg.caption || '';
     if (!rawText) return; // медиа в группах пока не разбираем - только текст
 
-    const fromName = authorName(msg);
+    // имя автора: приоритет тому, как человек сам представился («я Саня»),
+    // телеграмный first_name бывает ником или пустышкой
+    const regName = msg.from && g.members?.[msg.from.id]?.name;
+    const fromName = (regName && regName.trim()) || authorName(msg);
     const addressed = mentionsBot(rawText) || msg.reply_to_message?.from?.id === botId;
     const text = addressed ? stripMention(rawText) : rawText;
 
@@ -920,13 +923,15 @@ export function startTelegramBot(store, token, log = console) {
 
     if (!addressed) return; // без обращения молчим, только запоминаем
 
-    // «я Никита» - человек представился: обновляем его имя в реестре
+    // «я Никита» - человек представился: имя в реестр + факт в память группы
+    // (RAG знает сразу, не дожидаясь воркера)
     const iam = text.match(/^(?:я|меня зовут)\s+([А-Яа-яЁёA-Za-z]{2,20})[!.]*$/i);
     if (iam && msg.from) {
       const newName = iam[1][0].toUpperCase() + iam[1].slice(1);
       const members2 = { ...(g.members || {}) };
       members2[msg.from.id] = { ...(members2[msg.from.id] || {}), name: newName, username: msg.from.username || members2[msg.from.id]?.username || null };
       g = store.setUser(key, { members: members2 });
+      store.addFacts([{ chatId: key, text: `Участника${msg.from.username ? ` @${msg.from.username}` : ''} зовут ${newName}`, people: [newName] }]);
       return send(chatId, `Принял, ${esc(newName)}! Теперь знаю тебя по имени 🙂`);
     }
 
@@ -949,6 +954,7 @@ export function startTelegramBot(store, token, log = console) {
       if (existing) members2[existing[0]] = { ...existing[1], name: link[1] };
       else members2['u:' + un.toLowerCase()] = { name: link[1], username: un };
       g = store.setUser(key, { members: members2 });
+      store.addFacts([{ chatId: key, text: `${link[1]} - это @${un}`, people: [link[1]] }]);
       return send(chatId, `Запомнил: ${esc(link[1])} - это @${esc(un)} 👌`);
     }
 
