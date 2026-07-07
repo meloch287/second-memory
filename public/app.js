@@ -113,22 +113,26 @@ async function deliver(text) {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    cleanup(); // убираем точки и статус ДО вставки ответа - он и объявляется
     if (data.cleared) {
+      cleanup();
       clearChatLog();
     } else if (voiceReplyOn() && (data.reply || '').trim()) {
-      // голос включён -> ответ приходит голосовым сообщением (как в Telegram),
-      // а не текстом с автоплеем (автоплей браузер часто блокирует)
+      // голос включён -> ответ приходит голосовым сообщением (как в Telegram).
+      // Индикатор «записывает голосовое» держим ДО появления пузыря: озвучка
+      // (TTS + декод) идёт после JSON и занимает ещё ~1-2с - без этого была
+      // пустая пауза между исчезновением анимации и появлением голосового.
       try {
         await speakAssistantReply(data.reply);
+        cleanup();
       } catch {
+        cleanup();
         if (data.ai) appendSummaryMessage(data.reply || '…', data.rag);
         else appendMessage('assistant', data.reply || '…');
       }
-    } else if (data.ai) {
-      appendSummaryMessage(data.reply || '…', data.rag);
     } else {
-      appendMessage('assistant', data.reply || '…');
+      cleanup(); // текстовый ответ - убираем индикатор перед вставкой
+      if (data.ai) appendSummaryMessage(data.reply || '…', data.rag);
+      else appendMessage('assistant', data.reply || '…');
     }
     setTimeout(refreshStats, 50);
   } catch {
