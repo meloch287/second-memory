@@ -109,12 +109,19 @@ async function deliver(text) {
     cleanup(); // убираем точки и статус ДО вставки ответа - он и объявляется
     if (data.cleared) {
       clearChatLog();
+    } else if (voiceReplyOn() && (data.reply || '').trim()) {
+      // голос включён -> ответ приходит голосовым сообщением (как в Telegram),
+      // а не текстом с автоплеем (автоплей браузер часто блокирует)
+      try {
+        await speakAssistantReply(data.reply);
+      } catch {
+        if (data.ai) appendSummaryMessage(data.reply || '…', data.rag);
+        else appendMessage('assistant', data.reply || '…');
+      }
     } else if (data.ai) {
       appendSummaryMessage(data.reply || '…', data.rag);
-      maybeSpeak(data.reply);
     } else {
       appendMessage('assistant', data.reply || '…');
-      maybeSpeak(data.reply);
     }
     setTimeout(refreshStats, 50);
   } catch {
@@ -549,47 +556,51 @@ function resamplePeaks(peaks, buckets) {
   return out.map((v) => Math.max(0.12, v / max));
 }
 
-function drawStaticWave(canvas, bars, progress) {
+function drawStaticWave(canvas, bars, progress, dark = false) {
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
   ctx.clearRect(0, 0, W, H);
   const barW = 3;
   const gap = (W - bars.length * barW) / (bars.length - 1);
+  const on = dark ? '#26221B' : '#FFFFFF';
+  const off = dark ? 'rgba(38,34,27,0.35)' : 'rgba(255,255,255,0.45)';
   bars.forEach((v, i) => {
     const played = i / bars.length < progress;
-    ctx.fillStyle = played ? '#FFFFFF' : 'rgba(255,255,255,0.45)';
+    ctx.fillStyle = played ? on : off;
     const h = Math.max(3, v * H);
     ctx.fillRect(i * (barW + gap), (H - h) / 2, barW, h);
   });
 }
 
-function appendVoiceMessage(blob, durationSec, peaks, transcript) {
+function appendVoiceMessage(blob, durationSec, peaks, transcript, role = 'user') {
   const id = ++vmCounter;
   const clock = fmtClock(durationSec);
+  const isAsst = role === 'assistant';
+  const noun = isAsst ? 'голосовой ответ' : 'голосовое сообщение';
 
   const wrap = document.createElement('div');
-  wrap.className = 'message message--user';
+  wrap.className = `message message--${isAsst ? 'assistant' : 'user'}`;
   wrap.setAttribute('aria-live', 'off');
 
   const who = document.createElement('span');
   who.className = 'visually-hidden';
-  who.textContent = 'Вы:';
+  who.textContent = isAsst ? 'Ассистент:' : 'Вы:';
 
   const vm = document.createElement('div');
-  vm.className = 'voice-message';
+  vm.className = isAsst ? 'voice-message voice-message--assistant' : 'voice-message';
 
   const player = document.createElement('div');
   player.className = 'voice-player';
   player.setAttribute('role', 'group');
-  player.setAttribute('aria-label', `Голосовое сообщение, ${clock}`);
+  player.setAttribute('aria-label', `${isAsst ? 'Голосовой ответ' : 'Голосовое сообщение'}, ${clock}`);
 
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'voice-msg__play';
   btn.id = `voice-play-vm-${id}`;
   btn.tabIndex = -1; // roving tabindex: вход в лог — через сам лог
-  btn.setAttribute('aria-label', `Воспроизвести голосовое сообщение, ${clock}`);
+  btn.setAttribute('aria-label', `Воспроизвести ${noun}, ${clock}`);
   btn.innerHTML = ICON_PLAY;
 
   const canvas = document.createElement('canvas');
@@ -617,7 +628,7 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
     toggle.tabIndex = -1; // roving tabindex: как и play, доступна стрелками в логе
     toggle.setAttribute('aria-expanded', 'false');
     toggle.setAttribute('aria-controls', transcriptId);
-    toggle.setAttribute('aria-label', 'Расшифровка голосового сообщения');
+    toggle.setAttribute('aria-label', isAsst ? 'Текст ответа' : 'Расшифровка голосового сообщения');
     toggle.innerHTML = ICON_TRANSCRIBE;
     player.append(toggle);
 
@@ -646,17 +657,26 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
   addToLog(wrap);
 
   const bars = resamplePeaks(peaks, 30);
-  drawStaticWave(canvas, bars, 0);
+  drawStaticWave(canvas, bars, 0, isAsst);
 
   const audio = new Audio(URL.createObjectURL(blob));
   let playing = false;
+  // если длительность не получили при декоде (напр. TTS-ответ) - возьмём из плеера
+  if (!durationSec) {
+    audio.addEventListener('loadedmetadata', () => {
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        durationSec = audio.duration;
+        dur.textContent = fmtClock(durationSec);
+      }
+    });
+  }
 
   const setPlaying = (on) => {
     playing = on;
     btn.innerHTML = on ? ICON_PAUSE : ICON_PLAY;
     btn.setAttribute(
       'aria-label',
-      on ? `Пауза, голосовое сообщение, ${clock}` : `Воспроизвести голосовое сообщение, ${clock}`
+      on ? `Пауза, ${noun}, ${clock}` : `Воспроизвести ${noun}, ${clock}`
     );
   };
 
@@ -673,7 +693,7 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
         audio.pause();
         audio.currentTime = 0;
         setPlaying(false);
-        drawStaticWave(canvas, bars, 0);
+        drawStaticWave(canvas, bars, 0, isAsst);
       },
     };
     audio.play();
@@ -681,11 +701,11 @@ function appendVoiceMessage(blob, durationSec, peaks, transcript) {
   });
 
   audio.addEventListener('timeupdate', () => {
-    drawStaticWave(canvas, bars, Math.min(1, audio.currentTime / durationSec));
+    drawStaticWave(canvas, bars, Math.min(1, audio.currentTime / (durationSec || audio.duration || 1)), isAsst);
   });
   audio.addEventListener('ended', () => {
     setPlaying(false);
-    drawStaticWave(canvas, bars, 0);
+    drawStaticWave(canvas, bars, 0, isAsst);
     announce('Воспроизведение завершено');
   });
 }
@@ -719,22 +739,44 @@ log.addEventListener('keydown', (e) => {
   }
 });
 
-/* ---- Озвучка ответов (если включено в настройках) ---- */
+/* ---- Голосовой ответ ассистента (как в Telegram: войс-пузырь, а не текст) ---- */
 
-async function maybeSpeak(text) {
-  if (!webSettings.voiceReplies || !webSettings.audio || !text) return;
+const voiceReplyOn = () => webSettings.voiceReplies && webSettings.audio;
+
+// Пики громкости из PCM для рисованной волны.
+function computePeaks(data, n) {
+  const block = Math.floor(data.length / n) || 1;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    let m = 0;
+    for (let j = 0; j < block; j++) { const v = Math.abs(data[i * block + j] || 0); if (v > m) m = v; }
+    out.push(m);
+  }
+  const max = Math.max(...out, 0.01);
+  return out.map((v) => v / max);
+}
+
+// Озвучить ответ и добавить его как ГОЛОСОВОЕ сообщение ассистента (play + текст
+// под ≡). Бросает при любой ошибке - вызывающий откатится на текст.
+async function speakAssistantReply(text) {
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: String(text).slice(0, 1500) }),
+  });
+  if (!res.ok) throw new Error('tts ' + res.status);
+  const blob = await res.blob();
+  let durationSec = 0;
+  let peaks = new Array(30).fill(0.4);
   try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: String(text).slice(0, 1500) }),
-    });
-    if (!res.ok) return;
-    const url = URL.createObjectURL(await res.blob());
-    const a = new Audio(url);
-    a.addEventListener('ended', () => URL.revokeObjectURL(url));
-    a.play().catch(() => URL.revokeObjectURL(url));
-  } catch { /* без озвучки, текст уже показан */ }
+    const buf = await blob.arrayBuffer();
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const ab = await ac.decodeAudioData(buf);
+    durationSec = ab.duration;
+    peaks = computePeaks(ab.getChannelData(0), 60);
+    ac.close().catch(() => {});
+  } catch { /* не декодировали - оставим плоскую волну, длительность возьмём из плеера */ }
+  appendVoiceMessage(blob, durationSec, peaks, text, 'assistant');
 }
 
 /* ---- Имя ассистента: шапка + вкладка (тихо, без объявления) ---- */

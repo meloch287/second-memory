@@ -294,6 +294,33 @@ h1::after {
   overflow-wrap: anywhere;
 }
 
+/* Голосовой ответ ассистента - светлый пузырь (в отличие от тёмного «своего») */
+.voice-message--assistant {
+  background: rgba(38, 34, 27, 0.06);
+  color: var(--ink);
+  border-bottom-right-radius: 12px;
+  border-bottom-left-radius: 4px;
+  box-shadow: none;
+}
+.voice-message--assistant .voice-msg__play {
+  background: var(--ink);
+  color: var(--surface-bg);
+}
+.voice-message--assistant .voice-duration { color: var(--ink); }
+.voice-message--assistant .voice-msg__transcribe-toggle {
+  background: rgba(38, 34, 27, 0.12);
+  color: var(--ink);
+}
+.voice-message--assistant .voice-msg__transcribe-toggle:hover { background: rgba(38, 34, 27, 0.20); }
+.voice-message--assistant .voice-msg__transcribe-toggle[aria-expanded="true"] {
+  background: var(--ink);
+  color: var(--surface-bg);
+}
+.voice-message--assistant .voice-transcript {
+  color: var(--ink);
+  border-top-color: rgba(38, 34, 27, 0.20);
+}
+
 /* ---- Панель записи голосового ---- */
 
 .recording-panel {
