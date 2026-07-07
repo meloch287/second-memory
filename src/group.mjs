@@ -447,6 +447,10 @@ export function createGroupHandler(deps) {
       if (pm && known.has(pm[1].toLowerCase())) reply = reply.slice(pm[0].length).trim();
       else break;
     }
+    // осиротевшая ведущая пунктуация («, ну я понял...») - после срезки имени
+    // или косяка модели ответ иногда начинался с запятой/двоеточия
+    reply = reply.replace(/^[\s,;:.]+/, '').trim();
+    if (!reply) return send(chatId, esc(sleepyText(key)));
     store.pushHistory('user', `${fromName}: ${text}`, key);
     store.pushHistory('assistant', reply, key);
     // голосом, если у группы включён режим (иначе текст) - как в личке
