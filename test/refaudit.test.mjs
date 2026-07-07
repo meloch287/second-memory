@@ -24,10 +24,15 @@ test('telegram.mjs: критичные хелперы на месте', () => {
     'audioFlow', 'imageFlow', 'onMessage', 'onCallback', 'sendVoice', 'startOnboarding',
     'onboardingStep', 'helloAgain', 'askReset', 'helpText', 'sendSummary', 'typingLoop',
     'withTyping', 'downloadBase64', 'enqueue', 'kindOf', 'locationFlow', 'askLocation', 'deliver',
-    'groupFlow', 'runGroupCmd', 'mentionsBot', 'callerIsAdmin', 'ensureSelf', 'isGroupChat', 'authorName', 'stripMention',
     'sendPhoto', 'readDoc', 'threadExtra',
   ];
   const missing = definesAll('telegram.mjs', need);
+  assert.deepEqual(missing, [], `не определены: ${missing.join(', ')}`);
+});
+
+test('group.mjs: групповые функции на месте (вынесены из telegram.mjs)', () => {
+  const need = ['createGroupHandler', 'groupFlow', 'runGroupCmd', 'mentionsBot', 'callerIsAdmin', 'ensureSelf', 'isGroupChat', 'authorName', 'stripMention', 'mentionOf'];
+  const missing = definesAll('group.mjs', need);
   assert.deepEqual(missing, [], `не определены: ${missing.join(', ')}`);
 });
 

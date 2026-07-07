@@ -3,14 +3,17 @@
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash, scryptSync } from 'node:crypto';
 
-const ENC_MAGIC = Buffer.from('SMENC1\n'); // маркер зашифрованного файла
+// Два формата шифрования на диске:
+//  SMENC1 - ключ = sha256(пароль), без соли (легаси, только чтение);
+//  SMENC2 - ключ = scrypt(пароль, соль из файла) - дорого брутфорсить.
+const ENC_MAGIC1 = Buffer.from('SMENC1\n');
+const ENC_MAGIC2 = Buffer.from('SMENC2\n');
 
-function encKey() {
-  const k = process.env.SM_ENCRYPTION_KEY;
-  return k ? createHash('sha256').update(k).digest() : null; // 32 байта
-}
+const hasPass = () => Boolean(process.env.SM_ENCRYPTION_KEY);
+const keyV1 = () => createHash('sha256').update(process.env.SM_ENCRYPTION_KEY).digest();
+const keyV2 = (salt) => scryptSync(process.env.SM_ENCRYPTION_KEY, salt, 32);
 
 export class Store {
   constructor(file) {
@@ -26,16 +29,27 @@ export class Store {
     try {
       const buf = readFileSync(this.file);
       let text;
-      if (buf.length >= ENC_MAGIC.length && buf.subarray(0, ENC_MAGIC.length).equals(ENC_MAGIC)) {
+      const isV2 = buf.length >= 7 && buf.subarray(0, 7).equals(ENC_MAGIC2);
+      const isV1 = !isV2 && buf.length >= 7 && buf.subarray(0, 7).equals(ENC_MAGIC1);
+      if (isV1 || isV2) {
         isEncrypted = true;
-        const key = encKey();
-        if (!key) throw new Error('данные зашифрованы, но SM_ENCRYPTION_KEY не задан');
-        const iv = buf.subarray(ENC_MAGIC.length, ENC_MAGIC.length + 12);
-        const tag = buf.subarray(ENC_MAGIC.length + 12, ENC_MAGIC.length + 28);
-        const ct = buf.subarray(ENC_MAGIC.length + 28);
+        if (!hasPass()) throw new Error('данные зашифрованы, но SM_ENCRYPTION_KEY не задан');
+        let off = 7;
+        let key;
+        if (isV2) {
+          const salt = buf.subarray(off, off + 16);
+          off += 16;
+          key = keyV2(salt);
+        } else {
+          key = keyV1();
+        }
+        const iv = buf.subarray(off, off + 12);
+        const tag = buf.subarray(off + 12, off + 28);
+        const ct = buf.subarray(off + 28);
         const d = createDecipheriv('aes-256-gcm', key, iv);
         d.setAuthTag(tag);
         text = Buffer.concat([d.update(ct), d.final()]).toString('utf8');
+        if (isV1) this._needsRekey = true; // перешифруем в SMENC2 при первом save
       } else {
         text = buf.toString('utf8');
         wasPlaintext = true;
@@ -63,19 +77,19 @@ export class Store {
       return;
     }
     // Миграция: файл был открытым, а ключ задан - перешифруем при первом сохранении
-    if (wasPlaintext && encKey()) this.save();
+    if ((wasPlaintext || this._needsRekey) && hasPass()) this.save();
   }
 
   save() {
     mkdirSync(dirname(this.file), { recursive: true });
     const json = JSON.stringify(this.data, null, 2);
-    const key = encKey();
     let out;
-    if (key) {
+    if (hasPass()) {
+      const salt = randomBytes(16);
       const iv = randomBytes(12);
-      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      const cipher = createCipheriv('aes-256-gcm', keyV2(salt), iv);
       const ct = Buffer.concat([cipher.update(json, 'utf8'), cipher.final()]);
-      out = Buffer.concat([ENC_MAGIC, iv, cipher.getAuthTag(), ct]);
+      out = Buffer.concat([ENC_MAGIC2, salt, iv, cipher.getAuthTag(), ct]);
     } else {
       out = Buffer.from(json, 'utf8');
     }
