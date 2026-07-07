@@ -148,6 +148,19 @@ async function route(store, text, now, chatId = 'web') {
           // ИИ недоступен — обрабатываем по правилам ниже
         }
       }
+      // Болтовня/сленг/просто заметка («ку», «го гулять») - это НЕ «Сохранил
+      // заметку», а живой разговор: отдаём ИИ (он понимает сленг), а сам текст
+      // тихо кладём в raw - память соберётся фоном (как у бота). Долги, встречи
+      // и задачи ниже сохраняются структурно с подтверждением.
+      if (p.entry.type === 'note' && aiEnabled()) {
+        try {
+          store.addRaw(chatId, text);
+          const rag = questionCoverage(store, text, chatId);
+          return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag };
+        } catch {
+          // ИИ недоступен — сохраняем заметку по-старому
+        }
+      }
       return saveEntry(store, { ...p.entry, chatId }, off);
     }
     case 'done':
