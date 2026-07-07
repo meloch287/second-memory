@@ -638,7 +638,7 @@ export function startTelegramBot(store, token, log = console) {
       const stop = typingLoop(chatId, 'record_voice');
       try {
         const ogg = await aiTts(replyText);
-        const r = await sendVoice(chatId, ogg, replyText);
+        const r = await sendVoice(chatId, ogg); // чистый войс, без текста-транскрибации
         if (r.ok) return;
       } catch (e) {
         log.error('[telegram] tts', e.message);
