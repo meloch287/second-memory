@@ -132,3 +132,17 @@ test('parseGroupCmd: обычные фразы - не команды', () => {
   // «удали 5» - это личный интент удаления записи, не группа: у del жёсткий конец строки
   assert.equal(parseGroupCmd(norm('удали 5')), null);
 });
+
+test('stripBotVocative: имя бота не остаётся обращением к человеку', async () => {
+  const { stripBotVocative } = await import('../src/ai.mjs');
+  assert.equal(stripBotVocative('Держи, Братан, работает!', 'Братан'), 'Держи, работает!');
+  assert.equal(stripBotVocative('Классный вопрос, Братан.', 'Братан'), 'Классный вопрос.');
+  assert.equal(stripBotVocative('Удачи, Братан!', 'Братан'), 'Удачи!');
+  assert.equal(stripBotVocative('Ну, Братан, держи план', 'Братан'), 'Ну, держи план');
+  assert.equal(stripBotVocative('Братан, да уже поздно, Саня.', 'Братан'), 'Да уже поздно, Саня.');
+  // самоназвание не трогаем
+  assert.match(stripBotVocative('Меня зовут Братан, кстати.', 'Братан'), /Меня зовут Братан/);
+  // короткое/пустое имя не режем (риск ложных)
+  assert.equal(stripBotVocative('привет, Кот', 'Кот'), 'привет, Кот');
+  assert.equal(stripBotVocative('текст', ''), 'текст');
+});
