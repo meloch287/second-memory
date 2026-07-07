@@ -444,6 +444,12 @@ export function parseExpense(raw, t, now = new Date()) {
 }
 
 function parseEntry(raw, t, now) {
+  // Прощания/приветствия - это болтовня (уйдёт в ИИ), а не «встреча». «до
+  // встречи» иначе ловилось словом «встреч» и создавало фейковую встречу.
+  if (/^(?:ну\s+)?(?:пока|до встречи|до связи|до скорого|до завтра|бывай|бб|чао|прощай|спок(?:и|ойной ночи)|удачи|споки)[!.…]*$/.test(t)) {
+    return entry('note', { title: cap(raw.slice(0, 80)) || raw, text: raw });
+  }
+
   const dt = extractDate(raw, now);
   const due = dt.when ? dt.when.toISOString() : null;
 

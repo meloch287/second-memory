@@ -3,7 +3,8 @@
 
 import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
-import { aiEnabled, aiSummary, aiAnswer } from './ai.mjs';
+import { aiEnabled, aiSummary, aiAnswer, aiSearch } from './ai.mjs';
+import { balanceReport, expensesReport } from './finance.mjs';
 import { memoryStats, questionCoverage } from './ragmeter.mjs';
 import { resolveWallDate, userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
@@ -105,6 +106,18 @@ async function route(store, text, now, chatId = 'web') {
       return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) };
     } catch { /* ИИ недоступен - обычный маршрут ниже */ }
   }
+  // Общий вопрос/болтовня, которую парсер принял за дайджест базы («сколько
+  // планет», «дай рецепт борща», «всё пучком») - это НЕ запрос к делам, а
+  // разговор: отдаём ИИ вместо заглушки «Общая картина: 0 долгов…». Дайджест
+  // С диапазоном («что у меня завтра») и деловые слова оставляем структурными.
+  if (aiEnabled() && p.kind === 'digest' && !p.range) {
+    const biz = /долг|встреч|созвон|совещан|задач|заметк|(?<![а-я])дела(?![а-я])|сводк|саммари|балан|финанс|трат|расход|распис|срок|напомин|долж|итог|повестк/.test(normText(text));
+    if (!biz) {
+      try {
+        return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) };
+      } catch { /* ИИ недоступен - обычный дайджест ниже */ }
+    }
+  }
   switch (p.kind) {
     case 'empty':
       return {
@@ -171,7 +184,29 @@ async function route(store, text, now, chatId = 'web') {
       return runQuery(store, p, now, chatId, off);
     case 'digest':
       return digest(store, p.range, now, chatId, off);
+    case 'balance':
+      return { reply: balanceReport(store, chatId, off ?? DEFAULT_OFFSET) };
+    case 'expenses':
+      return { reply: expensesReport(store, chatId, off ?? DEFAULT_OFFSET) };
+    case 'expense': {
+      const e = store.add({ type: 'expense', amount: p.amount, category: p.category, title: p.category, text: p.text, chatId });
+      return { reply: `Записал трату: ${money(p.amount)} - ${e.category}.`, entry: e };
+    }
+    case 'forget': {
+      const n = store.removeFactsMatching(chatId, p.target);
+      return { reply: n ? `Забыл про «${p.target}».` : `Не нашёл в памяти «${p.target}», забывать нечего.` };
+    }
+    case 'search':
+      if (aiEnabled()) {
+        try { return { reply: await aiSearch(store, chatId, p.query, now), ai: true, rag: questionCoverage(store, p.query, chatId) }; } catch { /* ниже */ }
+      }
+      return { reply: 'Поиск по памяти сейчас недоступен.' };
     default:
+      // всё, что веб-роутинг не разбирает структурно, при живом ИИ - в разговор
+      // (вместо «Не понял»): курс валют, опрос, график, повтор, ДР и т.п.
+      if (aiEnabled()) {
+        try { return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) }; } catch { /* ниже */ }
+      }
       return { reply: 'Не понял. Напишите «помощь», чтобы увидеть примеры.' };
   }
 }
