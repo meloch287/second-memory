@@ -26,6 +26,23 @@ test('пароль: установка, проверка, смена', () => {
   assert.ok(verifyPassword(s, 'second-pass'), 'ensureAuth не сбрасывает существующий');
 });
 
+test('пароль: без WEB_PASSWORD генерируется случайный (не статический change-me)', () => {
+  const s = freshStore();
+  const r = ensureAuth(s); // env пуст
+  assert.equal(r.generated, true, 'помечен как сгенерированный');
+  assert.ok(r.password && r.password.length >= 10, 'вернул сам пароль для показа в логе');
+  assert.ok(verifyPassword(s, r.password), 'сгенерированный пароль подходит');
+  assert.ok(!verifyPassword(s, 'change-me'), 'старый статический дефолт НЕ работает');
+  assert.equal(s.data.meta.web.mustChangePass, true, 'помечено к смене');
+
+  // с заданным env-паролем — ничего не генерим, пароль не отдаём
+  const s2 = freshStore();
+  const r2 = ensureAuth(s2, 'from-env');
+  assert.equal(r2.generated, false);
+  assert.equal(r2.password, null);
+  assert.ok(verifyPassword(s2, 'from-env'));
+});
+
 test('сессия: подпись валидна, подделка отклоняется', () => {
   const s = freshStore();
   ensureAuth(s, 'p');

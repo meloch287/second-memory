@@ -85,11 +85,18 @@ export class Store {
     const json = JSON.stringify(this.data, null, 2);
     let out;
     if (hasPass()) {
-      const salt = randomBytes(16);
+      // Ключ деривится дорогим scryptSync. Раньше это делалось на КАЖДОМ save()
+      // (десятки мс, блокировка event loop). SM_ENCRYPTION_KEY неизменен за жизнь
+      // процесса, поэтому ключ+соль кэшируем один раз. IV остаётся случайным на
+      // каждую запись — GCM-nonce уникален, шифртекст не повторяется.
+      if (!this._encKey) {
+        this._encSalt = randomBytes(16);
+        this._encKey = keyV2(this._encSalt);
+      }
       const iv = randomBytes(12);
-      const cipher = createCipheriv('aes-256-gcm', keyV2(salt), iv);
+      const cipher = createCipheriv('aes-256-gcm', this._encKey, iv);
       const ct = Buffer.concat([cipher.update(json, 'utf8'), cipher.final()]);
-      out = Buffer.concat([ENC_MAGIC2, salt, iv, cipher.getAuthTag(), ct]);
+      out = Buffer.concat([ENC_MAGIC2, this._encSalt, iv, cipher.getAuthTag(), ct]);
     } else {
       out = Buffer.from(json, 'utf8');
     }

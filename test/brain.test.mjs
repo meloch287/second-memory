@@ -207,3 +207,22 @@ test('stripFakeSave: срезает фейковое «Сохранил заме
   assert.equal(stripFakeSave('Сохранил заметку №220: «Ку».'), '');
   assert.match(stripFakeSave('Здарова! Чем помочь?'), /Здарова/);
 });
+
+test('entryConfirmation: подтверждение уже сохранённой записи (для сбоя ИИ)', async () => {
+  const { entryConfirmation, captureEntry } = await import('../src/brain.mjs');
+  const s = freshStore();
+
+  const debt = captureEntry(s, 'я занял у Пети 5000', NOW, '42');
+  assert.equal(debt.type, 'debt');
+  const c1 = entryConfirmation(debt);
+  assert.match(c1, /долг №\d+/);
+  assert.match(c1, /вы должны/); // взял в долг → out
+  assert.match(c1, /Пети/);
+
+  const task = captureEntry(s, 'поставь таймер на 5 минут', NOW, '42');
+  assert.equal(task.type, 'task');
+  assert.match(entryConfirmation(task), /Записал задачу №\d+/);
+
+  // болтовня записью не считается — captureEntry вернёт null (нечего подтверждать)
+  assert.equal(captureEntry(s, 'ку как дела', NOW, '42'), null);
+});

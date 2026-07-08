@@ -36,14 +36,21 @@ export function verifyPassword(store, password) {
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
-// Логин/пароль по умолчанию задаём при первом старте (пароль из env или дефолт).
+// Логин/пароль по умолчанию задаём при первом старте. Если WEB_PASSWORD не задан,
+// генерируем СЛУЧАЙНЫЙ пароль (а не статический 'change-me', который знают все) и
+// возвращаем его вызывающему, чтобы тот один раз показал его в логе.
+// Возвращает { created, generated, password }.
 export function ensureAuth(store, defaultPass) {
   const c = cfg(store);
   if (!c.login) c.login = 'admin';
-  if (!c.passHash) {
-    c.passHash = hashPassword(defaultPass || 'change-me');
-    store.save();
-  }
+  if (c.passHash) return { created: false, generated: false, password: null };
+
+  const generated = !defaultPass;
+  const pass = defaultPass || randomBytes(9).toString('base64url'); // 12 симв.
+  c.passHash = hashPassword(pass);
+  if (generated) c.mustChangePass = true; // пометка для баннера в UI
+  store.save();
+  return { created: true, generated, password: generated ? pass : null };
 }
 
 export function setPassword(store, newPassword) {

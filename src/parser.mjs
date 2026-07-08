@@ -518,7 +518,9 @@ function parseEntry(raw, t, now) {
 
   const taskStart =
     /^(?:напомни|надо|нужно|не забыть|не забудь|задача|сделать|доделать|купить|позвонить|оплатить|отправить|проверить|подготовить|записаться|добавь задачу|поставь таймер|таймер|поставь будильник|будильник|засеки|засечь)/;
-  if (taskStart.test(t) || /задач/.test(t) || t.includes('напомни') || /\bтаймер\b|\bбудильник\b/.test(t)) {
+  // NB: \b не работает с кириллицей в JS — используем lookaround, иначе
+  // «поставь мне таймер…» падало в note и напоминание не создавалось.
+  if (taskStart.test(t) || /задач/.test(t) || t.includes('напомни') || /(?:^|[^а-яё])(?:таймер|будильник)(?![а-яё])/.test(t)) {
     const { amount, rest } = extractAmount(dt.rest);
     return entry('task', {
       title: taskTitle(rest),
@@ -537,20 +539,47 @@ function parseEntry(raw, t, now) {
   });
 }
 
+// Слова, которые не могут быть именем контрагента после «одолжил».
+const DEBT_STOP = new Set([
+  'у', 'мне', 'нам', 'тебе', 'вам', 'ему', 'ей', 'им', 'себе',
+  'немного', 'чуть', 'ещё', 'еще', 'свои', 'свою', 'деньги', 'денег',
+]);
+
 function parseDebt(raw, t, dt, due) {
   const { amount, rest } = extractAmount(dt.rest);
 
   let direction = 'in';
-  if (
-    /(^|\s)(я|мы)\s+долж/.test(t) ||
-    /долж[а-я]*\s+(я|мы)(\s|$)/.test(t) || // «должен я Кузнецову…»
-    /мой долг|наш долг|(^|\s)я взял/.test(t)
-  ) {
-    direction = 'out';
-  }
-  if (/долж[а-я]*\s+(мне|нам)(\s|$)/.test(t) || /(мне|нам)\s+долж/.test(t)) direction = 'in';
+  let counterparty = null;
+  let m;
 
-  const counterparty = findCounterparty(rest);
+  // «занял/одолжил у X», «взял в долг у X» — я взял в долг → я должен (out).
+  // Раньше direction/counterparty смотрели только на корень «долж» и теряли эти фразы.
+  const borrowVerb =
+    /занял|заняла|одолжил|одолжила/.test(t) ||
+    /(^|\s)взял[аи]?\s+(?:в\s+долг|денег|деньги)/.test(t);
+  if (borrowVerb && (m = t.match(/(?:^|\s)у\s+([а-яёa-z][а-яёa-z-]+)/))) {
+    direction = 'out';
+    counterparty = cap(m[1]);
+  } else if (
+    (m = t.match(/(?:одолжил|одолжила)\s+(?:денег\s+|деньги\s+)?([а-яёa-z][а-яёa-z-]+)/)) &&
+    !DEBT_STOP.has(m[1])
+  ) {
+    // «одолжил Диме», «одолжил денег другу» — дал в долг → мне должны (in).
+    direction = 'in';
+    counterparty = cap(m[1]);
+  } else {
+    if (
+      /(^|\s)(я|мы)\s+долж/.test(t) ||
+      /долж[а-я]*\s+(я|мы)(\s|$)/.test(t) || // «должен я Кузнецову…»
+      /мой долг|наш долг|(^|\s)я взял/.test(t)
+    ) {
+      direction = 'out';
+    }
+    if (/долж[а-я]*\s+(мне|нам)(\s|$)/.test(t) || /(мне|нам)\s+долж/.test(t)) direction = 'in';
+
+    counterparty = findCounterparty(rest);
+  }
+
   return entry('debt', {
     title: counterparty ? `Долг: ${counterparty}` : 'Долг',
     amount,

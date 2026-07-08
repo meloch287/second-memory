@@ -64,8 +64,15 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-// Пароль веб-панели: из env при первом старте, иначе дефолт (сменить в UI).
-ensureAuth(store, process.env.WEB_PASSWORD);
+// Пароль веб-панели: из env при первом старте. Если env пуст — генерируем
+// случайный и печатаем один раз (статического дефолта больше нет).
+const _auth = ensureAuth(store, process.env.WEB_PASSWORD);
+if (_auth.generated) {
+  console.log(
+    `[webauth] WEB_PASSWORD не задан — сгенерирован временный пароль веб-панели: ${_auth.password}`
+  );
+  console.log('[webauth] Смените его в настройках или задайте WEB_PASSWORD в окружении.');
+}
 
 const authed = (req) => validSession(store, parseCookies(req.headers.cookie).sm_session);
 

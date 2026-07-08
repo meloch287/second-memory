@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { handleMessage, captureEntry } from './brain.mjs';
+import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import {
   aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup,
   aiTranscribe, aiDescribeImage, audioFormatFromMime, aiTts,
@@ -803,7 +803,10 @@ export function startTelegramBot(store, token, log = console) {
       log.error('[telegram] friend', e.message);
     }
     if (!reply) {
-      return send(chatId, esc(sleepyText(chatId)));
+      // ИИ недоступен, но долг/встречу/задачу мы уже сохранили — подтверждаем это,
+      // иначе юзер думает, что запись не прошла, и вводит её повторно (дубль).
+      const note = captured ? ' ' + entryConfirmation(captured, userOffset(user)) : '';
+      return send(chatId, esc(sleepyText(chatId) + note));
     }
     reply = withWake(chatId, reply);
     store.pushHistory('user', text, String(chatId));

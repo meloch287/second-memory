@@ -211,27 +211,30 @@ async function route(store, text, now, chatId = 'web') {
   }
 }
 
-function saveEntry(store, entry, off = null) {
-  const e = store.add(entry);
-  let reply;
+// Текст подтверждения для УЖЕ сохранённой записи (без повторного store.add).
+// Вынесено, чтобы бот мог подтвердить тихо пойманную запись при сбое ИИ.
+export function entryConfirmation(e, off = null) {
   if (e.type === 'debt') {
     const sum = e.amount != null ? money(e.amount) : 'сумма не указана';
     const till = e.due ? `, срок до ${fmtDate(e.due, false, off)}` : '';
     if (e.direction === 'out') {
-      reply = `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
-    } else if (e.counterparty) {
-      reply = `Записал долг №${e.id}: ${e.counterparty} должен вам ${sum}${till}.`;
-    } else {
-      reply = `Записал долг №${e.id}: вам должны ${sum}${till}.`;
+      return `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
     }
-  } else if (e.type === 'meeting') {
-    reply = `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime, off)}` : ', дата не указана'}.`;
-  } else if (e.type === 'task') {
-    reply = `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime, off)}` : ''}.`;
-  } else {
-    reply = `Сохранил заметку №${e.id}: «${e.title}».`;
+    if (e.counterparty) return `Записал долг №${e.id}: ${e.counterparty} должен вам ${sum}${till}.`;
+    return `Записал долг №${e.id}: вам должны ${sum}${till}.`;
   }
-  return { reply, entry: e };
+  if (e.type === 'meeting') {
+    return `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime, off)}` : ', дата не указана'}.`;
+  }
+  if (e.type === 'task') {
+    return `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime, off)}` : ''}.`;
+  }
+  return `Сохранил заметку №${e.id}: «${e.title}».`;
+}
+
+function saveEntry(store, entry, off = null) {
+  const e = store.add(entry);
+  return { reply: entryConfirmation(e, off), entry: e };
 }
 
 // Пользователь видит и закрывает только СВОИ записи (мультиюзер).

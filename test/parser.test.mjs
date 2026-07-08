@@ -163,3 +163,65 @@ test('регрессия: «через месяц» с 31 января не пе
   const jan31 = new Date(2026, 0, 31, 9, 0);
   assert.equal(day(extractDate('через месяц', jan31).when), '2026-02-28');
 });
+
+// --- Таймер/будильник: раньше падали в note из-за кириллицы + \b ---
+test('таймер: «поставь мне таймер на 5 минут» → задача с временем', () => {
+  const p = parseMessage('поставь мне таймер на 5 минут', NOW);
+  assert.equal(p.kind, 'entry');
+  assert.equal(p.entry.type, 'task');
+  assert.equal(p.entry.hasTime, true);
+});
+
+test('будильник: «мне нужен будильник на завтра в 7 утра» → задача', () => {
+  const p = parseMessage('мне нужен будильник на завтра в 7 утра', NOW);
+  assert.equal(p.kind, 'entry');
+  assert.equal(p.entry.type, 'task');
+  assert.equal(p.entry.hasTime, true);
+});
+
+test('таймер в начале фразы всё ещё работает', () => {
+  const p = parseMessage('таймер на 10 минут', NOW);
+  assert.equal(p.entry.type, 'task');
+});
+
+// --- Долги «занял/одолжил»: раньше direction:in + counterparty:null ---
+test('долг: «я занял у Пети 5000» → я должен (out), Петя', () => {
+  const p = parseMessage('я занял у Пети 5000', NOW);
+  assert.equal(p.entry.type, 'debt');
+  assert.equal(p.entry.amount, 5000);
+  assert.equal(p.entry.direction, 'out');
+  assert.equal(p.entry.counterparty, 'Пети');
+});
+
+test('долг: «занял 3000 у Васи на неделю» (сумма перед «у») → out, Вася', () => {
+  const p = parseMessage('занял 3000 у Васи на неделю', NOW);
+  assert.equal(p.entry.type, 'debt');
+  assert.equal(p.entry.amount, 3000);
+  assert.equal(p.entry.direction, 'out');
+  assert.equal(p.entry.counterparty, 'Васи');
+});
+
+test('долг: «я одолжил у Игоря 2000» → out, Игорь', () => {
+  const p = parseMessage('я одолжил у Игоря 2000', NOW);
+  assert.equal(p.entry.direction, 'out');
+  assert.equal(p.entry.counterparty, 'Игоря');
+});
+
+test('долг: «одолжил Диме 5000» (дал в долг) → мне должны (in), Дима', () => {
+  const p = parseMessage('одолжил Диме 5000', NOW);
+  assert.equal(p.entry.type, 'debt');
+  assert.equal(p.entry.direction, 'in');
+  assert.equal(p.entry.counterparty, 'Диме');
+});
+
+test('долг: «одолжил денег другу 5000» → in, Друг', () => {
+  const p = parseMessage('одолжил денег другу 5000', NOW);
+  assert.equal(p.entry.direction, 'in');
+  assert.equal(p.entry.counterparty, 'Другу');
+});
+
+test('регрессия: «Иванов должен 50000» по-прежнему in/Иванов', () => {
+  const p = parseMessage('Иванов должен 50000', NOW);
+  assert.equal(p.entry.direction, 'in');
+  assert.equal(p.entry.counterparty, 'Иванов');
+});
