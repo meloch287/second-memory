@@ -627,7 +627,7 @@ export async function aiSearch(store, chatId, query, now = new Date()) {
     ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${fmtUser(f.ts, off, false)})`) : ['- ничего -']),
     '',
     'СВЯЗАННЫЕ ДЕЛА:',
-    ...(relEntries.length ? relEntries.map((e) => fmtEntry(e, off)) : ['- ничего -']),
+    ...(relEntries.length ? relEntries.map((e) => fmtEntry(e, off, now)) : ['- ничего -']),
   ].join('\n');
   return ask(
     [
