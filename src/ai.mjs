@@ -50,7 +50,7 @@ const stripThink = (s) =>
     .replace(/^[ \t]*\*[ \t]+/gm, '• ')    // «* пункт» -> «• пункт»
     .trim();
 
-import { userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
+import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 
 // Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
 // формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
@@ -204,15 +204,29 @@ function fmtLocal(iso, withTime) {
   return withTime ? `${day} ${pad(d.getHours())}:${pad(d.getMinutes())}` : day;
 }
 
-function fmtEntry(e, off = DEFAULT_OFFSET) {
+function fmtEntry(e, off = DEFAULT_OFFSET, now = new Date()) {
   const parts = [`№${e.id} [${e.type}] [${e.status}]`];
   if (e.counterparty) parts.push(`контрагент: ${e.counterparty}`);
   if (e.amount != null) parts.push(`сумма: ${e.amount} руб`);
   if (e.type === 'debt') parts.push(e.direction === 'out' ? 'мы должны' : 'должны нам');
   if (e.title) parts.push(e.title);
-  if (e.due) parts.push(`срок: ${fmtUser(e.due, off, e.hasTime)}`);
+  // Срок с ГОТОВОЙ относительной подписью (через сколько) — модель не считает сама.
+  if (e.due) parts.push(`срок: ${fmtUser(e.due, off, e.hasTime)} (${relDay(e.due, now, off)})`);
   parts.push(`создано: ${(e.createdAt || '').slice(0, 10)}`);
   return parts.join(' | ');
+}
+
+// Явный «якорь дат» для модели: сегодня/завтра числом + запрет считать даты
+// самому. Без него модель путала относительные даты (дату через 5 дней звала
+// «завтра»). Пояс — пользовательский (не серверный fmtLocal).
+function dateHeader(off, now) {
+  const today = fmtUser(now.toISOString(), off, false);
+  const tomorrow = fmtUser(new Date(now.getTime() + 86400000).toISOString(), off, false);
+  const w = new Date(now.getTime() + off * 60000);
+  return (
+    `Сегодня ${today} (${WEEKDAYS_RU[w.getUTCDay()]}), сейчас ${fmtUser(now.toISOString(), off, true)}. Завтра ${tomorrow}. ` +
+    `ВАЖНО про даты: «сегодня» — это только ${today}, «завтра» — только ${tomorrow}. Любую другую дату называй числом (ДД.ММ) или бери готовую подпись в скобках рядом со сроком; НЕ вычисляй «завтра / через сколько» сам.`
+  );
 }
 
 // Форматирование без привязки к языку (для друга - он зеркалит язык юзера).
@@ -228,6 +242,7 @@ const systemWeb = (name) =>
   `Ты «${name}» - умный личный ассистент человека, свободный как ChatGPT. Человек назвал тебя «${name}» - ЭТО ТВОЁ ИМЯ: откликайся на него и представляйся им (на вопрос «кто ты» отвечай, что ты «${name}»). НО «${name}» - твоё имя, а НЕ имя человека: НИКОГДА не обращайся к человеку этим именем и не подписывай им реплики («всё норм, ${name}» / «держи, ${name}» - так писать НЕЛЬЗЯ). Имя человека тебе неизвестно - просто отвечай без обращения по имени. Тебе дают выгрузку его базы: долги («должны нам» = ему должны, «мы должны» = он должен), встречи, задачи, заметки и последние сообщения диалога - это твоя память о нём, всегда учитывай её как контекст. Когда вопрос про его дела - отвечай по базе; на общие вопросы, просьбы и разговоры отвечай свободно и по делу, своими знаниями. Ты запоминаешь важное сам, в фоне - НИКОГДА не пиши «сохранил заметку», «записал», «запомнил», «заметка сохранена» в ответ на приветствия, болтовню и обычные сообщения; просто отвечай по-человечески, без отчётов о сохранении. ${STYLE}`;
 
 function buildContext(store, now, chatId = null, query = '') {
+  const off = userOffset(store.getUser(chatId));
   const open = store.list({ status: 'open', chatId });
   const done = store.list({ chatId }).filter((e) => e.status !== 'open').slice(-15);
   // Старые системные подтверждения («Сохранил заметку №N», «Записал долг»)
@@ -236,16 +251,16 @@ function buildContext(store, now, chatId = null, query = '') {
     .filter((h) => !(h.role === 'assistant' && /^\s*(?:сохранил|записал|запомнил|готово|удалил|заметк|очистил|стёр|стер)/i.test(h.text)));
   const facts = store.factsFor(chatId, query, 30);
   return [
-    `Сейчас: ${fmtLocal(now.toISOString(), true)} (локальное время пользователя).`,
+    dateHeader(off, now),
     '',
     `ПАМЯТЬ О ЧЕЛОВЕКЕ (факты из прошлых разговоров, ${facts.length}):`,
     ...(facts.length ? facts.map((f) => `- ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''}`) : ['- пока пусто -']),
     '',
     `ОТКРЫТЫЕ ЗАПИСИ (${open.length}):`,
-    ...(open.length ? open.map(fmtEntry) : ['- пусто -']),
+    ...(open.length ? open.map((e) => fmtEntry(e, off, now)) : ['- пусто -']),
     '',
     `НЕДАВНО ЗАКРЫТЫЕ (${done.length}):`,
-    ...(done.length ? done.map(fmtEntry) : ['- пусто -']),
+    ...(done.length ? done.map((e) => fmtEntry(e, off, now)) : ['- пусто -']),
     '',
     'ПОСЛЕДНИЕ СООБЩЕНИЯ ДИАЛОГА:',
     ...(history.length
@@ -519,7 +534,7 @@ const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вто
 function nowLine(off, now) {
   const w = new Date(now.getTime() + off * 60000);
   const hour = w.getUTCHours();
-  return `Сейчас у пользователя: ${fmtUser(now.toISOString(), off, true)}, ${WEEKDAYS_RU[w.getUTCDay()]}, ${partOfDay(hour)}.`;
+  return `${dateHeader(off, now)} Время суток: ${partOfDay(hour)}.`;
 }
 
 function friendContext(store, chatId, query, now, smartFacts = null) {
@@ -554,7 +569,7 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
       ? ['НЕДАВНЯЯ ПЕРЕПИСКА (сырьё, ещё не разложено в память):', ...fresh.map((r) => `- ${r.text.slice(0, 200)} (${fmtUser(r.ts, off, false)})`), '']
       : []),
     'ДЕЛА И ДОЛГИ (структурированные записи):',
-    ...(open.length ? open.map((e) => fmtEntry(e, off)) : ['- пока пусто -']),
+    ...(open.length ? open.map((e) => fmtEntry(e, off, now)) : ['- пока пусто -']),
     '',
     'ПОСЛЕДНИЕ СООБЩЕНИЯ:',
     ...history.map((h) => {
@@ -631,21 +646,22 @@ export async function aiSearch(store, chatId, query, now = new Date()) {
 
 export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
-  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const todayRaw = store.rawForDay(chatId, dayStart, dayStart + 86400000);
+  const off = userOffset(user);
+  const { start, end } = userDayBounds(user, now); // «сегодня» в поясе юзера, не сервера
+  const todayRaw = store.rawForDay(chatId, start, end);
   const weekFacts = store.factsFor(chatId, '', 40);
   const open = store.list({ status: 'open', chatId }).slice(0, 30);
   const context = [
-    `Сейчас: ${fmtLocal(now.toISOString(), true)}.`,
+    dateHeader(off, now),
     '',
     'ЗАПИСИ ЗА СЕГОДНЯ (с временем):',
-    ...(todayRaw.length ? todayRaw.map((r) => `${fmtLocal(r.ts, true)}: ${r.text}`) : ['- сегодня записей не было -']),
+    ...(todayRaw.length ? todayRaw.map((r) => `${fmtUser(r.ts, off, true)}: ${r.text}`) : ['- сегодня записей не было -']),
     '',
     'ФАКТЫ ЗА ПОСЛЕДНЕЕ ВРЕМЯ:',
-    ...weekFacts.map((f) => `- ${f.text} (${fmtLocal(f.ts, false)})`),
+    ...weekFacts.map((f) => `- ${f.text} (${fmtUser(f.ts, off, false)})`),
     '',
     'ОТКРЫТЫЕ ДЕЛА И ДОЛГИ:',
-    ...(open.length ? open.map(fmtEntry) : ['- пусто -']),
+    ...(open.length ? open.map((e) => fmtEntry(e, off, now)) : ['- пусто -']),
   ].join('\n');
 
   return ask(
@@ -778,9 +794,10 @@ export async function aiMorningPing(user, eventLines, now = new Date()) {
       {
         role: 'user',
         content:
-          `Сейчас ${fmtUser(now.toISOString(), userOffset(user), true)}. Утро. Вот его дела на сегодня и просроченное:\n` +
+          dateHeader(userOffset(user), now) + ' Утро. Вот его дела на сегодня и просроченное:\n' +
           eventLines.join('\n') +
-          '\n\nНапиши одно короткое дружеское утреннее сообщение: поздоровайся и напомни про дела своими словами. Без списков, 2-3 предложения.',
+          '\n\nНапиши ОДНО короткое дружеское утреннее сообщение (2-3 предложения): поздоровайся и напомни про дела своими словами. ' +
+          'НЕ зачитывай и не повторяй служебные строки контекста дословно, НЕ пиши «понял»/«запомнил»/«принял» - это твоя утренняя весточка, а не ответ на сообщение. Даты называй строго по правилу выше. Без списков.',
       },
     ],
     { maxTokens: 400, timeoutMs: 30000, retryDelays: [0, 5000] }

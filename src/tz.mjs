@@ -117,6 +117,30 @@ export function combineDayTime(offsetMin, dayIso, timeIso) {
   ).toISOString();
 }
 
+// Относительная подпись к дате в поясе пользователя: сегодня / завтра /
+// послезавтра / вчера / через N дней / N дней назад. Считаем ДЕТЕРМИНИРОВАННО
+// по индексу суток, чтобы модель НЕ вычисляла относительные даты сама (она
+// путала: называла дату через 5 дней «завтра»).
+function _plurDays(n) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return 'день';
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'дня';
+  return 'дней';
+}
+export function relDay(iso, now = new Date(), offsetMin = DEFAULT_OFFSET) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const dayIdx = (ms) => Math.floor((ms + offsetMin * 60000) / 86400000); // сутки в поясе юзера
+  const d = dayIdx(t) - dayIdx(now.getTime());
+  if (d === 0) return 'сегодня';
+  if (d === 1) return 'завтра';
+  if (d === 2) return 'послезавтра';
+  if (d === -1) return 'вчера';
+  if (d === -2) return 'позавчера';
+  if (d > 0) return `через ${d} ${_plurDays(d)}`;
+  return `${-d} ${_plurDays(-d)} назад`;
+}
+
 // Формат даты в tz пользователя.
 export function fmtUser(iso, offsetMin = DEFAULT_OFFSET, withTime = false) {
   const d = new Date(new Date(iso).getTime() + offsetMin * 60000);
