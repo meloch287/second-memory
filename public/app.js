@@ -1025,8 +1025,33 @@ function showReminderToast(r) {
   close.addEventListener('click', () => el.remove());
   el.append(icon, txt, close);
   reminderToasts.appendChild(el);
-  announce(`Напоминание: ${label}: ${r.title}`);
+  // Не объявляем здесь: напоминание озвучивает лента чата (см. appendReminder),
+  // иначе одно событие проговаривалось бы дважды.
   setTimeout(() => { if (el.isConnected) el.remove(); }, 30000);
+}
+
+// Напоминание отдельным сообщением В ЛЕНТЕ ЧАТА (остаётся в истории, как у бота).
+// Своя семантика: скрытый лейбл «Напоминание.» (не «Ассистент:», ведь это не ответ),
+// 🔔 декоративна (aria-hidden). Объявляется ровно один раз через #chat-log (role=log).
+function appendReminder(r) {
+  const label = r.type === 'meeting' ? 'Встреча' : r.type === 'debt' ? 'Долг' : 'Напоминание';
+  const wrap = document.createElement('div');
+  wrap.className = 'message message--assistant message--reminder';
+
+  const who = document.createElement('span');
+  who.className = 'visually-hidden';
+  who.textContent = 'Напоминание.';
+
+  const icon = document.createElement('span');
+  icon.className = 'message-reminder__icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '🔔';
+
+  const p = document.createElement('p');
+  p.textContent = r.type === 'meeting' || r.type === 'debt' ? `${label}: ${r.title}` : r.title;
+
+  wrap.append(who, icon, p);
+  addToLog(wrap);
 }
 
 async function pollReminders() {
@@ -1034,7 +1059,8 @@ async function pollReminders() {
     const res = await fetch('/api/reminders/due');
     if (!res.ok) return;
     const data = await res.json();
-    (data.reminders || []).forEach(showReminderToast);
+    // Сначала в ленту (постоянное сообщение + озвучка), затем визуальный тост.
+    (data.reminders || []).forEach((r) => { appendReminder(r); showReminderToast(r); });
   } catch { /* сеть моргнула - в следующий тик */ }
 }
 

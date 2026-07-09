@@ -153,8 +153,10 @@
     </aside>
   </div>
 
-  <!-- Всплывашки напоминаний (веб): «пора сделать X». Вежливый live-region. -->
-  <div id="reminder-toasts" class="reminder-toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+  <!-- Всплывашки напоминаний (веб): визуальный угловой cue. Озвучивает само
+       напоминание лента чата (#chat-log, role=log) — тост намеренно без live-семантики,
+       иначе одно напоминание проговаривалось бы дважды. -->
+  <div id="reminder-toasts" class="reminder-toasts"></div>
 
   <!-- Настройки: нативный модальный <dialog> (сосед .app, не потомок) -->
   <dialog id="settings-modal" class="settings-modal" aria-labelledby="settings-title">

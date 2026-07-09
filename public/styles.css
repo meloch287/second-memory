@@ -225,6 +225,22 @@ h1::after {
   align-items: flex-start;
 }
 
+/* Напоминание в ленте: как реплика ассистента, но с акцентной линией слева и
+   колокольчиком. Отличие не только цветом — 🔔 + текст «Встреча/Долг/…». */
+.message--reminder {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+}
+.message--reminder p {
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+.message-reminder__icon {
+  flex: none;
+  line-height: 1.4;
+}
+
 .message--user { justify-content: flex-end; }
 
 .message--user p {

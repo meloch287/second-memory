@@ -70,10 +70,11 @@ export async function handleMessage(store, text, now = new Date(), chatId = 'web
 // chatId привязывает запись к пользователю - /reset стирает и их.
 // offsetMin - часовой пояс пользователя: срок из фразы («в 15:00») считаем
 // в его времени и храним в реальном UTC.
-export function captureEntry(store, text, now = new Date(), chatId = 'web', offsetMin = 180) {
-  const p = parseMessage(text, now);
-  if (p.kind !== 'entry' || p.entry.type === 'note') return null;
-  const entry = { ...p.entry, chatId };
+// Приводит срок записи к настенному времени пользователя, а задаче-напоминанию
+// с датой без времени («напомни завтра оплатить») ставит полдень — иначе точное
+// напоминание не сработает (фильтры due требуют hasTime). Едина для бота
+// (captureEntry) и веба (route), чтобы напоминания вели себя одинаково.
+export function normalizeReminderDue(entry, text, now, offsetMin = DEFAULT_OFFSET) {
   if (entry.due) {
     const r = resolveWallDate(offsetMin, text, now); // срок в часовом поясе пользователя
     if (r.due) {
@@ -81,13 +82,18 @@ export function captureEntry(store, text, now = new Date(), chatId = 'web', offs
       entry.hasTime = r.hasTime;
     }
   }
-  // Задача-напоминание с датой, но без времени («напомни завтра оплатить») иначе
-  // никогда не сработает точным напоминанием - ставим полдень по поясу юзера.
   if (entry.type === 'task' && entry.due && !entry.hasTime) {
     const d = new Date(new Date(entry.due).getTime() + offsetMin * 60000); // настенное
     entry.due = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0) - offsetMin * 60000).toISOString();
     entry.hasTime = true;
   }
+  return entry;
+}
+
+export function captureEntry(store, text, now = new Date(), chatId = 'web', offsetMin = DEFAULT_OFFSET) {
+  const p = parseMessage(text, now);
+  if (p.kind !== 'entry' || p.entry.type === 'note') return null;
+  const entry = normalizeReminderDue({ ...p.entry, chatId }, text, now, offsetMin);
   return store.add(entry);
 }
 
@@ -174,7 +180,9 @@ async function route(store, text, now, chatId = 'web') {
           // ИИ недоступен — сохраняем заметку по-старому
         }
       }
-      return saveEntry(store, { ...p.entry, chatId }, off);
+      // Веб раньше сохранял срок «как распарсилось» (без полудня/пояса) → задачи
+      // без времени имели hasTime=false и НИКОГДА не напоминали. Нормализуем как бот.
+      return saveEntry(store, normalizeReminderDue({ ...p.entry, chatId }, text, now, off ?? DEFAULT_OFFSET), off);
     }
     case 'done':
       return markDone(store, p.target, chatId);

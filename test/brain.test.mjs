@@ -208,6 +208,19 @@ test('stripFakeSave: срезает фейковое «Сохранил заме
   assert.match(stripFakeSave('Здарова! Чем помочь?'), /Здарова/);
 });
 
+test('веб: напоминание без времени получает полдень+hasTime (паритет с ботом) → попадает в due', async () => {
+  const s = freshStore();
+  await handleMessage(s, 'напомни завтра позвонить врачу', NOW, 'web');
+  const e = s.list({ chatId: 'web' }).find((x) => x.type === 'task');
+  assert.ok(e, 'задача создана');
+  assert.equal(e.hasTime, true, 'без времени → полдень, hasTime=true (иначе напоминание не сработает)');
+  // эмулируем фильтр /api/reminders/due через час после наступления срока
+  const at = Date.parse(e.due) + 3600000;
+  const due = s.list({ status: 'open', chatId: 'web' })
+    .filter((x) => x.hasTime && x.due && !x.webShown && Date.parse(x.due) <= at && Date.parse(x.due) > at - 86400000);
+  assert.equal(due.length, 1, 'напоминание попадает в /api/reminders/due');
+});
+
 test('entryConfirmation: подтверждение уже сохранённой записи (для сбоя ИИ)', async () => {
   const { entryConfirmation, captureEntry } = await import('../src/brain.mjs');
   const s = freshStore();
