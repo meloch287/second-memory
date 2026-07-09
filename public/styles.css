@@ -917,8 +917,30 @@ h1::after {
   border-radius: 6px;
 }
 .reminder-toast__close:hover { background: rgba(255, 253, 248, 0.18); }
-.reminder-toast__close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Тёмный фон тоста: белая подложка спасает контраст кольца (было ~2.06:1). */
+.reminder-toast__close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px #FFFFFF;
+}
 @media (prefers-reduced-motion: reduce) { .reminder-toast { animation: none; } }
+
+/* Баннер «смените временный пароль». grid-column 1/-1 обязателен: иначе
+   баннер-ребёнок .app сталкивает main в узкую колонку панели. */
+.pass-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--pill-bg);
+  color: var(--ink);
+  border-left: 4px solid var(--focus-ring);
+  border-radius: 10px;
+}
+.pass-banner__text { flex: 1; min-width: 200px; }
+.pass-banner .icon-btn { flex: none; }
 
 /* Выбор направления памяти при подключении Telegram */
 .tg-dir-choice {

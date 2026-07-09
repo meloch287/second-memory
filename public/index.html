@@ -68,6 +68,15 @@
       <p class="tagline">Пишите или говорите. Я запишу долги, встречи и задачи. Спросите. Отвечу сразу.</p>
     </header>
 
+    <!-- Баннер «смените временный пароль»: role=status — единственный канал озвучки
+         (announce() не зовём, чтобы не дублировать; конвенция как у reminder-toasts). -->
+    <div id="pass-banner" class="pass-banner" role="status" hidden>
+      <span class="pass-banner__icon" aria-hidden="true">🔑</span>
+      <span class="pass-banner__text">Задан временный пароль — смените его в настройках.</span>
+      <button type="button" id="pass-banner-open" class="btn-ghost">Открыть настройки</button>
+      <button type="button" id="pass-banner-close" class="icon-btn" aria-label="Скрыть предупреждение">✕</button>
+    </div>
+
     <main id="main" tabindex="-1" aria-labelledby="chat-heading">
       <h2 id="chat-heading" class="visually-hidden">Диалог с ассистентом</h2>
 

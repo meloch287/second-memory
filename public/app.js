@@ -908,7 +908,27 @@ function applySettings() {
   reduceToggle.checked = motionOff;
   if (!webSettings.audio) { voiceToggle.disabled = true; voiceToggle.checked = false; }
   applyTgStatus();
+  syncPassBanner();
 }
+
+/* ---- Баннер «смените временный пароль» ---- */
+// role=status на самом баннере — единственный канал озвучки (без announce()).
+// «Скрыть» прячет до конца сессии вкладки; сам флаг гаснет только при смене пароля.
+
+const passBanner = document.getElementById('pass-banner');
+const passBannerOpen = document.getElementById('pass-banner-open');
+const passBannerClose = document.getElementById('pass-banner-close');
+
+function syncPassBanner() {
+  const show = !!webSettings.mustChangePass && sessionStorage.getItem('sm_pass_banner_off') !== '1';
+  passBanner.hidden = !show;
+}
+
+passBannerOpen.addEventListener('click', () => openSettings()); // фокус вернётся на кнопку (lastTrigger)
+passBannerClose.addEventListener('click', () => {
+  sessionStorage.setItem('sm_pass_banner_off', '1');
+  passBanner.hidden = true;
+});
 
 function syncVoiceEnabled() {
   const on = voiceToggle.checked && webSettings.audio;
@@ -1190,6 +1210,8 @@ pwForm.addEventListener('submit', async (e) => {
     pwStatus.textContent = 'Вход обновлён.';
     pwForm.reset();
     webSettings.login = loginNameInput.value.trim() || webSettings.login;
+    webSettings.mustChangePass = false; // сервер погасил флаг — прячем баннер
+    syncPassBanner();
   } catch {
     pwStatus.textContent = 'Не удалось сохранить. Попробуйте ещё раз.';
   }

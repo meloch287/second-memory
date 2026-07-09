@@ -54,7 +54,9 @@ export function ensureAuth(store, defaultPass) {
 }
 
 export function setPassword(store, newPassword) {
-  cfg(store).passHash = hashPassword(newPassword);
+  const c = cfg(store);
+  c.passHash = hashPassword(newPassword);
+  delete c.mustChangePass; // пароль сменён — баннер «смените пароль» больше не нужен
   store.save();
 }
 
@@ -78,6 +80,7 @@ export function getWebSettings(store) {
     voice: VOICES.includes(c.voice) ? c.voice : 'alloy',
     voices: VOICES,
     tgLinked: !!c.linkedChatId,
+    mustChangePass: !!c.mustChangePass, // баннер «смените временный пароль»
   };
 }
 
