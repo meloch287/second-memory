@@ -199,9 +199,9 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
       const events = todayEvents(store, chatId, now);
       const wl = user.city ? weatherLine(await todayWeather(user.city)) : null;
       if (events.length || wl) {
-        const ctx = [...events];
-        if (wl) ctx.push(wl);
-        const text = await aiMorningPing(user, ctx, now).catch(() => null);
+        // события и погода — РАЗДЕЛЬНО: иначе при пустых делах модель выдумывала
+        // задачи, чтобы «напомнить о делах» (см. aiMorningPing).
+        const text = await aiMorningPing(user, events, wl, now).catch(() => null);
         if (text) {
           await bot.sendText(chatId, text);
           store.pushHistory('assistant', text, chatId);
