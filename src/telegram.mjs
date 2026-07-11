@@ -1,107 +1,34 @@
 // Telegram-бот «друг и дневник». Три команды: /start /help /summary.
 // Всё остальное - живой разговор: сообщения падают в сырую базу,
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
+//
+// Файл разбит на кластеры-фабрики (тот же приём, что и group.mjs):
+// telegram-helpers.mjs - чистые константы/хелперы без состояния;
+// telegram-media.mjs   - скачивание/отправка файлов, аудио/видео/картинки;
+// telegram-intents.mjs - роутер спец-намерений (handleIntent);
+// telegram-router.mjs  - роутинг апдейтов (onMessage/onCallback).
+// Здесь остаётся ядро: транспорт, онбординг, разговор, доставка ответа,
+// и финальная сшивка всех кластеров через явные зависимости.
 
-import { spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import {
-  aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiFollowup,
-  aiTranscribe, aiDescribeImage, audioFormatFromMime, aiTts,
-  aiSummarizeDoc, aiSummarizeText,
+  aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiTts,
 } from './ai.mjs';
-import { extractDocxText } from './docx.mjs';
+import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import { buildIcs } from './ics.mjs';
-import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser, resolveWallDate, combineDayTime } from './tz.mjs';
+import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
-import { aiSearch } from './ai.mjs';
-import { parseMessage, parseGroupCmd, findMember } from './parser.mjs';
-import { consumeTgLink } from './webauth.mjs';
-import { balanceReport, expensesReport, monthCategorySpent, budgetsReport } from './finance.mjs';
-import { RUB } from './format.mjs';
-import { renderChart, chartAvailable } from './chart.mjs';
-import { aiChartSpec, aiSplit } from './ai.mjs';
 import { createGroupHandler } from './group.mjs';
-import { toCsv, toJson, toMarkdown } from './export.mjs';
-import { aiExtractReceipt } from './ai.mjs';
-import { parseTgExport, importIntoStore } from './importchat.mjs';
-import { currencyReply } from './currency.mjs';
 import { pickReaction, stickerMood } from './reactions.mjs';
+import { createMediaHandlers } from './telegram-media.mjs';
+import { createIntentHandler } from './telegram-intents.mjs';
+import { createMessageRouter } from './telegram-router.mjs';
+import {
+  COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
+  STEP_EXPLAIN, FALLBACKS, SLEEP_FIRST, SLEEP_AGAIN, WAKE_PREFIX, LOW_MOOD_RE,
+} from './telegram-helpers.mjs';
 
-
-// ffmpeg нужен только для кружков (video note) - вытащить аудиодорожку
-const hasFfmpeg = (() => {
-  try {
-    return spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
-  } catch {
-    return false;
-  }
-})();
-
-const COMMANDS = [
-  { command: 'summary', description: 'Итоги дня' },
-  { command: 'help', description: 'Как со мной общаться' },
-  { command: 'start', description: 'Поздороваться' },
-  { command: 'reset', description: 'Стереть мою память и начать заново' },
-];
-
-// Повторный /start не сбрасывает бота - он просто здоровается. 20 вариантов.
-const HELLO_AGAIN = [
-  '{name}! Ну что у тебя сегодня произошло?',
-  'О, {name}, ты вернулся! Как день прошёл?',
-  '{name}, привет! Рассказывай, что нового?',
-  'Мы уже знакомы, {name} 😄 Лучше расскажи, как твой день?',
-  'Я всё помню, {name}. А вот что было у тебя сегодня - ещё нет. Делись!',
-  '{name}, снова /start? Я никуда и не уходил 🙂 Что происходит у тебя?',
-  'Привет-привет, {name}! Чем сегодня жил?',
-  '{name}, я тут, я слушаю. Что случилось за день?',
-  'Опять знакомиться не будем, {name} 😉 Просто расскажи, как ты?',
-  'Рад тебя видеть, {name}! Что сегодня было интересного?',
-  '{name}, ну наконец-то! Скучал. Рассказывай новости.',
-  'Всё на месте, память со мной, {name}. Что запишем про сегодня?',
-  '{name}, как настроение? Что за день выдался?',
-  'Слушаю тебя, {name}. С чего начнём: дела или эмоции?',
-  '{name}, я готов. Вываливай всё, что накопилось 🙂',
-  'Что нового, {name}? Хоть одну хорошую новость давай!',
-  '{name}, привет! Кто-нибудь сегодня тебя удивил?',
-  'Я тут перечитывал наши записи, {name}. Ну а сегодня что было?',
-  '{name}, день к вечеру - самое время рассказать, как он прошёл.',
-  'Ну здравствуй ещё раз, {name} 😄 Что у тебя происходит?',
-];
-
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-// Ответ на шаге знакомства похож на встречный вопрос или непонимание,
-// а не на само значение. Кириллица: без \b, только includes/startsWith.
-export function isConfusedReply(text) {
-  const t = String(text).toLowerCase().replace(/ё/g, 'е').trim();
-  if (/\?\s*$/.test(t)) return true;
-  const starts = ['что', 'чего', 'зачем', 'почему', 'как это', 'в смысле', 'не понял', 'не понимаю', 'а это'];
-  if (starts.some((s) => t.startsWith(s))) return true;
-  return t.includes('что значит') || t.includes('что это') || t.includes('не знаю что');
-}
-
-// Живые объяснения каждого вопроса знакомства + повтор вопроса.
-const STEP_EXPLAIN = {
-  botname:
-    'А, это я про имя для себя 🙂 Ты будешь так ко мне обращаться, а я - подписываться. Подойдёт любое: Барни, Джарвис, Братан, хоть Пельмень.\n\nТак как меня назовёшь?',
-  name: 'Всё просто: скажи, как к тебе обращаться. Имя или прозвище, как удобно.\n\nТак как тебя называть?',
-  goal:
-    'Я спрашиваю, что сейчас занимает большую часть твоей жизни: работа, учёба, семья, спорт, отдых. Так мне проще понимать твои записи.\n\nЧто у тебя сейчас главное?',
-  tz: 'Мне нужен твой часовой пояс, чтобы напоминать вовремя, а не среди ночи. Нажми кнопку «📍 Отправить геолокацию» - определю сам. Или напиши город (Москва, Екатеринбург...) либо сдвиг вроде «+3».',
-};
-
-const FALLBACKS = [
-  'Слушай, я сегодня что-то туплю. Скажи ещё раз чуть иначе?',
-  'Кажется, я задумался и прослушал. Повтори, пожалуйста?',
-  'У меня сейчас туман в голове. Напиши ещё раз, я соберусь.',
-];
-
-const SLEEP_FIRST = 'Я устал... Пойду прилягу, поэтому пока не буду отвечать 😴';
-const SLEEP_AGAIN = 'Всё ещё сплю... 😴';
-const WAKE_PREFIX = 'Так, я выспался! 😄\n\n';
+// Реэкспорт для тестов (test/brain.test.mjs импортирует isConfusedReply отсюда).
+export { isConfusedReply } from './telegram-helpers.mjs';
 
 export function startTelegramBot(store, token, log = console) {
   if (!token) return null;
@@ -142,18 +69,6 @@ export function startTelegramBot(store, token, log = console) {
       ...threadExtra(chat_id),
       ...extra,
     });
-
-  // Фото (сжатое, как обычная картинка, не документ)
-  async function sendPhoto(chat_id, pngBuffer, caption) {
-    const form = new FormData();
-    form.append('chat_id', String(chat_id));
-    const th = activeThread.get(String(chat_id));
-    if (th) form.append('message_thread_id', String(th));
-    form.append('photo', new Blob([pngBuffer], { type: 'image/png' }), 'chart.png');
-    if (caption) form.append('caption', String(caption).slice(0, 1000));
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
-    return res.json();
-  }
 
   /* ---- Реакции и выученные стикеры (№8) ---- */
 
@@ -219,18 +134,6 @@ export function startTelegramBot(store, token, log = console) {
     return () => clearInterval(interval);
   }
 
-  // Отправка голосового: multipart, JSON тут не работает.
-  async function sendVoice(chat_id, oggBuffer, caption) {
-    const form = new FormData();
-    form.append('chat_id', String(chat_id));
-    const _th = activeThread.get(String(chat_id));
-    if (_th) form.append('message_thread_id', String(_th));
-    form.append('voice', new Blob([oggBuffer], { type: 'audio/ogg' }), 'reply.ogg');
-    if (caption) form.append('caption', String(caption).slice(0, 1000));
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendVoice`, { method: 'POST', body: form });
-    return res.json();
-  }
-
   // Обёртка: держим «печатает…» на время асинхронной работы.
   async function withTyping(chat_id, work) {
     const stop = typingLoop(chat_id);
@@ -239,14 +142,6 @@ export function startTelegramBot(store, token, log = console) {
     } finally {
       stop();
     }
-  }
-
-  async function downloadBase64(file_id) {
-    const info = await api('getFile', { file_id });
-    if (!info.ok) throw new Error('getFile failed');
-    const res = await fetch(`https://api.telegram.org/file/bot${token}/${info.result.file_path}`);
-    if (!res.ok) throw new Error('file download failed');
-    return Buffer.from(await res.arrayBuffer()).toString('base64');
   }
 
   /* ---- Онбординг: знакомство как с человеком ---- */
@@ -392,7 +287,7 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
-  /* ---- Спец-намерения: правки, повторы, поиск, календарь ---- */
+  /* ---- Мелкие хелперы, нужные роутеру намерений (telegram-intents.mjs) ---- */
 
   const kindOf = (t) => { const w = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' }; return w[t] || 'запись'; };
 
@@ -413,303 +308,7 @@ export function startTelegramBot(store, token, log = console) {
     ].join('\n');
   }
 
-  // Скачивание и понимание документа (PDF/DOCX/текст) -> краткая суть или null.
-  async function readDoc(doc, mime, name) {
-    const b64 = await downloadBase64(doc.file_id);
-    if (mime === 'application/pdf') return aiSummarizeDoc(b64, mime, name);
-    if (name.toLowerCase().endsWith('.docx')) {
-      const text = extractDocxText(Buffer.from(b64, 'base64'));
-      if (!text) throw new Error('docx: пустой текст');
-      return aiSummarizeText(text, name);
-    }
-    if (mime.startsWith('text/')) return aiSummarizeText(Buffer.from(b64, 'base64').toString('utf8'), name);
-    return null;
-  }
-
-  async function sendDocumentText(chatId, content, filename, mime, caption) {
-    const form = new FormData();
-    form.append('chat_id', String(chatId));
-    const _th = activeThread.get(String(chatId));
-    if (_th) form.append('message_thread_id', String(_th));
-    form.append('document', new Blob([content], { type: mime }), filename);
-    if (caption) form.append('caption', caption);
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
-    return res.json();
-  }
-
-  // Возвращает true, если сообщение обработано как спец-намерение.
-  async function handleIntent(chatId, user, text) {
-    const p = parseMessage(text, wall(user));
-
-    if (p.kind === 'done') {
-      const e = store.findEntry(String(chatId), p.target);
-      if (!e) { await send(chatId, `Не нашёл, что закрыть под «${esc(p.target)}». Скажи точнее?`); return true; }
-      if (e.status === 'done') { await send(chatId, 'Это уже закрыто 🙂'); return true; }
-      store.setStatus(e.id, 'done');
-      await send(chatId, `Готово, закрыл: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» 👍`);
-      return true;
-    }
-
-    if (p.kind === 'delete') {
-      const e = store.findEntry(String(chatId), p.target);
-      if (!e) { await send(chatId, `Не нашёл, что удалить под «${esc(p.target)}».`); return true; }
-      store.remove(e.id);
-      await send(chatId, `Удалил: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}».`);
-      return true;
-    }
-
-    if (p.kind === 'edit') {
-      const e = store.findEntry(String(chatId), p.target);
-      if (!e) { await send(chatId, `Не нашёл, что ты имеешь в виду под «${esc(p.target)}». Скажи точнее?`); return true; }
-      if (p.op === 'cancel') {
-        store.setStatus(e.id, 'done');
-        await send(chatId, `Отменил: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}». Убрал из дел.`);
-        return true;
-      }
-      // reschedule: пересчитываем время из фразы в tz пользователя
-      const off = userOffset(user);
-      const r = resolveWallDate(off, text, new Date());
-      if (!r.due) { await send(chatId, 'На когда перенести? Скажи дату или время.'); return true; }
-      // Правильно комбинируем день и время: то, что не задано в фразе,
-      // берём из старой записи. «на 16:00» -> день прежний; «на пятницу» -> время прежнее.
-      const hasDayWord = /завтра|послезавтра|сегодня|понедельник|вторник|сред|четверг|пятниц|суббот|воскресень|\d{1,2}[.\/]\d{1,2}|числа|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр|недел/.test(
-        text.toLowerCase().replace(/ё/g, 'е')
-      );
-      let due, hasTime;
-      if (r.hasTime && hasDayWord) {
-        due = r.due; hasTime = true;
-      } else if (r.hasTime && !hasDayWord) {
-        due = e.due ? combineDayTime(off, e.due, r.due) : r.due; hasTime = true; // новое время, день прежний
-      } else if (!r.hasTime && hasDayWord) {
-        due = e.due && e.hasTime ? combineDayTime(off, r.due, e.due) : r.due; hasTime = Boolean(e.hasTime); // новый день, время прежнее
-      } else {
-        due = r.due; hasTime = false;
-      }
-      store.patch(e.id, { due, hasTime, reminded: false });
-      await send(chatId, `Перенёс: ${kindOf(e.type)} «${esc(e.title || e.counterparty || '')}» теперь на ${esc(fmtUser(due, off, hasTime))}.`);
-      return true;
-    }
-
-    if (p.kind === 'recurring') {
-      store.addRecurring({ chatId: String(chatId), title: p.title, ...p.rule });
-      const when =
-        p.rule.kind === 'daily' ? `каждый день в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`
-        : p.rule.kind === 'weekly' ? `каждую неделю (${['вс','пн','вт','ср','чт','пт','сб'][p.rule.weekday]}) в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`
-        : `каждый месяц ${p.rule.day} числа в ${p.rule.hour}:${String(p.rule.min).padStart(2, '0')}`;
-      store.addRaw(chatId, text);
-      await send(chatId, `Запомнил повтор: «${esc(p.title)}» - ${when}. Буду напоминать 🔁`);
-      return true;
-    }
-
-    if (p.kind === 'search') {
-      if (!aiEnabled()) {
-        await send(chatId, 'Поиск по памяти работает через ИИ, а ключ пока не задан. Но всё, что ты пишешь, я исправно храню.');
-        return true;
-      }
-      try {
-        const answer = await withTyping(chatId, () => aiSearch(store, String(chatId), p.query, wall(user)));
-        await send(chatId, esc(answer));
-      } catch (e) {
-        log.error('[telegram] search', e.message);
-        await send(chatId, esc(sleepyText(chatId)));
-      }
-      return true;
-    }
-
-    if (p.kind === 'balance') {
-      await send(chatId, esc(balanceReport(store, String(chatId), userOffset(user))));
-      return true;
-    }
-
-    // Дни рождения (№4): сохранить и показать; поздравляет scheduler
-    if (p.kind === 'birthday') {
-      const who = p.person || user?.name || 'Ты';
-      const birthdays = { ...(store.getUser(String(chatId))?.birthdays || {}) };
-      birthdays[who] = `${p.day}.${p.month}`;
-      store.setUser(String(chatId), { birthdays });
-      store.addFacts([{ chatId: String(chatId), text: `День рождения ${who} - ${p.day}.${String(p.month).padStart(2, '0')}`, people: [who] }]);
-      await send(chatId, `Записал: др ${esc(who)} - ${p.day}.${String(p.month).padStart(2, '0')} 🎂 Поздравлю и напомню.`);
-      return true;
-    }
-    if (p.kind === 'birthdays') {
-      const birthdays = store.getUser(String(chatId))?.birthdays || {};
-      const list = Object.entries(birthdays);
-      if (!list.length) { await send(chatId, 'Пока ни одного др не знаю. Скажи «у Димы др 15 августа» - запомню.'); return true; }
-      const lines = list
-        .map(([who, dm]) => ({ who, dm, key: dm.split('.').reverse().map((x) => x.padStart(2, '0')).join('') }))
-        .sort((a, b) => a.key.localeCompare(b.key))
-        .map(({ who, dm }) => `🎂 ${who}: ${dm.split('.').map((x) => x.padStart(2, '0')).join('.')}`);
-      await send(chatId, esc('Дни рождения:\n' + lines.join('\n')));
-      return true;
-    }
-
-    // Курсы валют (№12)
-    if (p.kind === 'currency') {
-      try {
-        await send(chatId, esc(await currencyReply(p.request)));
-      } catch (e) {
-        log.error('[telegram] currency', e.message);
-        await send(chatId, 'Курс сейчас не достался. Попробуй через минуту?');
-      }
-      return true;
-    }
-
-    if (p.kind === 'expenses') {
-      await send(chatId, esc(expensesReport(store, String(chatId), userOffset(user))));
-      return true;
-    }
-
-    if (p.kind === 'chart') {
-      if (!aiEnabled()) { await send(chatId, 'Для графиков нужен ИИ, а ключа нет.'); return true; }
-      if (!chartAvailable()) { await send(chatId, 'Рисовалка графиков не настроена на сервере (нет matplotlib).'); return true; }
-      const stop = typingLoop(chatId, 'upload_photo');
-      try {
-        const spec = await aiChartSpec(store, String(chatId), p.request);
-        if (spec.refuse) {
-          await send(chatId, esc(`Пока не из чего рисовать: ${spec.refuse}. Накидай данных - и построю.`));
-          return true;
-        }
-        const png = renderChart(spec);
-        const r = await sendPhoto(chatId, png, spec.comment || spec.title || '');
-        if (!r.ok) throw new Error(r.description || 'sendPhoto failed');
-      } catch (e) {
-        log.error('[telegram] chart', e.message);
-        await send(chatId, 'График не собрался. Попробуй переформулировать?');
-      } finally {
-        stop();
-      }
-      return true;
-    }
-
-    if (p.kind === 'expense') {
-      store.add({ type: 'expense', title: p.category, category: p.category, amount: p.amount, chatId: String(chatId), text: p.text, status: 'done' });
-      store.addRaw(String(chatId), p.text); // пусть попадёт и в память дневника
-      let note = '';
-      // бюджет (№8): предупреждаем при 80%, ругаемся при перерасходе
-      const budgets = store.getUser(String(chatId))?.budgets || {};
-      for (const [cat, limit] of Object.entries(budgets)) {
-        const c = cat.toLowerCase().replace(/ё/g, 'е');
-        const pc = p.category.toLowerCase().replace(/ё/g, 'е');
-        if (c === pc || c.includes(pc) || pc.includes(c)) {
-          const spent = monthCategorySpent(store, String(chatId), cat, userOffset(user));
-          if (spent > limit) note = `\n🔴 Бюджет «${esc(cat)}» пробит: ${RUB.format(spent)} из ${RUB.format(limit)} ₽!`;
-          else if (spent >= limit * 0.8) note = `\n🟡 Уже ${RUB.format(spent)} из ${RUB.format(limit)} ₽ по «${esc(cat)}» - аккуратнее.`;
-        }
-      }
-      await send(chatId, `Записал трату: ${esc(p.category)} - ${RUB.format(p.amount)} ₽ 💸${note}`);
-      return true;
-    }
-
-    if (p.kind === 'setbudget') {
-      const budgets = { ...(store.getUser(String(chatId))?.budgets || {}) };
-      budgets[p.category] = p.amount;
-      store.setUser(String(chatId), { budgets });
-      await send(chatId, `Принял: бюджет на «${esc(p.category)}» - ${RUB.format(p.amount)} ₽ в месяц. Предупрежу на 80%.`);
-      return true;
-    }
-
-    if (p.kind === 'budgets') {
-      await send(chatId, esc(budgetsReport(store, String(chatId), userOffset(user))));
-      return true;
-    }
-
-    if (p.kind === 'poll') {
-      const r = await api('sendPoll', { chat_id: chatId, question: p.question, options: p.options.map((o) => ({ text: o })), is_anonymous: false });
-      if (!r.ok) await send(chatId, 'Опрос не создался: ' + esc(r.description || 'ошибка'));
-      return true;
-    }
-
-    if (p.kind === 'split') {
-      if (!aiEnabled()) { await send(chatId, 'Для подсчёта складчины нужен ИИ, а ключа нет.'); return true; }
-      try {
-        const answer = await withTyping(chatId, () => aiSplit(store, String(chatId), p.request));
-        await send(chatId, esc(answer));
-      } catch (e) {
-        log.error('[telegram] split', e.message);
-        await send(chatId, 'Не смог посчитать. Попробуй ещё раз?');
-      }
-      return true;
-    }
-
-    if (p.kind === 'forget') {
-      const n = store.removeFactsMatching(String(chatId), p.target);
-      await send(chatId, n ? `Забыл про «${esc(p.target)}». Стёр из памяти.` : `А про «${esc(p.target)}» я ничего и не помнил.`);
-      return true;
-    }
-
-    if (p.kind === 'correct') {
-      const n = store.removeRecentFacts(String(chatId), 2);
-      await send(chatId, n ? 'Понял, стёр последнее из памяти. Расскажи, как правильно - запомню заново.' : 'Ок, я и не записал ничего такого. Как оно на самом деле?');
-      return true;
-    }
-
-    if (p.kind === 'setvoice') {
-      store.setUser(String(chatId), { voiceReplies: p.on });
-      await send(chatId, p.on ? 'Окей, теперь отвечаю голосом 🎙' : 'Понял, отвечаю текстом.');
-      return true;
-    }
-
-    if (p.kind === 'voiceonce') {
-      if (!audioEnabled()) { await send(chatId, 'Голосом пока не могу - нет ключа озвучки. Отвечу текстом.'); return true; }
-      // ставим флаг и пускаем текст дальше в разговор: бот сразу ответит
-      // голосом на сам вопрос («запиши голосовым, что думаешь про...»)
-      store.setUser(String(chatId), { voiceNext: true });
-      return false;
-    }
-
-    if (p.kind === 'export') {
-      await send(chatId, 'В каком виде выгрузить твою память?', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📊 CSV (для Excel)', callback_data: 'exp_csv' }, { text: '📝 Дневник (Markdown)', callback_data: 'exp_md' }],
-            [{ text: '🗄 Всё (JSON)', callback_data: 'exp_json' }, { text: 'Не надо', callback_data: 'exp_no' }],
-          ],
-        },
-      });
-      return true;
-    }
-
-    if (p.kind === 'settings') {
-      await send(chatId, settingsText(user));
-      return true;
-    }
-    if (p.kind === 'setlead') {
-      store.setUser(chatId, { remindLead: p.minutes });
-      await send(chatId, `Готово, буду напоминать за ${p.minutes} мин до дела.`);
-      return true;
-    }
-    if (p.kind === 'setcity') {
-      const off = parseTz(p.city);
-      store.setUser(chatId, { city: p.city, ...(off != null ? { tzOffset: off } : {}) });
-      await send(chatId, `Запомнил город: ${esc(p.city)}. Буду показывать погоду по утрам${off != null ? ' и подстрою часовой пояс' : ''}.`);
-      return true;
-    }
-    if (p.kind === 'settz') {
-      const off = parseTz(p.text);
-      if (off == null) { await send(chatId, 'Не понял пояс. Напиши город или сдвиг вроде «+3».'); return true; }
-      store.setUser(chatId, { tzOffset: off });
-      await send(chatId, `Поставил часовой пояс. Теперь напоминания в твоё время.`);
-      return true;
-    }
-
-    if (p.kind === 'calendar') {
-      const events = upcomingEvents(String(chatId));
-      if (!events.length) { await send(chatId, 'Пока нет встреч или задач со временем для календаря телефона.'); return true; }
-      const off = userOffset(user);
-      const list = events.slice(0, 8).map((e) => `• ${e.title || e.counterparty} - ${fmtUser(e.due, off, e.hasTime)}`).join('\n');
-      await send(chatId, `Держу в памяти ${events.length} событий. Что закинуть в календарь телефона?\n${esc(list)}`, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📅 Всё расписание', callback_data: 'cal_all' }, { text: '📅 Только на неделю', callback_data: 'cal_week' }],
-            [{ text: 'Не надо', callback_data: 'cal_no' }],
-          ],
-        },
-      });
-      return true;
-    }
-
-    return false;
-  }
+  /* ---- Будущие события и календарь телефона ---- */
 
   // Будущие события пользователя (встречи и задачи со временем), свежие тоже.
   function upcomingEvents(chatId, withinDays = null) {
@@ -752,9 +351,6 @@ export function startTelegramBot(store, token, log = console) {
       },
     });
   }
-
-  // Признаки тяжёлого настроения - для эмпатичных check-in'ов (№10).
-  const LOW_MOOD_RE = /(?:плохо|устал|вымотал|бесит|бесят|грустно|тоскливо|тяжело|болит|поругал|поссор|ссор|стресс|выгор|депресс|не хочу|достало|хреново|паршиво|обидно|плачу|реву|одинок|подавлен|нет сил|всё бесит|заебал)/;
 
   // Ответ: голосом (если просили/включено) или текстом. one-shot флаг гасим.
   async function deliver(chatId, replyText, user) {
@@ -816,118 +412,7 @@ export function startTelegramBot(store, token, log = console) {
     await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
   }
 
-  /* ---- Роутинг сообщений ---- */
-
-  // Видео/кружок -> звуковая дорожка -> расшифровка (ffmpeg).
-  async function videoTranscript(fileId) {
-    const b64 = await downloadBase64(fileId);
-    const stamp = Date.now();
-    const inFile = join(tmpdir(), `vid-${stamp}.mp4`);
-    const outFile = join(tmpdir(), `vid-${stamp}.ogg`);
-    try {
-      writeFileSync(inFile, Buffer.from(b64, 'base64'));
-      const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-vn', '-acodec', 'libopus', '-b:a', '32k', outFile], {
-        stdio: 'ignore',
-        timeout: 60000,
-      });
-      if (r.status !== 0) throw new Error('ffmpeg failed');
-      return aiTranscribe(readFileSync(outFile).toString('base64'), 'ogg');
-    } finally {
-      rmSync(inFile, { force: true });
-      rmSync(outFile, { force: true });
-    }
-  }
-
-  // Длинное аудио режем ffmpeg на куски по 150 сек и расшифровываем по частям.
-  async function transcribeLong(b64, format) {
-    if (!hasFfmpeg) return null;
-    const stamp = Date.now();
-    const inFile = join(tmpdir(), `long-${stamp}.${format === 'mp3' ? 'mp3' : 'ogg'}`);
-    const outPat = join(tmpdir(), `long-${stamp}-%03d.ogg`);
-    const parts = [];
-    try {
-      writeFileSync(inFile, Buffer.from(b64, 'base64'));
-      const r = spawnSync('ffmpeg', ['-y', '-i', inFile, '-f', 'segment', '-segment_time', '150', '-c:a', 'libopus', '-b:a', '32k', outPat], {
-        stdio: 'ignore',
-        timeout: 120000,
-      });
-      if (r.status !== 0) return null;
-      for (let i = 0; i < 20; i++) {
-        const f = join(tmpdir(), `long-${stamp}-${String(i).padStart(3, '0')}.ogg`);
-        if (!existsSync(f)) break;
-        parts.push(f);
-      }
-      const texts = [];
-      for (const f of parts) {
-        const t = await aiTranscribe(readFileSync(f).toString('base64'), 'ogg').catch(() => null);
-        if (t) texts.push(t);
-      }
-      return texts.join(' ').trim() || null;
-    } finally {
-      rmSync(inFile, { force: true });
-      for (const f of parts) rmSync(f, { force: true });
-    }
-  }
-
-  // Аудио любого вида: голосовое, mp3, аудиофайл документом.
-  async function audioFlow(chatId, user, fileId, format, durationSec) {
-    if (!audioEnabled()) {
-      return send(chatId, 'Голосовые пока не разбираю: нет ключа для расшифровки. Напиши текстом, я всё пойму.');
-    }
-    const long = (durationSec || 0) > 170;
-    if (long && !hasFfmpeg) {
-      return send(chatId, 'Запись длинновата, а без ffmpeg на сервере длинное не осилю. Скажи покороче?');
-    }
-    if ((durationSec || 0) > 20 * 60) {
-      return send(chatId, 'Ого, больше двадцати минут - это уже подкаст 🙂 Давай частями?');
-    }
-    const transcript = await withTyping(chatId, async () => {
-      const b64 = await downloadBase64(fileId);
-      return long ? transcribeLong(b64, format) : aiTranscribe(b64, format);
-    });
-    if (!transcript) {
-      return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
-    }
-    if (user?.step) return onboardingStep(chatId, user, transcript);
-    // Голосовые команды работают как текстовые: сперва интенты
-    // («отвечай голосом», «траты», «забудь», «напомни...»), потом разговор.
-    if (await handleIntent(String(chatId), user, transcript)) return;
-    return friendFlow(String(chatId), transcript);
-  }
-
-  // Картинка (фото, статичный стикер, превью гифки): сначала пробуем распознать
-  // чек и записать трату (№8), иначе описываем и запоминаем.
-  async function imageFlow(chatId, fileId, label, caption, mime = 'image/jpeg', tryReceipt = false) {
-    if (!audioEnabled()) {
-      return send(chatId, 'Картинки пока не разглядываю: нет ключа мультимодального ИИ. Расскажи словами?');
-    }
-    let b64;
-    try {
-      b64 = await withTyping(chatId, () => downloadBase64(fileId));
-    } catch (e) {
-      log.error('[telegram] image dl', e.message);
-      return send(chatId, 'Не смог скачать картинку. Попробуй ещё раз?');
-    }
-
-    if (tryReceipt) {
-      const rec = await withTyping(chatId, () => aiExtractReceipt(b64, mime)).catch(() => null);
-      if (rec) {
-        store.add({ type: 'expense', title: rec.category, category: rec.category, amount: rec.amount, counterparty: rec.merchant, chatId: String(chatId), text: `Чек: ${rec.merchant || rec.category}`, status: 'done' });
-        store.addRaw(String(chatId), `Потратил ${rec.amount} на ${rec.category}${rec.merchant ? ` (${rec.merchant})` : ''}`);
-        return send(chatId, `Чек распознал: ${esc(rec.category)}${rec.merchant ? ` (${esc(rec.merchant)})` : ''} - ${RUB.format(rec.amount)} ₽. Записал в траты 💸`);
-      }
-    }
-
-    let description;
-    try {
-      description = await withTyping(chatId, () => aiDescribeImage(b64, mime, caption || ''));
-    } catch (e) {
-      log.error('[telegram] image', e.message);
-      return send(chatId, 'Разглядывал-разглядывал, но так и не понял, что там. Расскажешь словами?');
-    }
-    const text = `${label}: ${description}${caption ? `. Моя подпись: ${caption}` : ''}`;
-    return friendFlow(String(chatId), text);
-  }
+  /* ---- Геолокация ---- */
 
   // Геолокация -> часовой пояс и город (для напоминаний и погоды).
   async function locationFlow(chatId, user, loc) {
@@ -950,287 +435,46 @@ export function startTelegramBot(store, token, log = console) {
     return send(chatId, `${line}Буду напоминать в твоё время и показывать погоду 🙂`, { reply_markup: { remove_keyboard: true } });
   }
 
-  /* ---- Групповой режим: вынесен в src/group.mjs ---- */
+  /* ---- Сшивка вынесенных кластеров: media / intents / group / router ----
+   * media.audioFlow вызывает handleIntent, а handleIntent (в intents) зовёт
+   * media.sendPhoto - циклическая зависимость. Ссылка через `let` держит её
+   * живой: к моменту реального вызова (уже во время работы бота) handleIntent
+   * назначен настоящей функцией, обёртка лишь пробрасывает аргументы. */
+  let handleIntent = null;
+
+  const media = createMediaHandlers({
+    token, api, activeThread, store, send, log, withTyping, friendFlow, onboardingStep,
+    handleIntent: (chatId, user, text) => handleIntent(chatId, user, text),
+  });
+  const downloadBase64 = media.downloadBase64;
+  const sendPhoto = media.sendPhoto;
+  const sendVoice = media.sendVoice;
+  const sendDocumentText = media.sendDocumentText;
+  const readDoc = media.readDoc;
+  const videoTranscript = media.videoTranscript;
+  const transcribeLong = media.transcribeLong;
+  const audioFlow = media.audioFlow;
+  const imageFlow = media.imageFlow;
+
+  const intents = createIntentHandler({
+    api, send, store, log, kindOf, withTyping, sleepyText, typingLoop, sendPhoto, settingsText, upcomingEvents,
+  });
+  handleIntent = intents.handleIntent;
+
   const { groupFlow, isGroupChat, callerIsAdmin } = createGroupHandler({
     api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
   });
 
-  async function onMessage(msg) {
-    if (isGroupChat(msg)) {
-      // тема форум-группы: ответы уходят в неё же
-      if (msg.message_thread_id) activeThread.set(String(msg.chat.id), msg.message_thread_id);
-      try {
-        return await groupFlow(msg);
-      } finally {
-        activeThread.delete(String(msg.chat.id));
-      }
-    }
-
-    const chatId = msg.chat.id;
-    const user = store.getUser(String(chatId));
-
-    if (msg.location) {
-      if (!user) return startOnboarding(String(chatId));
-      return locationFlow(chatId, user, msg.location);
-    }
-
-    if (msg.voice) {
-      return audioFlow(chatId, user, msg.voice.file_id, 'ogg', msg.voice.duration);
-    }
-    if (msg.audio) {
-      return audioFlow(chatId, user, msg.audio.file_id, audioFormatFromMime(msg.audio.mime_type), msg.audio.duration);
-    }
-    if (msg.document && String(msg.document.mime_type || '').startsWith('audio/')) {
-      return audioFlow(chatId, user, msg.document.file_id, audioFormatFromMime(msg.document.mime_type), 0);
-    }
-
-    if (msg.photo && msg.photo.length) {
-      const largest = msg.photo[msg.photo.length - 1];
-      return imageFlow(chatId, largest.file_id, '[Прислал фото]', msg.caption, 'image/jpeg', true);
-    }
-
-    if (msg.animation) {
-      const thumb = msg.animation.thumbnail || msg.animation.thumb;
-      if (thumb) return imageFlow(chatId, thumb.file_id, '[Прислал гифку]', msg.caption);
-      return send(chatId, 'Гифку получил, но разглядеть не смог 😅 Что там было?');
-    }
-
-    if (msg.video_note) {
-      if (!audioEnabled()) return send(chatId, 'Кружки пока не разбираю: нет ключа для расшифровки.');
-      if (!hasFfmpeg) return send(chatId, 'Кружок получил, но без ffmpeg на сервере не разберу его звук. Скажи голосовым или текстом?');
-      if ((msg.video_note.duration || 0) > 180) return send(chatId, 'Ого, длинный кружок. Давай покороче?');
-      const transcript = await withTyping(chatId, () => videoTranscript(msg.video_note.file_id)).catch((e) => {
-        log.error('[telegram] video_note', e.message);
-        return null;
-      });
-      if (!transcript) return send(chatId, 'Кружок посмотрел, но слов не разобрал. Повтори?');
-      if (user?.step) return onboardingStep(chatId, user, transcript);
-      if (await handleIntent(String(chatId), user, transcript)) return; // команды из кружка тоже работают
-      return friendFlow(String(chatId), transcript);
-    }
-
-    // Обычное видео (№14): вытаскиваем звук, расшифровываем, запоминаем
-    if (msg.video) {
-      if (!audioEnabled() || !hasFfmpeg) return send(chatId, 'Видео получил, но разобрать звук пока не могу.');
-      if ((msg.video.file_size || 0) > 15 * 1024 * 1024) return send(chatId, 'Видео тяжелее 15 МБ - не потяну. Можно покороче/пожатое?');
-      if ((msg.video.duration || 0) > 300) return send(chatId, 'Видео дольше 5 минут не осилю. Порежь?');
-      const transcript = await withTyping(chatId, () => videoTranscript(msg.video.file_id)).catch((e) => {
-        log.error('[telegram] video', e.message);
-        return null;
-      });
-      if (!transcript) return send(chatId, 'Видео посмотрел, но речи не разобрал. Расскажешь словами?');
-      const text = `[Прислал видео${msg.caption ? `, подпись: ${msg.caption}` : ''}] Что говорится: ${transcript}`;
-      if (await handleIntent(String(chatId), user, transcript)) return;
-      return friendFlow(String(chatId), text);
-    }
-
-    if (msg.document) {
-      const doc = msg.document;
-      const mime = String(doc.mime_type || '');
-      const name = doc.file_name || 'документ';
-      if ((doc.file_size || 0) > 15 * 1024 * 1024) {
-        return send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли что-нибудь полегче?');
-      }
-      // Экспорт истории Telegram (result.json) - заливаем прошлое в память
-      if (name.toLowerCase().endsWith('.json')) {
-        try {
-          const buf = Buffer.from(await downloadBase64(doc.file_id), 'base64');
-          const parsed = parseTgExport(buf);
-          if (parsed) {
-            const r = importIntoStore(store, String(chatId), parsed);
-            const skipped = r.total > r.count ? ` (взял последние ${r.count} из ${r.total})` : '';
-            const scope = parsed.full ? `все чаты (${parsed.chatCount})` : 'историю';
-            return send(chatId, `Импортировал ${scope}: ${r.count} сообщений с ${esc(r.first)} по ${esc(r.last)}${skipped} 📚\n\nТеперь помню и то, что было раньше. Фоном переварю в факты - спрашивай.`);
-          }
-        } catch (e) {
-          log.error('[telegram] import', e.message);
-          return send(chatId, 'Файл похож на JSON, но прочитать не смог. Это точно экспорт из Telegram Desktop?');
-        }
-      }
-      if (!mime.startsWith('audio/')) {
-        if (!audioEnabled()) return send(chatId, 'Документы пока не читаю: нет ключа ИИ.');
-        const summary = await withTyping(chatId, () => readDoc(doc, mime, name)).catch((e) => {
-          log.error('[telegram] document', e.message);
-          return null;
-        });
-        if (summary === null) {
-          return send(chatId, `«${esc(name)}» - такой формат пока не читаю. Понимаю PDF, DOCX и текстовые файлы.`);
-        }
-        return friendFlow(String(chatId), `[Прислал документ «${name}»] Суть: ${summary}`);
-      }
-    }
-
-    if (msg.sticker) {
-      const s = msg.sticker;
-      learnSticker(s); // учим стикеры собеседников, потом отвечаем ими сами
-      if (!s.is_animated && !s.is_video) {
-        return imageFlow(chatId, s.file_id, '[Прислал стикер]', s.emoji || '', 'image/webp');
-      }
-      // анимированные стикеры не разглядеть - реагируем на эмоцию
-      return friendFlow(String(chatId), `[Прислал стикер с эмоцией ${s.emoji || 'без подписи'}]`);
-    }
-
-    if (typeof msg.text !== 'string') return;
-    // живая реакция-эмодзи по настроению текста (не на команды)
-    if (!msg.text.startsWith('/')) maybeReact(chatId, msg.message_id, msg.text);
-    let text = msg.text.trim();
-    if (!text) return;
-
-    // Пересланное сообщение: запоминаем, от кого оно
-    const fwd = msg.forward_origin;
-    if (fwd || msg.forward_from || msg.forward_sender_name) {
-      const who =
-        fwd?.sender_user?.first_name ||
-        fwd?.sender_user_name ||
-        fwd?.chat?.title ||
-        msg.forward_from?.first_name ||
-        msg.forward_sender_name ||
-        'кого-то';
-      if (!text.startsWith('/')) {
-        if (user?.step) return onboardingStep(String(chatId), user, text);
-        return friendFlow(String(chatId), `[Переслал сообщение от ${who}]: ${text}`);
-      }
-    }
-
-    const cmd = text.split(/[\s@]/)[0];
-    if (cmd === '/start') {
-      // Deep-link «Подключить Telegram» из веба: /start sm-<token>. Привязываем
-      // этот чат к веб-профилю и переносим ВСЮ веб-память сюда (общая память).
-      const param = text.split(/\s+/)[1] || '';
-      const tok = param.startsWith('sm-') ? param.slice(3) : null;
-      const dir = tok ? consumeTgLink(store, tok, chatId) : null;
-      if (dir) {
-        if (!store.getUser(String(chatId))) store.setUser(String(chatId), { name: '', botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
-        if (dir === 'web') {
-          const moved = store.migrateChat('web', String(chatId));
-          return send(chatId, `✅ Подключил веб-профиль! Перенёс из веба ${moved} ${moved === 1 ? 'запись' : 'записей/фактов'} - теперь память общая: что в вебе, то и тут. Напоминания буду слать сюда. 🔔`);
-        }
-        // dir === 'tg': веб начинает показывать память ЭТОГО чата (ничего не переношу)
-        const cnt = store.list({ chatId: String(chatId) }).length;
-        const fcnt = store.data.facts.filter((f) => f.chatId === String(chatId)).length;
-        return send(chatId, `✅ Подключил! Память из Telegram (${cnt} ${cnt === 1 ? 'дело' : 'дел'}, ${fcnt} ${fcnt === 1 ? 'факт' : 'фактов'}) теперь видна и в вебе - общая. Напоминания идут и туда, и сюда. 🔔`);
-      }
-      // повторный /start не сбрасывает друга - он просто здоровается
-      if (user && !user.step) return helloAgain(String(chatId), user);
-      return startOnboarding(String(chatId));
-    }
-    if (cmd === '/help') return send(chatId, helpText(user));
-    if (cmd === '/summary') return sendSummary(String(chatId));
-    if (cmd === '/reset') return askReset(String(chatId), user);
-
-    if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
-    if (user.step) return onboardingStep(String(chatId), user, text);
-
-    // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
-    if (await handleIntent(String(chatId), user, text)) return;
-
-    return friendFlow(String(chatId), text);
-  }
-
-  async function onCallback(cb) {
-    const chatId = String(cb.message?.chat?.id || '');
-    api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
-    if (!chatId) return;
-
-    if (cb.data === 'reset_no') {
-      return send(chatId, 'Фух. Я уж испугался 😅 Продолжаем, я всё помню.');
-    }
-    if (cb.data === 'reset_yes') {
-      const prof = store.getUser(chatId);
-      if (prof?.isGroup) {
-        // память группы стирает только админ группы; онбординг не нужен
-        if (!(await callerIsAdmin(chatId, cb.from.id))) return send(chatId, 'Стереть память группы может только админ.');
-        const title = prof.name;
-        store.clearChatData(chatId);
-        store.setUser(chatId, { isGroup: true, name: title, botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
-        return send(chatId, 'Всё, память группы чистая. Начинаем с нуля 👋');
-      }
-      store.clearChatData(chatId);
-      await send(chatId, 'Всё. Меня больше нет... а вот и я, новенький! 👋');
-      return startOnboarding(chatId);
-    }
-
-    // Календарь телефона: пользователь может отказаться. Список событий
-    // собираем из памяти в момент клика - переживает перезапуск бота.
-    if (cb.data === 'cal_no') {
-      return send(chatId, 'Ок, не буду. Скажешь «скинь в календарь» - соберу в любой момент.');
-    }
-    if (cb.data === 'cal_all' || cb.data === 'cal_week' || cb.data.startsWith('cal_one_')) {
-      let events;
-      let fname = 'raspisanie.ics';
-      if (cb.data === 'cal_all') events = upcomingEvents(chatId);
-      else if (cb.data === 'cal_week') events = upcomingEvents(chatId, 7);
-      else {
-        const e = store.byId(Number(cb.data.slice(8)));
-        events = e && (e.chatId || 'web') === chatId && e.status === 'open' ? [e] : [];
-        fname = 'sobytie.ics';
-      }
-      if (!events.length) return send(chatId, 'Похоже, событий уже нет. Попроси «скинь в календарь», если что-то появится.');
-      try {
-        const r = await sendIcs(chatId, events, fname);
-        if (!r.ok) throw new Error(r.description || 'sendDocument failed');
-        return;
-      } catch (e) {
-        log.error('[telegram] ics', e.message);
-        return send(chatId, 'Не смог собрать файл. Попробуем позже?');
-      }
-    }
-
-    // Экспорт памяти в выбранном формате
-    if (cb.data === 'exp_no') return send(chatId, 'Ок. Скажешь «экспорт» - выгружу.');
-    if (cb.data === 'exp_csv' || cb.data === 'exp_md' || cb.data === 'exp_json') {
-      // экспорт памяти ГРУППЫ - только админам (данные уходят файлом наружу)
-      const prof = store.getUser(chatId);
-      if (prof?.isGroup && !(await callerIsAdmin(chatId, cb.from.id))) {
-        return send(chatId, 'Экспорт памяти группы - только для админов 🙂');
-      }
-      try {
-        if (cb.data === 'exp_csv') await sendDocumentText(chatId, toCsv(store, chatId), 'pamyat.csv', 'text/csv', 'Таблица дел и долгов. Открывается в Excel 📊');
-        else if (cb.data === 'exp_md') await sendDocumentText(chatId, toMarkdown(store, chatId), 'dnevnik.md', 'text/markdown', 'Твой дневник по дням 📝');
-        else await sendDocumentText(chatId, toJson(store, chatId), 'pamyat.json', 'application/json', 'Вся память одним файлом 🗄');
-        return;
-      } catch (e) {
-        log.error('[telegram] export', e.message);
-        return send(chatId, 'Не смог собрать файл. Попробуем позже?');
-      }
-    }
-
-    // Подтверждение выполнения просроченного дела (вечерний вопрос)
-    if (cb.data && cb.data.startsWith('done_')) {
-      const id = Number(cb.data.slice(5));
-      const e = store.byId(id);
-      if (e && (e.chatId || 'web') === chatId && e.status === 'open') {
-        store.setStatus(id, 'done');
-        return send(chatId, 'Красава, закрыл 👍');
-      }
-      return send(chatId, 'Уже закрыто, всё ок 🙂');
-    }
-    if (cb.data && cb.data.startsWith('keep_')) {
-      return send(chatId, 'Понял, оставил. Напомню ещё.');
-    }
-    // Отложить напоминание (№5): snooze_<id>_<минуты>
-    if (cb.data && cb.data.startsWith('snooze_')) {
-      const [, id, mins] = cb.data.split('_');
-      const e = store.byId(Number(id));
-      if (!e || (e.chatId || 'web') !== chatId || e.status !== 'open') return send(chatId, 'Это дело уже неактуально 🙂');
-      const newDue = new Date(Date.now() + Number(mins) * 60000).toISOString();
-      store.patch(e.id, { due: newDue, hasTime: true, reminded: false });
-      const off = userOffset(store.getUser(chatId));
-      const when = Number(mins) >= 1440 ? fmtUser(newDue, off, false) : fmtUser(newDue, off, true).slice(-5);
-      return send(chatId, `Ок, напомню ${Number(mins) >= 1440 ? '' : 'в '}${when} 👍`);
-    }
-
-    if (!aiEnabled()) return;
-    try {
-      const text = await withTyping(chatId, () =>
-        aiFollowup(store, chatId, cb.data === 'tomorrow' ? 'tomorrow' : 'more')
-      );
-      await send(chatId, esc(withWake(chatId, text)));
-    } catch (e) {
-      log.error('[telegram] callback', e.message);
-      await send(chatId, esc(sleepyText(chatId)));
-    }
-  }
+  const router = createMessageRouter({
+    api, send, store, log, activeThread, withTyping, withWake, sleepyText,
+    isGroupChat, groupFlow, callerIsAdmin,
+    locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
+    onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
+    helpText, sendSummary, askReset, startOnboarding, helloAgain,
+    upcomingEvents, sendIcs, sendDocumentText,
+  });
+  const onMessage = router.onMessage;
+  const onCallback = router.onCallback;
 
   /* ---- Long polling ---- */
 

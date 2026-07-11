@@ -1,0 +1,416 @@
+/* ---- Память (aside) ---- */
+
+.panel {
+  background: var(--surface-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(38, 34, 27, 0.05), 0 12px 32px -14px rgba(38, 34, 27, 0.12);
+  padding: 20px;
+  align-self: start;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.meter-track {
+  height: 10px;
+  background: var(--pill-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #8A5C3E);
+  transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.status-line {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+.counters-line {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Мини-шкала «опора на память» в ответах ИИ */
+.memory-reliance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0 17px; /* в линию с текстом ассистента (линия 3px + отступ 14px) */
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.memory-reliance .bar {
+  display: inline-block;
+  width: 90px;
+  height: 6px;
+  background: var(--pill-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.memory-reliance .bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* ---- Экран входа ---- */
+
+.login {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login[hidden] { display: none; }
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface-bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(38, 34, 27, 0.05), 0 20px 50px -20px rgba(38, 34, 27, 0.28);
+  padding: 34px 28px 30px;
+  text-align: center;
+  animation: reveal 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.login-mark { margin-bottom: 6px; }
+.login-card h1 { font-size: 1.5rem; margin: 0; }
+.login-card h1::after { content: "."; color: var(--accent); }
+.login-sub { margin: 6px 0 22px; color: var(--text-muted); }
+.login-form { text-align: left; }
+.login-submit { width: 100%; margin-top: 6px; }
+
+.pw-wrap { position: relative; display: flex; }
+.pw-wrap input { flex: 1; padding-right: 46px; }
+.pw-toggle {
+  position: absolute;
+  right: 4px; top: 50%;
+  transform: translateY(-50%);
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+}
+.pw-toggle:hover { color: var(--ink); background: var(--pill-bg); }
+.pw-toggle[aria-pressed="true"] { color: var(--accent); }
+
+/* ---- Шапка: строка с брендом и шестерёнкой ---- */
+
+.app-header__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.app-header__top .brand { margin-bottom: 0; }
+
+.icon-btn {
+  min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-bg);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background-color 150ms, transform 120ms ease;
+}
+.icon-btn:hover { background: var(--pill-bg); }
+.icon-btn:active { transform: scale(0.94); }
+
+/* ---- Модалка настроек ---- */
+
+.settings-modal {
+  padding: 0;
+  border: none;
+  border-radius: 18px;
+  max-width: 460px;
+  width: calc(100% - 32px);
+  background: var(--surface-bg);
+  color: var(--ink);
+  box-shadow: 0 24px 60px -20px rgba(38, 34, 27, 0.5);
+}
+.settings-modal::backdrop { background: rgba(38, 34, 27, 0.45); }
+.settings-modal[open] { animation: pop-in 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+.settings-modal__panel { padding: 22px; max-height: 86vh; overflow-y: auto; }
+.settings-modal__head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px;
+}
+.settings-modal__head h2 { margin: 0; font-size: 1.25rem; }
+.settings-modal__foot { margin-top: 18px; }
+
+/* ---- Поля форм ---- */
+
+.field { margin-bottom: 16px; }
+.field > label { display: block; margin-bottom: 6px; font-weight: 600; }
+.field input[type="text"],
+.field input[type="password"],
+.field select {
+  width: 100%; min-height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0 14px;
+  font: inherit; color: var(--ink); background: var(--surface-bg);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+.field select:disabled { color: var(--text-muted); background: var(--pill-bg); cursor: not-allowed; }
+.field input:focus-visible,
+.field select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 5px rgba(138, 59, 42, 0.10), 0 0 12px 4px rgba(138, 59, 42, 0.12);
+}
+.field input[aria-invalid="true"] { border-color: var(--danger-rec); }
+.field-hint { margin: 6px 0 0; font-size: 0.9rem; color: var(--text-muted); }
+.field-error { margin: 6px 0 0; font-size: 0.92rem; color: var(--danger-rec); }
+.field-error[hidden] { display: none; }
+.field-status { margin: 10px 0 0; font-size: 0.92rem; color: var(--accent); }
+.field-group { border: 1px solid var(--border-soft); border-radius: 12px; padding: 14px 16px 4px; margin: 0 0 16px; }
+.field-group legend { padding: 0 6px; font-weight: 600; }
+
+/* switch-переключатель на базе нативного checkbox */
+.field--switch { display: flex; align-items: center; gap: 12px; }
+.field--switch > label { margin-bottom: 0; }
+.switch-input {
+  appearance: none; -webkit-appearance: none;
+  width: 44px; height: 26px; min-width: 44px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--pill-bg); position: relative; cursor: pointer; flex: none;
+  transition: background-color 150ms;
+}
+.switch-input::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--surface-bg); border: 1px solid var(--border-strong);
+  transition: transform 150ms;
+}
+.switch-input:checked { background: var(--accent); }
+.switch-input:checked::after { transform: translateX(18px); }
+.switch-input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* ---- Мобильная адаптация ---- */
+
+@media (max-width: 880px) {
+  .app { grid-template-columns: 1fr; }
+  .chat-log {
+    height: 50vh;
+    height: 50dvh;
+  }
+}
+
+@media (max-width: 560px) {
+  .app {
+    padding: 16px 12px 24px;
+    gap: 16px;
+  }
+  h1 { font-size: 1.45rem; }
+  .brand-mark { width: 26px; height: 26px; }
+  .tagline { font-size: 0.95rem; }
+  .chat-log {
+    height: 48vh;
+    height: 48dvh;
+    min-height: 260px;
+    padding: 14px;
+  }
+  .quick-actions { padding: 8px 14px 4px; }
+  .composer { padding: 10px 14px 16px; }
+  .btn-send {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .send-text { display: none; }
+  .send-icon { display: block; }
+  .recording-panel .btn-send,
+  .login-submit {
+    width: 100%;
+    min-width: 0;
+    padding: 0 16px;
+    border-radius: 10px;
+  }
+  .recording-panel .btn-send { width: auto; }
+  .menu-popover {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 96px;
+    min-width: 0;
+  }
+  .panel { padding: 16px; }
+
+  /* Настройки на мобиле - лист снизу на всю ширину */
+  .settings-modal {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    margin-top: auto;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    max-height: 92vh;
+  }
+  .settings-modal__panel { padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .login-card { padding: 28px 20px 24px; }
+  .app-header__top .brand h1 { font-size: 1.3rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .rec-dot { animation: none; opacity: 1; }
+  .typing-dots span { animation: none; opacity: 0.7; } /* чистый покой, как у .rec-dot */
+}
+
+/* Ручной тумблер «меньше движения» (data-motion на <html>) — тот же эффект,
+   что и системный prefers-reduced-motion. @media нельзя объединить с
+   атрибутным селектором, поэтому дублируем правила одним параллельным блоком. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="reduced"] .rec-dot { animation: none; opacity: 1; }
+html[data-motion="reduced"] .typing-dots span { animation: none; opacity: 0.7; }
+
+/* ---- Подключение Telegram + всплывашки напоминаний ---- */
+.field--tg { margin-top: 4px; }
+.field-label { display: block; font-weight: 600; margin-bottom: 2px; color: var(--ink); }
+
+.reminder-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+}
+.reminder-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--ink);
+  color: var(--surface-bg);
+  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(38, 34, 27, 0.35);
+  animation: msg-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reminder-toast__icon { flex: none; font-size: 1.1rem; }
+.reminder-toast__text { flex: 1; font-size: 0.95rem; line-height: 1.35; }
+.reminder-toast__close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--surface-bg);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.reminder-toast__close:hover { background: rgba(255, 253, 248, 0.18); }
+/* Тёмный фон тоста: белая подложка спасает контраст кольца (было ~2.06:1). */
+.reminder-toast__close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px #FFFFFF;
+}
+@media (prefers-reduced-motion: reduce) { .reminder-toast { animation: none; } }
+
+/* Баннер «смените временный пароль». grid-column 1/-1 обязателен: иначе
+   баннер-ребёнок .app сталкивает main в узкую колонку панели. */
+.pass-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--pill-bg);
+  color: var(--ink);
+  border-left: 4px solid var(--focus-ring);
+  border-radius: 10px;
+}
+.pass-banner__text { flex: 1; min-width: 200px; }
+.pass-banner .icon-btn { flex: none; }
+
+/* Выбор направления памяти при подключении Telegram */
+.tg-dir-choice {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tg-dir-choice legend { font-size: 0.9rem; font-weight: 600; padding: 0 4px; color: var(--ink); }
+.tg-dir-opt { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; cursor: pointer; color: var(--ink); }
+.tg-dir-opt input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+.tg-dir-opt input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn-ghost--danger { color: #B3261E; }
+.btn-ghost--danger:hover { background: rgba(179, 38, 30, 0.08); }
+
+/* Кнопки в шапке рядом */
+.header-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Полноэкранный («фокус») чат: как в Telegram - на весь экран, максимум места.
+   .app из грида превращается в фиксированный оверлей-колонку во весь вьюпорт. */
+.app--focus {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px 12px;
+  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--page-bg);
+  overflow: hidden;
+}
+.app--focus > .panel { display: none; }
+.app--focus .tagline { display: none; }
+.app--focus .app-header { margin: 0; flex: none; }
+.app--focus > main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.app--focus .chat {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+.app--focus .chat-log {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
