@@ -2,7 +2,10 @@
 // подписанная сессионная кука. Данные и секрет живут в store.data.meta.web.
 // Ноль зависимостей.
 
-import { scryptSync, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
+import { scrypt as scryptCb, scryptSync, randomBytes, timingSafeEqual, createHmac } from 'node:crypto';
+import { promisify } from 'node:util';
+
+const scrypt = promisify(scryptCb);
 
 const DAY = 86400;
 const SESSION_TTL = 30 * DAY; // кука живёт 30 дней
@@ -27,12 +30,14 @@ function hashPassword(password, salt = randomBytes(16).toString('hex')) {
   return `${salt}:${h}`;
 }
 
-export function verifyPassword(store, password) {
+// Асинхронный scrypt: не блокирует event loop на каждом логине (раньше
+// scryptSync морозил все запросы на десятки мс).
+export async function verifyPassword(store, password) {
   const c = cfg(store);
   if (!c.passHash) return false;
   const [salt, h] = c.passHash.split(':');
   const want = Buffer.from(h, 'hex');
-  const got = scryptSync(String(password), salt, 32);
+  const got = await scrypt(String(password), salt, 32);
   return want.length === got.length && timingSafeEqual(want, got);
 }
 
@@ -167,7 +172,10 @@ export function parseCookies(header) {
   return out;
 }
 
-export function sessionCookie(token) {
-  return `sm_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}`;
+// secure=true добавляет флаг Secure (кука только по HTTPS). На проде за TLS-прокси
+// включаем; на localhost/http — нет, иначе кука не долетит и вход не работает.
+export function sessionCookie(token, secure = false) {
+  return `sm_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}${secure ? '; Secure' : ''}`;
 }
-export const clearCookie = () => 'sm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0';
+export const clearCookie = (secure = false) =>
+  `sm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`;
