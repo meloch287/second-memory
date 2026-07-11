@@ -46,7 +46,7 @@ function fmtClock(sec) {
 
 /* ---- Чат ---- */
 
-function appendMessage(role, text) {
+function buildMessageNode(role, text) {
   const wrap = document.createElement('div');
   wrap.className = 'message message--' + role;
   if (role === 'user') {
@@ -59,7 +59,36 @@ function appendMessage(role, text) {
   const p = document.createElement('p');
   p.textContent = text;
   wrap.append(who, p);
-  addToLog(wrap);
+  return wrap;
+}
+
+function appendMessage(role, text) {
+  addToLog(buildMessageNode(role, text));
+}
+
+// Восстановление ленты при загрузке страницы. Историю вставляем ТИХО: каждый
+// узел с aria-live="off" (иначе live-регион #chat-log зачитал бы 40 старых
+// реплик подряд). Порядок: старые -> новые -> приветствие -> живые.
+function hydrateHistory(turns) {
+  if (!turns || !turns.length) return;
+  if (log.querySelector('.message:not(#welcome-msg)')) return; // не гидрировать повторно
+  const frag = document.createDocumentFragment();
+  for (const t of turns) {
+    if (!t || !t.text) continue;
+    const node = buildMessageNode(t.role === 'user' ? 'user' : 'assistant', t.text);
+    node.setAttribute('aria-live', 'off'); // тихо для обеих ролей
+    frag.appendChild(node);
+  }
+  // Приветствие остаётся СВЕРХУ (оно первое в разметке), история идёт под ним,
+  // живые сообщения — ниже: приветствие → старые → новые → живые. Так внизу
+  // ленты последний реальный обмен, а не онбординг-приветствие.
+  log.appendChild(frag);
+  // Мгновенно вниз, когда layout устоялся (без плавности и без кражи фокуса) —
+  // чат открывается уже прокрученным к последнему сообщению. Прямое присваивание
+  // scrollTop надёжнее scrollTo; rAF + таймер-подстраховка на позднюю раскладку.
+  const toBottom = () => { log.scrollTop = log.scrollHeight; };
+  requestAnimationFrame(toBottom);
+  setTimeout(toBottom, 80);
 }
 
 function addToLog(node) {
@@ -539,9 +568,38 @@ async function stopRecording(send, autoLimit = false) {
   }
   if (autoLimit) announce('Достигнут лимит длительности. Запись остановлена и отправлена.');
 
-  appendVoiceMessage(blob, durationSec, peaks, transcript);
+  // Браузерный SpeechRecognition не дал текста (не-Chromium) — распознаём на сервере.
+  let finalText = transcript;
+  if (!finalText && blob.size > 1200) finalText = await serverTranscribe(blob);
+
+  appendVoiceMessage(blob, durationSec, peaks, finalText);
   input.focus();
-  if (transcript) await deliver(transcript);
+  if (finalText) await deliver(finalText);
+}
+
+// Серверное распознавание (фолбэк). Пока идёт — mic-кнопка в состоянии
+// «занята»: aria-busy + disabled + временный aria-label; прогресс в #chat-status.
+async function serverTranscribe(blob) {
+  const prevLabel = micBtn.getAttribute('aria-label') || 'Записать голосовое сообщение';
+  micBtn.setAttribute('aria-busy', 'true');
+  micBtn.disabled = true;
+  micBtn.setAttribute('aria-label', 'Распознаю голосовое сообщение…');
+  announce('Распознаю голосовое сообщение…');
+  try {
+    const res = await fetch('/api/transcribe', {
+      method: 'POST', headers: { 'content-type': blob.type || 'audio/webm' }, body: blob,
+    });
+    if (!res.ok) throw new Error();
+    return ((await res.json()).text || '').trim();
+  } catch {
+    setMicError('Не удалось распознать голосовое сообщение. Можно написать текстом.');
+    return '';
+  } finally {
+    micBtn.setAttribute('aria-busy', 'false');
+    micBtn.disabled = false;
+    micBtn.setAttribute('aria-label', prevLabel);
+    announce(''); // прогресс сняли; дальше объявит deliver()
+  }
 }
 
 micBtn.addEventListener('click', startRecording);
@@ -828,9 +886,18 @@ function showApp(fromLogin) {
   appRoot.hidden = false;
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) micBtn.hidden = false;
   applySettings();
+  restoreHistory(); // вернуть ленту диалога (тихо), до живых сообщений
   refreshStats();
   startReminderPolling();
   if (fromLogin) input.focus({ preventScroll: true });
+}
+
+async function restoreHistory() {
+  try {
+    const res = await fetch('/api/history');
+    if (!res.ok) return;
+    hydrateHistory((await res.json()).turns);
+  } catch { /* сеть моргнула — лента просто останется с приветствия */ }
 }
 
 function setLoginError(msg) {
@@ -906,9 +973,16 @@ function applySettings() {
   syncVoiceEnabled();
   motionOff = localStorage.getItem('sm_motion_off') === '1';
   reduceToggle.checked = motionOff;
+  applyMotionPref();
   if (!webSettings.audio) { voiceToggle.disabled = true; voiceToggle.checked = false; }
   applyTgStatus();
   syncPassBanner();
+}
+
+// «Меньше движения»: раньше глушило только пару JS-эффектов. Ставим атрибут на
+// <html> — CSS выключает все анимации/переходы наравне с prefers-reduced-motion.
+function applyMotionPref() {
+  document.documentElement.dataset.motion = motionOff ? 'reduced' : '';
 }
 
 /* ---- Баннер «смените временный пароль» ---- */
@@ -1152,6 +1226,7 @@ voiceSelect.addEventListener('change', () => saveSettings({ voice: voiceSelect.v
 reduceToggle.addEventListener('change', () => {
   motionOff = reduceToggle.checked;
   localStorage.setItem('sm_motion_off', motionOff ? '1' : '0');
+  applyMotionPref();
 });
 
 settingsLogout.addEventListener('click', async () => {

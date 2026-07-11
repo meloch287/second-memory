@@ -878,6 +878,20 @@ h1::after {
   .typing-dots span { animation: none; opacity: 0.7; } /* чистый покой, как у .rec-dot */
 }
 
+/* Ручной тумблер «меньше движения» (data-motion на <html>) — тот же эффект,
+   что и системный prefers-reduced-motion. @media нельзя объединить с
+   атрибутным селектором, поэтому дублируем правила одним параллельным блоком. */
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="reduced"] .rec-dot { animation: none; opacity: 1; }
+html[data-motion="reduced"] .typing-dots span { animation: none; opacity: 0.7; }
+
 /* ---- Подключение Telegram + всплывашки напоминаний ---- */
 .field--tg { margin-top: 4px; }
 .field-label { display: block; font-weight: 600; margin-bottom: 2px; color: var(--ink); }
