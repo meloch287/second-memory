@@ -1,9 +1,22 @@
 // Файловое JSON-хранилище с атомарной записью (tmp + rename).
 // Опционально шифруется на диске (AES-256-GCM) при заданном SM_ENCRYPTION_KEY.
 
-import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync, readdirSync, rmSync, openSync, fsyncSync, closeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes, createHash, scryptSync } from 'node:crypto';
+
+// Все живые Store'ы: на выходе процесса дописываем отложенные (дебаунснутые) записи.
+const _liveStores = new Set();
+let _exitHookInstalled = false;
+function _installExitHook() {
+  if (_exitHookInstalled) return;
+  _exitHookInstalled = true;
+  const flushAll = () => { for (const s of _liveStores) { try { s.flush(); } catch {} } };
+  process.on('exit', flushAll);
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => { flushAll(); process.exit(0); });
+  }
+}
 
 // Два формата шифрования на диске:
 //  SMENC1 - ключ = sha256(пароль), без соли (легаси, только чтение);
@@ -19,7 +32,11 @@ export class Store {
   constructor(file) {
     this.file = file;
     this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [] };
+    this._dirty = false;
+    this._saveTimer = null;
     this.load();
+    _liveStores.add(this);
+    _installExitHook();
   }
 
   load() {
@@ -76,11 +93,29 @@ export class Store {
       copyFileSync(this.file, this.file + '.corrupt-' + Date.now());
       return;
     }
-    // Миграция: файл был открытым, а ключ задан - перешифруем при первом сохранении
-    if ((wasPlaintext || this._needsRekey) && hasPass()) this.save();
+    // Миграция: файл был открытым, а ключ задан - перешифруем сразу (синхронно).
+    if ((wasPlaintext || this._needsRekey) && hasPass()) this._writeNow();
   }
 
+  // Дебаунс: N мутаций подряд дают ОДНУ запись на диск (раньше весь стор
+  // сериализовался и писался на каждой мутации). Durability гарантирует flush()
+  // — он зовётся на выходе процесса (SIGINT/SIGTERM/exit) и перед backup().
   save() {
+    this._dirty = true;
+    if (this._saveTimer) return;
+    this._saveTimer = setTimeout(() => { this._saveTimer = null; this.flush(); }, 200);
+    this._saveTimer.unref?.(); // не держим event loop живым ради отложенной записи
+  }
+
+  // Немедленно дописать отложенное (если есть).
+  flush() {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    if (!this._dirty) return;
+    this._dirty = false;
+    this._writeNow();
+  }
+
+  _writeNow() {
     mkdirSync(dirname(this.file), { recursive: true });
     const json = JSON.stringify(this.data, null, 2);
     let out;
@@ -100,8 +135,15 @@ export class Store {
     } else {
       out = Buffer.from(json, 'utf8');
     }
+    // Долговечная атомарная запись: tmp -> fsync -> rename (переживает креш/питание).
     const tmp = this.file + '.tmp';
-    writeFileSync(tmp, out);
+    const fd = openSync(tmp, 'w');
+    try {
+      writeFileSync(fd, out);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, this.file);
   }
 
@@ -429,6 +471,7 @@ export class Store {
 
   // Резервная копия файла данных, храним последние 14.
   backup() {
+    this.flush(); // дописать отложенное, иначе бэкап скопирует устаревший файл
     if (!existsSync(this.file)) return null;
     const dir = join(dirname(this.file), 'backups');
     mkdirSync(dir, { recursive: true });
