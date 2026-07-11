@@ -107,12 +107,22 @@ export class Store {
     this._saveTimer.unref?.(); // не держим event loop живым ради отложенной записи
   }
 
-  // Немедленно дописать отложенное (если есть).
+  // Немедленно дописать отложенное (если есть). Ошибку записи НЕ роняем наружу
+  // (иначе таймер-flush уронил бы весь процесс) и НЕ теряем данные: _dirty
+  // сбрасываем только после успешной записи, при сбое — логируем и повторяем.
   flush() {
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
     if (!this._dirty) return;
-    this._dirty = false;
-    this._writeNow();
+    try {
+      this._writeNow();
+      this._dirty = false; // только после успеха
+    } catch (e) {
+      try { console.error('[store] запись не удалась, повтор позже:', e?.message || e); } catch {}
+      if (!this._saveTimer) { // перепланировать повтор (данные остаются dirty)
+        this._saveTimer = setTimeout(() => { this._saveTimer = null; this.flush(); }, 1000);
+        this._saveTimer.unref?.();
+      }
+    }
   }
 
   _writeNow() {

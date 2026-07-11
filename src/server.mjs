@@ -57,7 +57,9 @@ async function readRaw(req, max) {
 
 // Кука Secure только по HTTPS (за caddy — заголовок x-forwarded-proto).
 const isHttps = (req) => (req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '?').split(',')[0].trim();
+// Ключ троттлинга — реальный сокет-адрес (за caddy это сам прокси). X-Forwarded-For
+// НЕ используем: его подделывает клиент и обходит лимит / локаутит владельца.
+const clientIp = (req) => String(req.socket?.remoteAddress || '?');
 
 // createApp(store): собирает сервер вокруг переданного store, без побочных эффектов.
 export function createApp(store) {
@@ -75,6 +77,8 @@ export function createApp(store) {
     r.n += 1;
     if (r.n >= 5) r.until = Date.now() + Math.min(30000 * 2 ** (r.n - 5), 15 * 60000); // 30с→…→15мин
     loginFails.set(ip, r);
+    // подчистка, чтобы Map не рос бесконечно (истёкшие записи)
+    if (loginFails.size > 500) for (const [k, v] of loginFails) if (v.until < Date.now()) loginFails.delete(k);
   };
   const clearLoginFails = (ip) => loginFails.delete(ip);
 

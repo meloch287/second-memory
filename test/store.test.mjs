@@ -22,6 +22,24 @@ test('save() дебаунсит: файл не пишется сразу, flush(
   s.flush();
 });
 
+test('flush(): сбой записи не роняет процесс и не теряет данные (dirty остаётся)', () => {
+  const s = new Store(tmpFile());
+  s.add({ type: 'note', title: 'важное', chatId: '1' });
+  const realWrite = s._writeNow.bind(s);
+  let calls = 0;
+  s._writeNow = () => { calls++; throw new Error('EACCES симуляция'); };
+  assert.doesNotThrow(() => s.flush(), 'flush не бросает наружу');
+  assert.equal(s._dirty, true, 'данные остаются dirty после сбоя (не потеряны)');
+  assert.ok(calls >= 1, 'попытка записи была');
+  // восстановление: запись снова работает -> flush дописывает
+  s._writeNow = realWrite;
+  s.flush();
+  assert.equal(s._dirty, false, 'после успешной записи dirty сброшен');
+  const b = new Store(s.file);
+  assert.equal(b.list({ chatId: '1' })[0]?.title, 'важное', 'данные дошли до диска');
+  if (s._saveTimer) clearTimeout(s._saveTimer);
+});
+
 test('flush() переживает перезагрузку: данные видны новому Store', () => {
   const file = tmpFile();
   const a = new Store(file);
