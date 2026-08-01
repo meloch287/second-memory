@@ -93,7 +93,7 @@ test('«называй меня братан» -> addressAs', () => {
 });
 
 test('«не называй меня по имени» -> noName', () => {
-  assert.deepEqual(parseStylePref('не называй меня по имени'), { noName: true });
+  assert.deepEqual(parseStylePref('не называй меня по имени'), { noName: true, addressAs: null });
 });
 
 test('официально / мат / обратно попроще', () => {
@@ -141,4 +141,39 @@ test('friendSystem учитывает предпочтения юзера', () =
   const sys = friendSystem({ name: 'Макс', botName: 'Толик', addressAs: 'Братан', talkStyle: 'official' });
   assert.match(sys, /Братан/);
   assert.match(sys, /ОФИЦИАЛЬНО/);
+});
+
+/* ---- Официальный тон реально переключает базовую персону ---- */
+test('toneBlock: official -> формальный, обычный -> дружеский', async () => {
+  const { toneBlock } = await import('../src/capabilities.mjs');
+  const off = toneBlock({ talkStyle: 'official' });
+  assert.match(off, /ОФИЦИАЛЬНО/);
+  assert.match(off, /«вы»/);
+  assert.match(off, /без сленга/i);
+  assert.ok(!/на «ты», тепло, неформально/.test(off), 'не должно быть неформальных инструкций');
+  const casual = toneBlock({});
+  assert.match(casual, /на «ты», тепло, неформально/);
+});
+
+test('friendSystem: official не содержит противоречивого «на ты, неформально»', () => {
+  const sys = friendSystem({ name: 'Макс', botName: 'Толик', talkStyle: 'official' });
+  assert.match(sys, /ОФИЦИАЛЬНО/);
+  assert.ok(!/Общайся на «ты», тепло, неформально/.test(sys), 'конфликтующая инструкция убрана');
+});
+
+test('«не называй меня по имени» снимает и прозвище', () => {
+  const p = parseStylePref('не называй меня по имени');
+  assert.equal(p.noName, true);
+  assert.equal(p.addressAs, null, 'прозвище тоже снимается');
+});
+
+test('captureStylePref: братан -> потом noName сбрасывает обращение', () => {
+  const s = new Store(tmpFile());
+  s.setUser('1', { name: 'Макс' });
+  captureStylePref(s, '1', 'называй меня братан');
+  assert.equal(s.getUser('1').addressAs, 'Братан');
+  captureStylePref(s, '1', 'не называй меня по имени');
+  assert.equal(s.getUser('1').noName, true);
+  assert.equal(s.getUser('1').addressAs, null);
+  assert.match(stylePref(s.getUser('1')), /НЕ обращаться/i);
 });
