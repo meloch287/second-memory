@@ -29,7 +29,14 @@ let _browserP = null;
 async function defaultLaunch() {
   // Нет playwright -> import бросит -> вызывающий получит ok:false. Так и задумано.
   const { chromium } = await import('playwright');
-  return chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  return chromium.launch({
+    headless: true,
+    // --no-proxy-server ОБЯЗАТЕЛЕН: сервис в проде стартует с HTTPS_PROXY (xray,
+    // европейский выход) для Telegram, а Chromium на Linux наследует https_proxy
+    // из окружения. Маркетплейсы пробиваются только прямым соединением с RU-IP
+    // сервера (как в ручной пробе) - поэтому Chromium гоним в обход прокси.
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--no-proxy-server'],
+  });
 }
 
 // Синглтон-браузер (только для дефолтного лаунчера в проде): держим один процесс
