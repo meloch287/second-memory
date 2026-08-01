@@ -14,6 +14,7 @@ import {
   aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiTts, aiFitnessProgram,
 } from './ai.mjs';
 import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
+import { captureStylePref } from './capabilities.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
@@ -408,6 +409,11 @@ export function startTelegramBot(store, token, log = console) {
       await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), saved);
       return;
     }
+
+    // Просьбы про стиль общения («называй меня братан», «давай официально»,
+    // «можешь материться», «не делай X») сохраняем ДО генерации ответа - тогда
+    // бот сразу отвечает уже в новом стиле, а не со следующего сообщения.
+    captureStylePref(store, String(chatId), text);
 
     // С ИИ живой ответ даёт модель, а долги/встречи/задачи тихо ложатся в базу
     // здесь (route не вызываем) — с учётом часового пояса пользователя.
