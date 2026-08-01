@@ -252,3 +252,89 @@ test('deep-link /start sm-… для нового чата создаёт про
     restore();
   }
 });
+
+test('ГОЛОСОМ: вопрос про календарь -> выбор «показать/рассказать», ответ голосом же', async () => {
+  const CHAT = 731;
+  const { store, spy, restore } = boot();
+  try {
+    store.setUser(String(CHAT), { name: 'Тестер', botName: 'Толик', tzOffset: 180, step: null });
+    store.add({ chatId: String(CHAT), type: 'meeting', title: 'Встреча с Аней', due: new Date(Date.now() + 86400000).toISOString(), hasTime: true, calendar: true });
+
+    spy.setTranscript('что там у меня по календарю?');
+    spy.pushVoice(CHAT);
+    await waitFor(() => /рассказать/i.test(spy.lastRender(CHAT)?.text || ''));
+    const r = spy.lastRender(CHAT);
+    assert.match(r.text, /Вывести календарь или просто рассказать/);
+    assert.ok((r.kb || []).flat().some((b) => b.callback_data === 'lk:cal:tell'), 'кнопки выбора пришли на ГОЛОС');
+
+    // отвечаем тоже голосом - словами, а не кнопкой
+    spy.setTranscript('просто расскажи');
+    spy.pushVoice(CHAT);
+    await waitFor(() => /Встреча с Аней/.test(spy.lastRender(CHAT)?.text || ''));
+    assert.match(spy.lastRender(CHAT).text, /Встреча с Аней/, 'сводка пришла по голосовому ответу');
+  } finally {
+    restore();
+  }
+});
+
+test('ГОЛОСОМ: добавление события в календарь с подтверждением', async () => {
+  const CHAT = 732;
+  const { store, spy, restore } = boot();
+  try {
+    store.setUser(String(CHAT), { name: 'Тестер', botName: 'Толик', tzOffset: 180, step: null });
+
+    spy.setTranscript('встреча с другом завтра в 16:00 добавь в календарь');
+    spy.pushVoice(CHAT);
+    await waitFor(() => /[Вв]ерно|Добавить в календарь/.test(spy.lastRender(CHAT)?.text || ''));
+    assert.match(spy.lastRender(CHAT).text, /16:00/, 'время распознано верно');
+
+    spy.setTranscript('да');
+    spy.pushVoice(CHAT);
+    await waitFor(() => store.calEvents(String(CHAT)).length > 0);
+    assert.equal(store.calEvents(String(CHAT)).length, 1, 'событие создано голосом');
+  } finally {
+    restore();
+  }
+});
+
+test('ГОЛОСОМ: фитнес-профиль (вес числом) и дни тренировок', async () => {
+  const CHAT = 733;
+  const { store, spy, restore } = boot();
+  try {
+    store.setUser(String(CHAT), { name: 'Тестер', botName: 'Толик', tzOffset: 180, step: null });
+
+    spy.setTranscript('настройки');
+    spy.pushVoice(CHAT);
+    await waitFor(() => /Личный кабинет/.test(spy.lastRender(CHAT)?.text || ''));
+
+    spy.pushCallback(CHAT, 'lk:fit');
+    await waitFor(() => /Личный тренер/.test(spy.lastRender(CHAT)?.text || ''));
+    spy.pushCallback(CHAT, 'lk:fit:set:weight');
+    await waitFor(() => /вес/i.test(spy.lastRender(CHAT)?.text || ''));
+
+    spy.setTranscript('восемьдесят'); // словами не поймёт - шлём цифрой следующим
+    spy.pushVoice(CHAT);
+    await sleep(120);
+    spy.setTranscript('80');
+    spy.pushVoice(CHAT);
+    await waitFor(() => store.getFitness(String(CHAT))?.weight === 80);
+    assert.equal(store.getFitness(String(CHAT)).weight, 80, 'вес записан голосом');
+  } finally {
+    restore();
+  }
+});
+
+test('ГОЛОСОМ: «отвечай голосом» включает озвучку ответов', async () => {
+  const CHAT = 734;
+  const { store, spy, restore } = boot();
+  try {
+    store.setUser(String(CHAT), { name: 'Тестер', botName: 'Толик', tzOffset: 180, step: null });
+
+    spy.setTranscript('отвечай голосом');
+    spy.pushVoice(CHAT);
+    await waitFor(() => store.getUser(String(CHAT))?.voiceReplies === true);
+    assert.equal(store.getUser(String(CHAT)).voiceReplies, true, 'режим включён голосовой командой');
+  } finally {
+    restore();
+  }
+});
