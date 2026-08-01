@@ -8,6 +8,7 @@ import { DEFAULT_OFFSET, fmtUser, userOffset } from './tz.mjs';
 import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { parseIcs } from './ics.mjs';
+import { ID_CMD } from './telegram-idpicker.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 
@@ -18,7 +19,7 @@ export function createMessageRouter(deps) {
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText, lk,
+    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker,
   } = deps;
 
   // ЕДИНАЯ маршрутизация готового текста - и набранного руками (onMessage),
@@ -55,6 +56,13 @@ export function createMessageRouter(deps) {
 
     const chatId = msg.chat.id;
     const user = store.getUser(String(chatId));
+
+    // Секретная пипетка ID (стикеры/премиум-эмодзи): пока включена, забирает
+    // сообщения себе. Команду /id ловим тут же - в список команд она не входит.
+    if (typeof msg.text === 'string' && ID_CMD.test(msg.text.trim())) {
+      if (user && !user.step) return idPicker.start(chatId);
+    }
+    if (idPicker && (await idPicker.consume(chatId, msg))) return;
 
     if (msg.location) {
       if (!user) return startOnboarding(String(chatId));
@@ -237,6 +245,8 @@ export function createMessageRouter(deps) {
     const chatId = String(cb.message?.chat?.id || '');
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
     if (!chatId) return;
+
+    if (cb.data === 'idp:off' && idPicker) { if (await idPicker.onCallback(chatId, cb.data)) return; }
 
     // Личный кабинет (U3a-ui): все callback_data вида lk:... - домен lk.onCallback.
     // Мид-онбординга (или без профиля) ЛК недоступен: молча гасим клик, чтобы

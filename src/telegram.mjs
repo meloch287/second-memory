@@ -15,6 +15,7 @@ import {
 } from './ai.mjs';
 import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import { captureStylePref } from './capabilities.mjs';
+import { createIdPicker } from './telegram-idpicker.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
@@ -521,13 +522,16 @@ export function startTelegramBot(store, token, log = console) {
   const publicUrl = process.env.PUBLIC_BASE_URL || 'https://secondmemory.103.88.241.202.sslip.io';
   const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, withTyping, aiFitnessProgram, sendIcs, publicUrl, parseProduct: parseProductSmart });
 
+  // Секретная пипетка ID (стикеры и премиум-эмодзи) - команда /id.
+  const idPicker = createIdPicker({ send, api, log });
+
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
     isGroupChat, groupFlow, callerIsAdmin,
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText, lk,
+    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker,
   });
   const onMessage = router.onMessage;
   const onCallback = router.onCallback;
