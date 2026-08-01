@@ -314,9 +314,12 @@ export function createGroupHandler(deps) {
     // живая реакция-эмодзи по настроению (бот - участник чата)
     if (!fromVoice && msg.message_id) maybeReact?.(chatId, msg.message_id, text);
 
-    // всё в общую память группы (с автором), тихий захват дел/долгов
+    // всё в общую память группы (с автором), тихий захват дел/долгов.
+    // Без ИИ разговор ниже ведёт handleMessage()/route(), который САМ сохраняет
+    // долг/встречу/задачу — тогда captureEntry дал бы дубль (та же фраза дважды).
+    // Поэтому тихо ловим только при живом ИИ (иначе route не вызывается).
     store.addRaw(key, `${fromName}: ${text}`);
-    captureEntry(store, text, new Date(), key, userOffset(g));
+    if (aiEnabled()) captureEntry(store, text, new Date(), key, userOffset(g));
 
     // «я Никита» - работает и БЕЗ обращения к боту: человек просто
     // представился в чате; имя в реестр + факт (RAG знает сразу)

@@ -221,6 +221,56 @@ test('lk:wish:add:url -> parseProduct бросает исключение - то
   assert.equal(s.listWish('1').length, 1, 'даже при исключении карточка сохранена (best-effort)');
 });
 
+test('lk:wish:add:url -> болтовня вместо ссылки НЕ сохраняется, pending остаётся', async () => {
+  const s = new Store(tmpFile());
+  const neverCalled = async () => { throw new Error('parseProduct не должен вызываться для не-ссылки'); };
+  const bot = fakeBot(s, { parseProduct: neverCalled });
+
+  await bot.lk.onCallback('1', 'lk:wish:add:url', cbq('1', 33), s.getUser('1'));
+  const handled = await bot.lk.consumeInput('1', s.getUser('1'), 'просто думаю о подарке маме');
+  assert.equal(handled, true, 'сообщение перехвачено ЛК');
+  assert.equal(s.listWish('1').length, 0, 'мусорная карточка с болтовнёй в заголовке НЕ создана');
+  assert.equal(bot.lk.pendingInput('1'), true, 'режим ожидания остаётся - можно прислать нормальный URL');
+  assert.match(lastRender(bot, '1').text, /не похоже на ссылку/i);
+
+});
+
+test('lk:wish:add:url -> «отмена»/«cancel»/«/cancel» выходит к списку без сохранения', async () => {
+  for (const word of ['отмена', 'Отмена.', 'cancel', '/cancel']) {
+    const s = new Store(tmpFile());
+    const bot = fakeBot(s);
+    await bot.lk.onCallback('1', 'lk:wish:add:url', cbq('1', 34), s.getUser('1'));
+    const handled = await bot.lk.consumeInput('1', s.getUser('1'), word);
+    assert.equal(handled, true, `«${word}» перехвачено ЛК`);
+    assert.equal(bot.lk.pendingInput('1'), false, `«${word}» снимает режим ожидания`);
+    assert.equal(s.listWish('1').length, 0, `«${word}» ничего не сохраняет`);
+    assert.match(lastRender(bot, '1').text, /Вишлист/, 'вернулись к списку вишлиста');
+  }
+});
+
+test('lk:wish:add:url -> домен без схемы (ozon.ru/...) принимается как ссылка', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s, { parseProduct: async (url) => ({ ok: false, url }) });
+  await bot.lk.onCallback('1', 'lk:wish:add:url', cbq('1', 35), s.getUser('1'));
+  const handled = await bot.lk.consumeInput('1', s.getUser('1'), 'ozon.ru/product/123');
+  assert.equal(handled, true);
+  const items = s.listWish('1');
+  assert.equal(items.length, 1, 'домен-с-точкой сохранился как ссылка');
+  assert.equal(items[0].title, 'ozon.ru/product/123');
+});
+
+test('clearPending снимает незавершённый сценарий извне (сценарий /reset)', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  await bot.lk.onCallback('1', 'lk:wish:add:url', cbq('1', 36), s.getUser('1'));
+  assert.equal(bot.lk.pendingInput('1'), true);
+  bot.lk.clearPending('1');
+  assert.equal(bot.lk.pendingInput('1'), false, 'pending сброшен');
+  const handled = await bot.lk.consumeInput('1', s.getUser('1'), 'https://shop.example.com/z');
+  assert.equal(handled, false, 'после сброса сообщения ЛК не перехватываются');
+  assert.equal(s.listWish('1').length, 0);
+});
+
 test('галерея: view:0 -> view:1, подписи "1/M"/"2/M", фото уходит через api sendPhoto, без фото - текстом', async () => {
   const s = new Store(tmpFile());
   s.addWish('1', { title: 'Товар A', desc: 'Описание A', url: 'https://a.example.com', photos: ['https://img/a.jpg'] });

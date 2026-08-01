@@ -8,7 +8,7 @@ import { DEFAULT_OFFSET, fmtUser, userOffset } from './tz.mjs';
 import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
-import { esc, hasFfmpeg, LK_TRIGGER_RE } from './telegram-helpers.mjs';
+import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 
 export function createMessageRouter(deps) {
   const {
@@ -19,6 +19,24 @@ export function createMessageRouter(deps) {
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
     upcomingEvents, sendIcs, sendDocumentText, lk,
   } = deps;
+
+  // ЕДИНАЯ маршрутизация готового текста - и набранного руками (onMessage),
+  // и расшифрованного из голоса/кружка (audioFlow в telegram-media.mjs).
+  // Порядок важен: онбординг раньше всего (ЛК и интенты не должны срабатывать
+  // мид-онбординга), затем триггеры ЛК («настройки»/«лк»/«кабинет»), затем
+  // ожидания многошаговых сценариев ЛК, затем спец-интенты, затем разговор.
+  async function routeText(chatId, user, text) {
+    const id = String(chatId);
+    if (!user) return startOnboarding(id); // первое сообщение - знакомимся
+    if (user.step) return onboardingStep(id, user, text);
+    // Личный кабинет (U3a-ui): «настройки»/«лк»/«кабинет» - до разговора
+    if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
+    // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист)
+    if (await lk.consumeInput(id, user, text)) return;
+    // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
+    if (await handleIntent(id, user, text)) return;
+    return friendFlow(id, text);
+  }
 
   async function onMessage(msg) {
     if (isGroupChat(msg)) {
@@ -69,9 +87,7 @@ export function createMessageRouter(deps) {
         return null;
       });
       if (!transcript) return send(chatId, 'Кружок посмотрел, но слов не разобрал. Повтори?');
-      if (user?.step) return onboardingStep(chatId, user, transcript);
-      if (await handleIntent(String(chatId), user, transcript)) return; // команды из кружка тоже работают
-      return friendFlow(String(chatId), transcript);
+      return routeText(chatId, user, transcript); // кружок = голос = текст: команды, ЛК и разговор
     }
 
     // Обычное видео (№14): вытаскиваем звук, расшифровываем, запоминаем
@@ -141,7 +157,10 @@ export function createMessageRouter(deps) {
     let text = msg.text.trim();
     if (!text) return;
     // Счётчик обращений к Толику (личный кабинет, U3a-ui) - раз на сообщение.
-    store.bumpRequests(String(chatId));
+    // Только для уже знакомых: до онбординга/deep-link профиль НЕ создаём,
+    // иначе _ensureUser внутри bumpRequests делал бы мёртвой ветку дефолтов
+    // в обработчике «/start sm-…» ниже (профиль появлялся бы раньше времени).
+    if (user) store.bumpRequests(String(chatId));
 
     // Пересланное сообщение: запоминаем, от кого оно
     const fwd = msg.forward_origin;
@@ -184,20 +203,16 @@ export function createMessageRouter(deps) {
     if (cmd === '/help') return send(chatId, helpText(user));
     if (cmd === '/summary') return sendSummary(String(chatId));
     if (cmd === '/reset') return askReset(String(chatId), user);
-    if (cmd === '/settings') return lk.openSettings(String(chatId), user);
+    if (cmd === '/settings') {
+      // ЛК заблокирован, пока идёт знакомство: pending-сценарии ЛК не должны
+      // взводиться мид-онбординга и перехватывать первое настоящее сообщение.
+      if (!user) return startOnboarding(String(chatId));
+      if (user.step) return send(chatId, esc(STEP_EXPLAIN[user.step] || STEP_EXPLAIN.name));
+      return lk.openSettings(String(chatId), user);
+    }
 
-    if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
-    if (user.step) return onboardingStep(String(chatId), user, text);
-
-    // Личный кабинет (U3a-ui): «настройки»/«лк»/«кабинет» текстом - до разговора
-    if (LK_TRIGGER_RE.test(text.toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(String(chatId), user);
-    // Продолжение многошагового сценария ЛК (добавить/изменить долг)
-    if (await lk.consumeInput(String(chatId), user, text)) return;
-
-    // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
-    if (await handleIntent(String(chatId), user, text)) return;
-
-    return friendFlow(String(chatId), text);
+    // Онбординг, ЛК, интенты и разговор - общий маршрут с голосом (routeText)
+    return routeText(chatId, user, text);
   }
 
   async function onCallback(cb) {
@@ -205,15 +220,20 @@ export function createMessageRouter(deps) {
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
     if (!chatId) return;
 
-    // Личный кабинет (U3a-ui): все callback_data вида lk:... - домен lk.onCallback
+    // Личный кабинет (U3a-ui): все callback_data вида lk:... - домен lk.onCallback.
+    // Мид-онбординга (или без профиля) ЛК недоступен: молча гасим клик, чтобы
+    // pending-сценарий не взводился и не перехватил первое настоящее сообщение.
     if (cb.data && cb.data.startsWith('lk:')) {
-      if (await lk.onCallback(chatId, cb.data, cb, store.getUser(chatId))) return;
+      const u = store.getUser(chatId);
+      if (!u || u.step) return;
+      if (await lk.onCallback(chatId, cb.data, cb, u)) return;
     }
 
     if (cb.data === 'reset_no') {
       return send(chatId, 'Фух. Я уж испугался 😅 Продолжаем, я всё помню.');
     }
     if (cb.data === 'reset_yes') {
+      lk.clearPending(chatId); // незавершённый сценарий ЛК не должен пережить сброс
       const prof = store.getUser(chatId);
       if (prof?.isGroup) {
         // память группы стирает только админ группы; онбординг не нужен
@@ -310,5 +330,5 @@ export function createMessageRouter(deps) {
     }
   }
 
-  return { onMessage, onCallback };
+  return { onMessage, onCallback, routeText };
 }

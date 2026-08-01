@@ -259,6 +259,12 @@ export function createLkHandler(deps) {
     return pending.has(String(chatId));
   }
 
+  // Сброс незавершённого сценария извне (например, /reset): pending не должен
+  // пережить стирание памяти и перехватить первое сообщение нового знакомства.
+  function clearPending(chatId) {
+    pending.delete(String(chatId));
+  }
+
   async function onCallback(chatId, data, cbq, user) {
     if (!data || !data.startsWith('lk:')) return false;
     const messageId = cbq?.message?.message_id;
@@ -447,8 +453,22 @@ export function createLkHandler(deps) {
     /* ---- Вишлист: добавление по ссылке ---- */
 
     if (p.mode === 'wish_add_url') {
-      pending.delete(id);
       const url = text.trim();
+      // «Отмена» словом - выходим из сценария к списку (кнопка «Назад» и так есть)
+      const low = url.toLowerCase().replace(/ё/g, 'е').replace(/[.!…]+$/, '');
+      if (low === 'отмена' || low === 'cancel' || low === '/cancel') {
+        pending.delete(id);
+        await showWish(chatId, null);
+        return true;
+      }
+      // Не ссылка (нет http/https и не домен-с-точкой) - не сохраняем мусорную
+      // карточку с болтовнёй в заголовке; pending остаётся, ждём нормальный URL.
+      const looksLikeUrl = /^https?:\/\/\S+$/i.test(url) || (!/\s/.test(url) && /\.[\p{L}\d-]{2,}/u.test(url));
+      if (!looksLikeUrl) {
+        await send(chatId, 'Это не похоже на ссылку — пришли URL или нажми Отмена.');
+        return true;
+      }
+      pending.delete(id);
       let r = null;
       try {
         r = await parseProduct(url);
@@ -529,5 +549,5 @@ export function createLkHandler(deps) {
     return false;
   }
 
-  return { openSettings, onCallback, pendingInput, consumeInput };
+  return { openSettings, onCallback, pendingInput, consumeInput, clearPending };
 }

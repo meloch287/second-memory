@@ -13,7 +13,7 @@ import { RUB } from './format.mjs';
 import { esc, hasFfmpeg } from './telegram-helpers.mjs';
 
 export function createMediaHandlers(deps) {
-  const { token, api, activeThread, store, send, log, withTyping, friendFlow, handleIntent, onboardingStep } = deps;
+  const { token, api, activeThread, store, send, log, withTyping, friendFlow, routeText } = deps;
 
   async function downloadBase64(file_id) {
     const info = await api('getFile', { file_id });
@@ -141,11 +141,10 @@ export function createMediaHandlers(deps) {
     if (!transcript) {
       return send(chatId, 'Я честно слушал, но не расслышал. Скажи ещё раз?');
     }
-    if (user?.step) return onboardingStep(chatId, user, transcript);
-    // Голосовые команды работают как текстовые: сперва интенты
-    // («отвечай голосом», «траты», «забудь», «напомни...»), потом разговор.
-    if (await handleIntent(String(chatId), user, transcript)) return;
-    return friendFlow(String(chatId), transcript);
+    // Расшифровка идёт ТЕМ ЖЕ маршрутом, что и набранный текст (routeText в
+    // telegram-router.mjs): онбординг → триггеры ЛК («настройки») → ожидания
+    // ЛК (добавить долг/вишлист) → интенты → разговор. Голос равен тексту.
+    return routeText(chatId, user, transcript);
   }
 
   // Картинка (фото, статичный стикер, превью гифки): сначала пробуем распознать

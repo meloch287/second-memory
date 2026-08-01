@@ -382,8 +382,6 @@ export function startTelegramBot(store, token, log = console) {
   async function friendFlow(chatId, text) {
     store.addRaw(chatId, text);
     const user = store.getUser(String(chatId));
-    // долги/встречи/задачи тихо ложатся в базу с учётом часового пояса
-    const captured = captureEntry(store, text, new Date(), chatId, userOffset(user));
     // фиксируем тяжёлый день для вечернего check-in'а
     if (LOW_MOOD_RE.test(text.toLowerCase().replace(/ё/g, 'е'))) {
       const w = wall(user, new Date());
@@ -391,13 +389,23 @@ export function startTelegramBot(store, token, log = console) {
     }
 
     if (!aiEnabled()) {
+      // Без ИИ разговор ведёт route()/handleMessage — он САМ структурно сохраняет
+      // долг/встречу/задачу (saveEntry) и возвращает её в out.entry. Отдельный
+      // captureEntry тут НЕ зовём: иначе одна и та же фраза ляжет в базу дважды
+      // (дубль с новым id, но тем же title/type/due).
       const out = await handleMessage(store, text, new Date(), String(chatId));
       const reply = out.reply || FALLBACKS[Math.floor(Date.now() / 60000) % FALLBACKS.length];
       await deliver(chatId, reply, store.getUser(String(chatId)));
-      await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
+      // Календарь предлагаем только для СВЕЖЕсохранённой открытой записи:
+      // out.entry возвращают и «готово N»/«удали N» (закрытая/стёртая запись).
+      const saved = out.entry && store.byId(out.entry.id)?.status === 'open' ? out.entry : null;
+      await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), saved);
       return;
     }
 
+    // С ИИ живой ответ даёт модель, а долги/встречи/задачи тихо ложатся в базу
+    // здесь (route не вызываем) — с учётом часового пояса пользователя.
+    const captured = captureEntry(store, text, new Date(), chatId, userOffset(user));
     let reply;
     try {
       reply = await withTyping(chatId, () => aiFriendReply(store, chatId, text));
@@ -442,15 +450,17 @@ export function startTelegramBot(store, token, log = console) {
   }
 
   /* ---- Сшивка вынесенных кластеров: media / intents / group / router ----
-   * media.audioFlow вызывает handleIntent, а handleIntent (в intents) зовёт
-   * media.sendPhoto - циклическая зависимость. Ссылка через `let` держит её
-   * живой: к моменту реального вызова (уже во время работы бота) handleIntent
-   * назначен настоящей функцией, обёртка лишь пробрасывает аргументы. */
-  let handleIntent = null;
+   * media.audioFlow гонит расшифровку через router.routeText (голос = текст:
+   * тот же маршрут онбординг → ЛК → интенты → разговор), а роутер создаётся
+   * ПОЗЖЕ media (ему нужны audioFlow/imageFlow) - циклическая зависимость.
+   * Ссылка через `let` держит её живой: к моменту реального вызова (уже во
+   * время работы бота) routeText назначен настоящей функцией роутера,
+   * обёртка лишь пробрасывает аргументы. */
+  let routeText = null;
 
   const media = createMediaHandlers({
-    token, api, activeThread, store, send, log, withTyping, friendFlow, onboardingStep,
-    handleIntent: (chatId, user, text) => handleIntent(chatId, user, text),
+    token, api, activeThread, store, send, log, withTyping, friendFlow,
+    routeText: (chatId, user, text) => routeText(chatId, user, text),
   });
   const downloadBase64 = media.downloadBase64;
   const sendPhoto = media.sendPhoto;
@@ -465,7 +475,7 @@ export function startTelegramBot(store, token, log = console) {
   const intents = createIntentHandler({
     api, send, store, log, kindOf, withTyping, sleepyText, typingLoop, sendPhoto, settingsText, upcomingEvents,
   });
-  handleIntent = intents.handleIntent;
+  const handleIntent = intents.handleIntent;
 
   const { groupFlow, isGroupChat, callerIsAdmin } = createGroupHandler({
     api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
@@ -487,6 +497,7 @@ export function startTelegramBot(store, token, log = console) {
   });
   const onMessage = router.onMessage;
   const onCallback = router.onCallback;
+  routeText = router.routeText; // замыкает цикл media -> routeText (см. комментарий выше)
 
   /* ---- Long polling ---- */
 
