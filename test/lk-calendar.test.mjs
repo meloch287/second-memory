@@ -142,3 +142,65 @@ test('cal: импорт .ics складывает события в календ
   assert.equal(n, 1);
   assert.equal(s.calEvents('1').length, 1);
 });
+
+/* ---- Вопрос про календарь: «вывести или рассказать?» ---- */
+
+test('cal: вопрос «что там по календарю» -> выбор показать/рассказать (не add-флоу)', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  const handled = await bot.lk.tryCalendar('1', u, 'толик что там у меня щас по календарю?');
+  assert.equal(handled, true);
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /Вывести календарь или просто рассказать/);
+  assert.ok(hasCb(r, 'lk:cal:show') && hasCb(r, 'lk:cal:tell'), 'кнопки выбора');
+  assert.ok(!/На когда добавить/.test(r.text), 'НЕ уходит в добавление события');
+  assert.equal(s.calEvents('1').length, 0);
+});
+
+test('cal: «Рассказать» -> текстовая сводка событий', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  s.add({ chatId: '1', type: 'meeting', title: 'Встреча с Аней', due: new Date(Date.now() + 86400000).toISOString(), hasTime: true, calendar: true });
+  await bot.lk.tryCalendar('1', u, 'что у меня в календаре?');
+  await bot.lk.onCallback('1', 'lk:cal:tell', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /Встреча с Аней/);
+  assert.ok(!r.kb || !hasCb(r, 'lk:cal:show'), 'это текстовый ответ, а не сетка');
+});
+
+test('cal: «Показать» -> месячная сетка', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  await bot.lk.tryCalendar('1', u, 'какие события в календаре?');
+  await bot.lk.onCallback('1', 'lk:cal:show', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.ok(flat(r).some((b) => b.text === 'Пн'), 'показана сетка с днями недели');
+});
+
+test('cal: на выбор можно ответить словами (голосом)', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  s.add({ chatId: '1', type: 'meeting', title: 'Зубной', due: new Date(Date.now() + 86400000).toISOString(), hasTime: true, calendar: true });
+  await bot.lk.tryCalendar('1', u, 'что там по календарю?');
+  assert.equal(bot.lk.pendingInput('1'), true);
+  assert.equal(await bot.lk.consumeInput('1', s.getUser('1'), 'просто расскажи'), true);
+  assert.match(lastRender(bot, '1').text, /Зубной/);
+  assert.equal(bot.lk.pendingInput('1'), false, 'сценарий закрыт');
+});
+
+test('cal: пустой календарь в сводке подсказывает, как добавить', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  await bot.lk.tryCalendar('1', u, 'что у меня в календаре?');
+  await bot.lk.onCallback('1', 'lk:cal:tell', cbq('1'), s.getUser('1'));
+  assert.match(lastRender(bot, '1').text, /пусто/i);
+});
+
+test('cal: вопрос С датой и временем всё же добавляет (не спрашивает про показ)', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  await bot.lk.tryCalendar('1', u, 'добавь в календарь встречу завтра в 16:00');
+  assert.match(lastRender(bot, '1').text, /[Вв]ерно|Добавить в календарь/);
+});
+
+test('cal: stripCalWords не оставляет огрызков окончаний', async () => {
+  const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
+  await bot.lk.tryCalendar('1', u, 'запиши в календарь поход к врачу завтра в 11:00');
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /поход к врачу/i);
+  assert.ok(!/\bю\b|\bе\b(?!\s)/.test(r.text.replace(/[«»]/g, '')), 'без огрызков вида «по ю»');
+});

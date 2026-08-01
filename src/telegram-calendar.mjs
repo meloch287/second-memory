@@ -15,7 +15,11 @@ const MONTHS = ['', 'Январь', 'Февраль', 'Март', 'Апрель'
 // Ключевое слово «календар» (кириллица: границы через lookaround, не \b).
 const CAL_KW = /(?<![а-яё])календар/i;
 // «Открыть» календарь, а не добавить событие.
-const CAL_OPEN = /^(?:мой\s+|открой\s+|покажи\s+|показать\s+|мой\s+)?календар[ья]?\s*$/i;
+const CAL_OPEN = /^(?:мой\s+|открой\s+|покажи\s+|показать\s+)?календар[а-яё]*\s*[?!.]*$/i;
+// ВОПРОС про календарь («что там у меня по календарю?», «какие события») -
+// не добавление: на такое спрашиваем, показать сетку или рассказать словами.
+const CAL_QUERY =
+  /(?:^|[^а-яё])(что|чего|чё|какие|какая|какое|когда|сколько|есть\s+ли|напомни\s+что|покажи|показать|глянь|глянуть|посмотреть|расскажи|подскажи|планы|расписание|занят|свободен)(?![а-яё])/i;
 
 export function createCalendarHandler(deps) {
   const { store, send, sendButtons, api, render, sendIcs, publicUrl, log } = deps;
@@ -202,9 +206,11 @@ export function createCalendarHandler(deps) {
 
   function stripCalWords(text) {
     return String(text)
-      .replace(/добав(ь|ить|)\s+в\s+календар[ья]?/gi, '')
-      .replace(/(?<![а-яё])в\s+календар[ья]?/gi, '')
-      .replace(/(?<![а-яё])календар[ья]?/gi, '')
+      // NB: окончания разные («в календарь», «по календарю») - берём [а-яё]*,
+      // иначе от «календарю» оставался огрызок «ю».
+      .replace(/добав(ь|ить|)\s+в\s+календар[а-яё]*/gi, '')
+      .replace(/(?<![а-яё])(?:в|по|из)\s+календар[а-яё]*/gi, '')
+      .replace(/(?<![а-яё])календар[а-яё]*/gi, '')
       .replace(/(?<![а-яё])(запиши|поставь|создай|запланируй)(?![а-яё])/gi, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
@@ -249,6 +255,32 @@ export function createCalendarHandler(deps) {
     return { title: title.slice(0, 80), due: r.due, hasTime: r.hasTime };
   }
 
+  // Рассказать словами: короткая сводка ближайших событий (без сетки).
+  function tellText(chatId, user) {
+    const off = userOffset(user);
+    const now = Date.now();
+    const evs = store.calEvents(String(chatId))
+      .filter((e) => Date.parse(e.due) >= now - 3600000)
+      .sort((a, b) => Date.parse(a.due) - Date.parse(b.due))
+      .slice(0, 6);
+    if (!evs.length) return 'В календаре пока пусто. Скажи «встреча с другом завтра в 16, добавь в календарь» - запишу.';
+    const lines = evs.map((e) => `• ${esc(e.title || 'событие')} - ${esc(fmtUser(e.due, off, e.hasTime))}`);
+    return `Вот что у тебя в календаре:\n${lines.join('\n')}`;
+  }
+
+  // Вопрос про календарь: спрашиваем, показать сетку или рассказать словами.
+  async function askShowOrTell(chatId, user) {
+    pending.set(String(chatId), { mode: 'cal_choice' });
+    await send(chatId, 'Вывести календарь или просто рассказать?', {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📅 Показать календарь', callback_data: 'lk:cal:show' },
+          { text: '💬 Рассказать', callback_data: 'lk:cal:tell' },
+        ]],
+      },
+    });
+  }
+
   // Точка входа из роутера: сообщение с ключевым словом «календарь».
   async function tryAdd(chatId, user, text) {
     if (!user || user.step) return false;
@@ -256,6 +288,13 @@ export function createCalendarHandler(deps) {
     if (!CAL_KW.test(norm)) return false;
     // «покажи календарь» / «календарь» -> открыть сетку, не добавлять
     if (CAL_OPEN.test(String(text).trim())) { await showToday(chatId, null, user); return true; }
+    // Вопрос («что там у меня по календарю?») - это НЕ добавление события:
+    // предлагаем выбор - показать сетку или рассказать словами.
+    if (CAL_QUERY.test(norm) || /\?\s*$/.test(String(text).trim())) {
+      const probe = parseEvent(text, user);
+      // если в вопросе явно есть дата+время, считаем это всё же добавлением
+      if (!probe || probe.needWhen) { await askShowOrTell(chatId, user); return true; }
+    }
     const ev = parseEvent(text, user);
     if (!ev) { await showToday(chatId, null, user); return true; }
     if (ev.needWhen) {
@@ -279,6 +318,8 @@ export function createCalendarHandler(deps) {
     let m;
 
     if (data === 'lk:cal' || data === 'lk:cal:today') { pending.delete(id); await showToday(chatId, messageId, user); return true; }
+    if (data === 'lk:cal:show') { pending.delete(id); await showToday(chatId, null, user); return true; }
+    if (data === 'lk:cal:tell') { pending.delete(id); await send(chatId, tellText(chatId, user)); return true; }
     if (data === 'lk:cal:nop') return true;
     if (data === 'lk:cal:list') { pending.delete(id); await showList(chatId, messageId, user); return true; }
     if (data === 'lk:cal:connect') { pending.delete(id); await toggleConnect(chatId, messageId, user); return true; }
@@ -311,6 +352,19 @@ export function createCalendarHandler(deps) {
     const id = String(chatId);
     const p = pending.get(id);
     if (!p) return false;
+
+    // Ответ словами на «вывести или рассказать?» (в т.ч. голосом).
+    if (p.mode === 'cal_choice') {
+      const t = String(text).toLowerCase().replace(/ё/g, 'е');
+      const wantShow = /(показ|выведи|вывести|открой|сетк|календар)/i.test(t);
+      const wantTell = /(расскаж|словам|просто скажи|перечисл|говори)/i.test(t);
+      pending.delete(id);
+      if (wantTell && !wantShow) { await send(chatId, tellText(chatId, user)); return true; }
+      if (wantShow) { await showToday(chatId, null, user); return true; }
+      // непонятный ответ - не залипаем в сценарии, рассказываем словами
+      await send(chatId, tellText(chatId, user));
+      return true;
+    }
 
     if (p.mode === 'cal_confirm') {
       // NB: \b с кириллицей в JS не работает - границы через lookahead.
