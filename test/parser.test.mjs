@@ -245,3 +245,12 @@ test('долг: «Петя занял у меня 5000» → in, Петя (а н
   assert.equal(p.entry.direction, 'in'); // Петя взял у меня → должен мне
   assert.equal(p.entry.counterparty, 'Петя');
 });
+
+// --- U1: команду «Итог» из бота убрали, слова «итог»/«саммари» больше не
+// перехватываются отдельным intent'ом «summary» ---
+test('U1: «итог» и «саммари» больше не дают kind «summary»', () => {
+  assert.notEqual(parseMessage('итог', NOW).kind, 'summary');
+  assert.notEqual(parseMessage('саммари', NOW).kind, 'summary');
+  assert.notEqual(parseMessage('подведи итог', NOW).kind, 'summary');
+  assert.notEqual(parseMessage('резюме', NOW).kind, 'summary');
+});

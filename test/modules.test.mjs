@@ -7,6 +7,8 @@ import { Store } from '../src/store.mjs';
 import { isDuplicateEntry } from '../src/worker.mjs';
 import { morningHour, eveningHour, todayEvents } from '../src/scheduler.mjs';
 import { extractDocxText } from '../src/docx.mjs';
+import { COMMANDS, STEP_EXPLAIN } from '../src/telegram-helpers.mjs';
+import { friendSystem } from '../src/ai.mjs';
 
 // Тесты рассчитаны на открытый JSON: внешний ключ окружения не должен влиять
 delete process.env.SM_ENCRYPTION_KEY;
@@ -74,4 +76,29 @@ test('бэкап данных создаётся и ротация не пада
   const path = s.backup();
   assert.ok(path && path.includes('backups'));
   assert.ok(readFileSync(path, 'utf8').includes('тест'));
+});
+
+// --- U1: команду «Итог»/саммари убрали из меню и /help бота ---
+test('U1: в меню бота (COMMANDS) нет команды summary', () => {
+  assert.ok(!COMMANDS.some((c) => c.command === 'summary'), 'summary всё ещё в меню');
+  assert.ok(COMMANDS.some((c) => c.command === 'start'));
+  assert.ok(COMMANDS.some((c) => c.command === 'help'));
+  assert.ok(COMMANDS.some((c) => c.command === 'reset'));
+});
+
+// --- U0: бот всегда Толик - шаг знакомства «botname» из онбординга убран ---
+test('U0: в STEP_EXPLAIN нет шага «botname» (бот больше не просит имя для себя)', () => {
+  assert.equal(STEP_EXPLAIN.botname, undefined);
+  assert.ok(STEP_EXPLAIN.name);
+  assert.ok(STEP_EXPLAIN.tz);
+});
+
+test('U0: friendSystem - боту без botName (новый/старый профиль) достаётся имя Толик', () => {
+  assert.match(friendSystem({ name: 'Саша' }), /Тебя зовут Толик/);
+  assert.match(friendSystem({ name: 'Саша', botName: '' }), /Тебя зовут Толик/);
+  assert.match(friendSystem({ name: 'Саша', botName: 'Вторая память' }), /Тебя зовут Толик/);
+});
+
+test('U0: friendSystem - кастомное имя бота (легаси-профиль) не затирается Толиком', () => {
+  assert.match(friendSystem({ name: 'Саша', botName: 'Барни' }), /Тебя зовут Барни/);
 });

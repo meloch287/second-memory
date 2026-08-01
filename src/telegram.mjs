@@ -1,4 +1,4 @@
-// Telegram-бот «друг и дневник». Три команды: /start /help /summary.
+// Telegram-бот «друг и дневник» по имени Толик. Видимые команды: /start /help /reset.
 // Всё остальное - живой разговор: сообщения падают в сырую базу,
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 //
@@ -144,13 +144,20 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
+  // Толик - постоянное имя бота в личных чатах (U0). Пустой или устаревший
+  // botName (например, 'Вторая память' - имя веб-ассистента) подменяем
+  // Толиком, чтобы и старые профили без имени видели того же друга.
+  function botNameOf(user) {
+    return user?.botName && user.botName !== 'Вторая память' ? user.botName : 'Толик';
+  }
+
   /* ---- Онбординг: знакомство как с человеком ---- */
 
   function startOnboarding(chatId) {
-    store.setUser(chatId, { step: 'botname' });
+    store.setUser(chatId, { botName: 'Толик', step: 'name' });
     return send(
       chatId,
-      'Привет-привет! 👋\n\nЯ твоя вторая память и, кажется, твой новый друг. Буду запоминать всё, что ты мне пишешь: дела, долги, встречи, мысли.\n\nТолько я пока без имени. Придумаешь? Как меня назовёшь?',
+      'Привет! Я Толик, твой ассистент и, считай, друг. Буду запоминать всё, что ты мне пишешь: дела, долги, встречи, мысли.\n\nА тебя как зовут?',
       { reply_markup: { remove_keyboard: true } }
     );
   }
@@ -168,17 +175,10 @@ export function startTelegramBot(store, token, log = console) {
       return send(chatId, esc(STEP_EXPLAIN[user.step] || STEP_EXPLAIN.name));
     }
     // Имя из целого предложения - вероятно, это не имя
-    if ((user.step === 'botname' || user.step === 'name') && (value.length > 30 || value.split(/\s+/).length > 3)) {
-      return send(
-        chatId,
-        `Хм, длинновато для имени 🙂 Давай короче. ${user.step === 'botname' ? 'Как меня назовёшь?' : 'Как тебя называть?'}`
-      );
+    if (user.step === 'name' && (value.length > 30 || value.split(/\s+/).length > 3)) {
+      return send(chatId, 'Хм, длинновато для имени 🙂 Давай короче. Как тебя называть?');
     }
 
-    if (user.step === 'botname') {
-      store.setUser(chatId, { botName: value, step: 'name' });
-      return send(chatId, `${esc(value)} - звучит! Так меня ещё никто не называл 😄\n\nА тебя как называть?`);
-    }
     if (user.step === 'name') {
       store.setUser(chatId, { name: value, step: 'tz' });
       return askLocation(chatId);
@@ -197,7 +197,7 @@ export function startTelegramBot(store, token, log = console) {
       const u = store.setUser(chatId, { goal: value, step: null });
       return send(
         chatId,
-        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${u.botName ? esc(u.botName) + ' к твоим услугам.' : ''}\n\nПросто пиши мне как в дневник. Как прошёл твой день?`,
+        `Всё, теперь я в теме, ${esc(u.name || 'дружище')} 😉 ${esc(botNameOf(u))} к твоим услугам.\n\nПросто пиши мне как в дневник. Как прошёл твой день?`,
         { reply_markup: { remove_keyboard: true } }
       );
     }
@@ -241,7 +241,7 @@ export function startTelegramBot(store, token, log = console) {
 
   function helpText(user) {
     const name = user?.name ? `, ${esc(user.name)}` : '';
-    const signed = user?.botName ? ` Твой ${esc(user.botName)}.` : '';
+    const signed = ` Твой ${esc(botNameOf(user))}.`;
     return [
       `Тут всё просто${name} 🙂${signed}`,
       '',
@@ -259,7 +259,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>⚙️ «Настройки» покажут всё про тебя. Пришли геолокацию - сам определю часовой пояс и город. «Напоминай за 30 минут», «мой город Казань» - тоже подстрою. По утрам расскажу про дела и погоду.</blockquote>',
       '',
-      '/summary - итоги дня. /reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
+      '/reset - стереть мою память и завести нового друга (осторожно!). А я всегда здесь.',
     ].join('\n');
   }
 
@@ -298,7 +298,7 @@ export function startTelegramBot(store, token, log = console) {
       '⚙️ Твои настройки:',
       '',
       `Имя: ${esc(user?.name || '-')}`,
-      `Моё имя: ${esc(user?.botName || '-')}`,
+      `Моё имя: ${esc(botNameOf(user))}`,
       `Ритм: ${esc(user?.rhythm || '-')}`,
       `Город: ${esc(user?.city || 'не задан')}`,
       `Часовой пояс: UTC${offH >= 0 ? '+' : ''}${offH}`,

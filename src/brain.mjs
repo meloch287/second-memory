@@ -3,9 +3,9 @@
 
 import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
-import { aiEnabled, aiSummary, aiAnswer, aiSearch } from './ai.mjs';
+import { aiEnabled, aiAnswer, aiSearch } from './ai.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
-import { memoryStats, questionCoverage } from './ragmeter.mjs';
+import { questionCoverage } from './ragmeter.mjs';
 import { resolveWallDate, userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
 import { money, pad } from './format.mjs';
@@ -26,7 +26,6 @@ const HELP = [
   'Спросить:',
   '• «покажи все долги», «сколько мне должны»',
   '• «что у меня завтра», «сводка»',
-  '• «итог» - умная сводка от ИИ',
   '• вопрос со знаком «?» - ответ ИИ по вашим данным',
   '',
   'Команды: «готово 3», «удали 5», «очистить чат».',
@@ -132,19 +131,6 @@ async function route(store, text, now, chatId = 'web') {
       };
     case 'help':
       return { reply: HELP };
-    case 'summary': {
-      if (!aiEnabled()) {
-        return {
-          reply: 'ИИ-саммари не настроено. Задайте AI_API_KEY в файле .env. Инструкция в README.',
-        };
-      }
-      try {
-        const stats = memoryStats(store, chatId);
-        return { reply: await aiSummary(store, now, chatId), ai: true, rag: { score: stats.score, label: stats.label } };
-      } catch (e) {
-        return { reply: `Не получилось связаться с ИИ (${e.message}). Попробуйте ещё раз.` };
-      }
-    }
     case 'clearchat':
       store.clearHistory(chatId);
       return { reply: 'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы стереть всё, скажи «очисти память».', cleared: true };
