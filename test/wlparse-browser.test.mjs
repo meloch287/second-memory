@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { parseProductBrowser } from '../src/wlparse-browser.mjs';
 
 // Фейковый браузер в форме Playwright (newContext -> newPage -> goto/url/content).
-function fakeBrowser({ finalUrl, html = '', status = 200, gotoThrows = false, contentThrows = false } = {}) {
+function fakeBrowser({ finalUrl, html = '', status = 200, gotoThrows = false, contentThrows = false, domPrice = null } = {}) {
   let closed = false;
   return {
     _closed: () => closed,
@@ -18,6 +18,7 @@ function fakeBrowser({ finalUrl, html = '', status = 200, gotoThrows = false, co
             async waitForTimeout() {},
             url: () => finalUrl,
             async content() { if (contentThrows) throw new Error('read boom'); return html; },
+            async evaluate() { return domPrice; }, // имитируем цену из DOM
           };
         },
         async close() {},
@@ -43,6 +44,17 @@ test('browser: рендер карточки -> title/photos из og', async () 
   assert.equal(r.source, 'market.yandex.ru');
   assert.ok(r.photos.length >= 1, 'фото со страницы');
   assert.equal(r.price, 29990);
+});
+
+test('browser: цена из DOM подставляется, когда её нет в og/JSON-LD', async () => {
+  const url = 'https://market.yandex.ru/product--naushniki/12345';
+  const html = `<html><head>
+    <meta property="og:title" content="Наушники Sony">
+    <meta property="og:image" content="https://avatars.mds.yandex.net/x.jpg">
+    </head></html>`;
+  const r = await parseProductBrowser(url, { launch: launcher({ finalUrl: url, html, domPrice: 29990 }) });
+  assert.equal(r.ok, true);
+  assert.equal(r.price, 29990, 'цена взята из DOM');
 });
 
 test('browser: капча в финальном URL -> ok:false (не решаем)', async () => {

@@ -66,6 +66,33 @@ function registerShutdown() {
   }
 }
 
+// Цена из живого DOM: у Я.Маркета основная цена в первом [data-auto=price-value]
+// / snippet-price-current, у прочих - в [itemprop=price]. Возвращает целые рубли.
+async function extractDomPrice(page) {
+  if (typeof page.evaluate !== 'function') return null;
+  try {
+    return await page.evaluate(() => {
+      const sels = [
+        '[data-auto="price-value"]',
+        '[data-auto="snippet-price-current"]',
+        'meta[itemprop="price"]',
+        '[itemprop="price"]',
+      ];
+      for (const s of sels) {
+        const el = document.querySelector(s);
+        if (!el) continue;
+        const raw = el.getAttribute && el.getAttribute('content') ? el.getAttribute('content') : el.textContent || '';
+        const digits = String(raw).replace(/[^\d]/g, '');
+        const n = parseInt(digits, 10);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function closeBrowser() {
   const p = _browserP;
   _browserP = null;
@@ -118,11 +145,16 @@ export async function parseProductBrowser(url, { launch, timeoutMs = 22000 } = {
     let html = '';
     try { html = await page.content(); } catch { return { ok: false, url, error: 'read_error' }; }
 
+    // Цена у Я.Маркета (и многих SPA) не в og/JSON-LD, а в отрендеренном DOM.
+    // Тянем её отдельным запросом к живой странице.
+    const domPrice = await extractDomPrice(page);
+
     const parsed = parseRenderedHtml(html, finalUrl);
     if (!parsed.ok) return { ok: false, url, error: parsed.error || 'no_data' };
     if (DEAD_TITLE.test(parsed.title || '')) {
       return { ok: false, url, error: 'not_found' };
     }
+    if (parsed.price == null && domPrice != null) parsed.price = domPrice;
     return { ...parsed, url };
   } catch {
     return { ok: false, url, error: 'browser_error' };
