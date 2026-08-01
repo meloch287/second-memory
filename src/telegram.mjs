@@ -22,6 +22,7 @@ import { pickReaction, stickerMood } from './reactions.mjs';
 import { createMediaHandlers } from './telegram-media.mjs';
 import { createIntentHandler } from './telegram-intents.mjs';
 import { createLkHandler } from './telegram-lk.mjs';
+import { parseProduct } from './wlparse.mjs';
 import { createMessageRouter } from './telegram-router.mjs';
 import {
   COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
@@ -470,8 +471,11 @@ export function startTelegramBot(store, token, log = console) {
     api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
   });
 
-  // Личный кабинет (U3a-ui): статистика + CRUD долгов текстом и кнопками.
-  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log });
+  // Личный кабинет (U3a-ui статистика+долги, U3c-ui вишлист): текст+кнопки.
+  // sendPhoto для вишлиста не переиспользует media.sendPhoto (тот только для
+  // локальных PNG-буферов графиков) - карточки товара шлются по URL через api()
+  // напрямую (sendPhoto в Bot API принимает как файл, так и http/https-строку).
+  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, parseProduct });
 
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,

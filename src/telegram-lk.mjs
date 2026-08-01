@@ -14,14 +14,19 @@ import { resolveWallDate, userOffset, fmtUser } from './tz.mjs';
 import { captureEntry, entryConfirmation } from './brain.mjs';
 import { money } from './format.mjs';
 import { esc } from './telegram-helpers.mjs';
+import { parseProduct as parseProductLive } from './wlparse.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
 const BACK_HOME_KB = [[{ text: '‹ Назад', callback_data: 'lk:home' }]];
 const BACK_DEBTS_KB = [[{ text: '‹ Назад', callback_data: 'lk:debts' }]];
+const BACK_WISH_KB = [[{ text: '‹ Назад', callback_data: 'lk:wish' }]];
 
 export function createLkHandler(deps) {
-  const { store, send, sendButtons, api, log } = deps;
+  // parseProduct - переопределяемая зависимость (тесты подсовывают фейк вместо
+  // реального сетевого похода в wlparse.mjs); в проде telegram.mjs передаёт ту
+  // же функцию явно, а дефолт здесь - просто страховка.
+  const { store, send, sendButtons, api, log, parseProduct = parseProductLive } = deps;
 
   // chatId(string) -> { mode: 'add' } | { mode: 'edit', id }
   const pending = new Map();
@@ -93,6 +98,85 @@ export function createLkHandler(deps) {
     ]];
   }
 
+  /* ---- Вишлист: тексты и клавиатуры (U3c-ui) ---- */
+
+  function wishLine(w, i) {
+    const price = w.price != null ? ` — ${money(w.price)}` : '';
+    return `${i + 1}. ${esc(w.title || '(без названия)')}${price}`;
+  }
+
+  function wishText(items) {
+    if (!items.length) return '🎁 Вишлист\n\nВишлист пуст.';
+    return [`🎁 Вишлист (${items.length})`, '', ...items.map(wishLine)].join('\n');
+  }
+
+  // Кнопка "посмотреть фото" открывает галерею по всем товарам (даже без фото -
+  // там просто покажется текстовая карточка), поэтому висит всегда, когда список не пуст.
+  function wishKb(items) {
+    const rows = [];
+    if (items.length) rows.push([{ text: '👁 Посмотреть фото', callback_data: 'lk:wish:view:0' }]);
+    items.forEach((w, i) => {
+      rows.push([
+        { text: `✏️ ${i + 1}`, callback_data: `lk:wish:edit:${w.id}` },
+        { text: `🗑 ${i + 1}`, callback_data: `lk:wish:del:${w.id}` },
+      ]);
+    });
+    rows.push([{ text: '➕ Добавить', callback_data: 'lk:wish:add' }]);
+    rows.push([{ text: '‹ Назад', callback_data: 'lk:home' }]);
+    return rows;
+  }
+
+  const ADD_CHOICE_KB = [
+    [
+      { text: '🔗 По ссылке', callback_data: 'lk:wish:add:url' },
+      { text: '✍️ Вручную', callback_data: 'lk:wish:add:manual' },
+    ],
+    [{ text: '‹ Отмена', callback_data: 'lk:wish' }],
+  ];
+
+  function editWishKb(id) {
+    return [
+      [{ text: '✏️ Название', callback_data: `lk:wish:edit:title:${id}` }],
+      [{ text: '📝 Описание', callback_data: `lk:wish:edit:desc:${id}` }],
+      [{ text: '🔗 Ссылка', callback_data: `lk:wish:edit:url:${id}` }],
+      [{ text: '‹ Назад', callback_data: 'lk:wish' }],
+    ];
+  }
+
+  function editWishText(w) {
+    const price = w.price != null ? ` — ${money(w.price)}` : '';
+    return `${esc(w.title || '(без названия)')}${price}\n\nЧто изменить?`;
+  }
+
+  function delWishConfirmKb(id) {
+    return [[
+      { text: 'Да, удалить', callback_data: `lk:wish:delyes:${id}` },
+      { text: 'Отмена', callback_data: `lk:wish:delno:${id}` },
+    ]];
+  }
+
+  function galleryCaption(idx, total, w) {
+    const lines = [`${idx + 1}/${total} — ${esc(w.title || '(без названия)')}`];
+    if (w.desc) lines.push('', esc(w.desc));
+    if (w.url) lines.push(esc(w.url));
+    return lines.join('\n');
+  }
+
+  // Клампим соседей на границах (0 и total-1) - крайние стрелки просто
+  // перерисовывают тот же индекс вместо ошибки/перехода "за край".
+  function galleryKb(idx, total) {
+    const prev = Math.max(0, idx - 1);
+    const next = Math.min(total - 1, idx + 1);
+    return [
+      [
+        { text: '‹', callback_data: `lk:wish:view:${prev}` },
+        { text: `${idx + 1}/${total}`, callback_data: 'lk:wish:nop' },
+        { text: '›', callback_data: `lk:wish:view:${next}` },
+      ],
+      [{ text: '‹ Назад к списку', callback_data: 'lk:wish' }],
+    ];
+  }
+
   /* ---- Доставка: правим текущее сообщение, иначе шлём новое ---- */
 
   async function render(chatId, messageId, text, inline_keyboard) {
@@ -123,6 +207,47 @@ export function createLkHandler(deps) {
     return render(chatId, messageId, debtsText(debts, off), debtsKb(debts));
   }
 
+  function ownedWish(chatId, id) {
+    const w = store.wishById(id);
+    return w && String(w.chatId) === String(chatId) ? w : null;
+  }
+
+  async function showWish(chatId, messageId) {
+    const items = store.listWish(String(chatId));
+    return render(chatId, messageId, wishText(items), wishKb(items));
+  }
+
+  // Галерею всегда шлём новым сообщением (не редактируем предыдущее) - фото/текст
+  // сообщения телеграм не редактируются друг в друга во всех клиентах одинаково,
+  // а свежее сообщение на каждый шаг навигации проще и надёжнее.
+  async function showWishGallery(chatId, index) {
+    const items = store.listWish(String(chatId));
+    if (!items.length) {
+      return render(chatId, null, wishText(items), wishKb(items));
+    }
+    const total = items.length;
+    const idx = Math.max(0, Math.min(index, total - 1));
+    const w = items[idx];
+    const caption = galleryCaption(idx, total, w);
+    const kb = galleryKb(idx, total);
+
+    if (Array.isArray(w.photos) && w.photos.length) {
+      const r = await api('sendPhoto', {
+        chat_id: chatId,
+        photo: w.photos[0],
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: kb },
+      }).catch((e) => {
+        log?.error?.('[lk] sendPhoto', e?.message);
+        return null;
+      });
+      if (r && r.ok) return r;
+      // Фото не долетело (битая/недоступная ссылка) - не роняем галерею, покажем текстом.
+    }
+    return send(chatId, caption, { reply_markup: { inline_keyboard: kb } });
+  }
+
   /* ---- Точки входа фабрики ---- */
 
   async function openSettings(chatId, _user) {
@@ -151,8 +276,26 @@ export function createLkHandler(deps) {
     }
     if (data === 'lk:wish') {
       pending.delete(id);
-      await render(chatId, messageId, '🎁 Вишлист скоро будет здесь — этот раздел ещё не готов.', BACK_HOME_KB);
+      await showWish(chatId, messageId);
       return true;
+    }
+    if (data === 'lk:wish:add') {
+      pending.delete(id);
+      await render(chatId, messageId, 'Добавить по ссылке или вручную?', ADD_CHOICE_KB);
+      return true;
+    }
+    if (data === 'lk:wish:add:url') {
+      pending.set(id, { mode: 'wish_add_url' });
+      await render(chatId, messageId, 'Пришли ссылку на товар — сам всё заполню.', BACK_WISH_KB);
+      return true;
+    }
+    if (data === 'lk:wish:add:manual') {
+      pending.set(id, { mode: 'wish_manual_title' });
+      await render(chatId, messageId, 'Как называется товар?', BACK_WISH_KB);
+      return true;
+    }
+    if (data === 'lk:wish:nop') {
+      return true; // средняя кнопка "N/M" в галерее - клик гасится роутером централизованно, тут делать нечего
     }
     if (data === 'lk:debts') {
       pending.delete(id);
@@ -210,6 +353,46 @@ export function createLkHandler(deps) {
       return true;
     }
 
+    if ((m = data.match(/^lk:wish:edit:(title|desc|url):(\d+)$/))) {
+      const field = m[1];
+      const w = ownedWish(chatId, Number(m[2]));
+      if (!w) { await showWish(chatId, messageId); return true; }
+      pending.set(id, { mode: `wish_edit_${field}`, id: w.id });
+      const ask =
+        field === 'title' ? 'Пришли новое название.'
+        : field === 'desc' ? 'Пришли новое описание (или «-», чтобы очистить).'
+        : 'Пришли новую ссылку (или «-», чтобы очистить).';
+      await render(chatId, messageId, ask, BACK_WISH_KB);
+      return true;
+    }
+    if ((m = data.match(/^lk:wish:edit:(\d+)$/))) {
+      const w = ownedWish(chatId, Number(m[1]));
+      if (!w) { await showWish(chatId, messageId); return true; }
+      await render(chatId, messageId, editWishText(w), editWishKb(w.id));
+      return true;
+    }
+    if ((m = data.match(/^lk:wish:del:(\d+)$/))) {
+      const w = ownedWish(chatId, Number(m[1]));
+      if (!w) { await showWish(chatId, messageId); return true; }
+      await render(chatId, messageId, `Удалить из вишлиста «${esc(w.title || '')}»?`, delWishConfirmKb(w.id));
+      return true;
+    }
+    if ((m = data.match(/^lk:wish:delyes:(\d+)$/))) {
+      const w = ownedWish(chatId, Number(m[1]));
+      if (w) store.removeWish(w.id);
+      pending.delete(id);
+      await showWish(chatId, messageId);
+      return true;
+    }
+    if (/^lk:wish:delno:\d+$/.test(data)) {
+      await showWish(chatId, messageId);
+      return true;
+    }
+    if ((m = data.match(/^lk:wish:view:(-?\d+)$/))) {
+      await showWishGallery(chatId, Number(m[1]));
+      return true;
+    }
+
     return true; // префикс lk: узнали, конкретное действие - нет: молча гасим клик
   }
 
@@ -258,6 +441,87 @@ export function createLkHandler(deps) {
       store.patch(e.id, patch);
       await send(chatId, `Обновил долг №${e.id}.`);
       await showDebts(chatId, null, user);
+      return true;
+    }
+
+    /* ---- Вишлист: добавление по ссылке ---- */
+
+    if (p.mode === 'wish_add_url') {
+      pending.delete(id);
+      const url = text.trim();
+      let r = null;
+      try {
+        r = await parseProduct(url);
+      } catch (e) {
+        // parseProduct по контракту сам не бросает, но лишняя страховка не помешает -
+        // при любом сюрпризе просто падаем на "пустую" карточку с url в заголовке.
+        log?.error?.('[lk] parseProduct threw', e?.message);
+      }
+      const item = store.addWish(id, {
+        title: (r && r.title) || url,
+        desc: (r && r.description) || '',
+        url: (r && r.url) || url,
+        photos: (r && r.photos) || [],
+        price: r && r.price != null ? r.price : null,
+      });
+      const k = item.photos.length;
+      const photoNote = k === 0
+        ? 'Фото не подтянулись, можно добавить вручную позже.'
+        : `Фото: ${k}.`;
+      await send(chatId, `Добавил: ${esc(item.title)}. ${photoNote}`);
+      await showWish(chatId, null);
+      return true;
+    }
+
+    /* ---- Вишлист: добавление вручную (пошагово) ---- */
+
+    if (p.mode === 'wish_manual_title') {
+      const title = text.trim();
+      if (!title) {
+        pending.set(id, p);
+        await send(chatId, 'Название не должно быть пустым. Как называется товар?');
+        return true;
+      }
+      pending.set(id, { mode: 'wish_manual_desc', partial: { title } });
+      await send(chatId, 'Добавь описание (или пришли «-», чтобы пропустить).');
+      return true;
+    }
+
+    if (p.mode === 'wish_manual_desc') {
+      const t = text.trim();
+      const desc = t === '-' ? '' : t;
+      pending.set(id, { mode: 'wish_manual_url', partial: { ...p.partial, desc } });
+      await send(chatId, 'Пришли ссылку на товар (или «-», чтобы пропустить).');
+      return true;
+    }
+
+    if (p.mode === 'wish_manual_url') {
+      pending.delete(id);
+      const t = text.trim();
+      const url = t === '-' ? '' : t;
+      const item = store.addWish(id, { ...p.partial, url, photos: [], price: null });
+      await send(chatId, `Добавил в вишлист: ${esc(item.title)}.`);
+      await showWish(chatId, null);
+      return true;
+    }
+
+    /* ---- Вишлист: точечное редактирование поля ---- */
+
+    if (p.mode === 'wish_edit_title' || p.mode === 'wish_edit_desc' || p.mode === 'wish_edit_url') {
+      pending.delete(id);
+      const w = ownedWish(chatId, p.id);
+      if (!w) { await send(chatId, 'Этот товар уже не найден - возможно, удалён.'); return true; }
+      const field = p.mode === 'wish_edit_title' ? 'title' : p.mode === 'wish_edit_desc' ? 'desc' : 'url';
+      const t = text.trim();
+      const value = field !== 'title' && t === '-' ? '' : t;
+      if (field === 'title' && !value) {
+        pending.set(id, p);
+        await send(chatId, 'Название не должно быть пустым. Пришли новое название.');
+        return true;
+      }
+      store.updateWish(w.id, { [field]: value });
+      await send(chatId, 'Обновил.');
+      await showWish(chatId, null);
       return true;
     }
 
