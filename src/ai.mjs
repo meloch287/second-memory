@@ -71,7 +71,10 @@ export function stripBotVocative(reply, botName) {
   if (!reply || !botName || botName.length < 4) return reply;
   const b = botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return reply
-    .replace(new RegExp(`[,;]\\s*${b}(?=[,.!?…)]|\\s|$)`, 'gi'), '') // «..., Братан!» -> «...!»
+    // NB: после имени должен идти ЗНАК или конец - иначе «О, Толик обожает кофе»
+    // теряло подлежащее и превращалось в «О обожает кофе».
+    .replace(new RegExp(`[,;]\\s*${b}(?=[,.!?…)]|$)`, 'gi'), '') // «..., Братан!» -> «...!»
+    .replace(new RegExp(`^${b}\\s*:\\s*`, 'i'), '') // «Толик: ...» - префикс из групповой разметки
     .replace(new RegExp(`^(?:ну\\s+|о+,?\\s+|эй,?\\s+|слушай,?\\s+)?${b}[,!.…]+\\s*`, 'i'), '') // «Братан, ...» в начале
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,.!?…:])/g, '$1')

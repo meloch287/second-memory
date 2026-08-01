@@ -139,12 +139,16 @@ export function stripTrailingQuestion(reply, user) {
   const text = String(reply || '').trim();
   if (!text || !text.includes('?')) return text || reply;
 
-  // Режем на предложения, выкидываем хвостовые вопросительные.
+  // Режем на предложения и выкидываем ВСЕ вопросительные (не только хвостовые -
+  // модель любит вставлять «ну как, не спится?» в середину).
   const parts = text.match(/[^.!?…]+[.!?…]+(?:\s|$)|[^.!?…]+$/g);
   if (!parts || parts.length < 2) return reply; // одно предложение - не трогаем
-  const kept = [...parts];
-  while (kept.length > 1 && /\?\s*$/.test(kept[kept.length - 1].trim())) kept.pop();
-  const out = kept.join('').trim();
+  const kept = parts.filter((p) => !/\?\s*$/.test(p.trim()));
+  const out = kept
+    .join('')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s,;:.!…-]+/, '')
+    .trim();
   return out.length >= 10 ? out : reply; // не оставляем огрызок
 }
 

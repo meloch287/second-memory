@@ -208,3 +208,13 @@ test('stripTrailingQuestion: срезает вопрос-хвост только
   const multi = 'Понял тебя. Ты как? Что нового?';
   assert.equal(stripTrailingQuestion(multi, banned), 'Понял тебя.');
 });
+
+test('stripTrailingQuestion: режет вопросы и в середине ответа', async () => {
+  const { stripTrailingQuestion } = await import('../src/capabilities.mjs');
+  const banned = { dontDo: ['задавать мне встречные вопросы'] };
+  const mid = 'О, привет! Ну как, не спится? Погода влияет на настроение сильно. Солнце бодрит.';
+  const out = stripTrailingQuestion(mid, banned);
+  assert.ok(!out.includes('?'), 'вопрос из середины убран: ' + out);
+  assert.match(out, /Погода влияет/);
+  assert.match(out, /Солнце бодрит/, 'текст после вопроса сохранён');
+});
