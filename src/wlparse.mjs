@@ -170,11 +170,15 @@ function extractRetpathSlug(pageUrl) {
   const retpath = u.searchParams.get('retpath');
   if (!retpath) return null;
 
-  let target = base64Decode(retpath);
+  // Я.Маркет добавляет к base64 хвост-подпись «,,_<hex>» - его нельзя скармливать
+  // декодеру, иначе лишние байты приклеиваются к URL и слаг превращается в мусор.
+  // Берём только ведущий кусок из алфавита base64/base64url.
+  const b64 = (retpath.match(/^[A-Za-z0-9+/\-_]+={0,2}/) || [])[0] || retpath;
+  let target = cleanDecodedUrl(base64Decode(b64));
   if (!target || !/^https?:\/\//i.test(target)) {
     // Иногда retpath - обычный url-encoded адрес, а не base64.
     try {
-      target = decodeURIComponent(retpath);
+      target = cleanDecodedUrl(decodeURIComponent(retpath));
     } catch {
       target = null;
     }
@@ -183,6 +187,15 @@ function extractRetpathSlug(pageUrl) {
 
   const title = titleFromSlug(target);
   return title ? { title, target } : null;
+}
+
+// URL всегда ASCII (не-ASCII в нём процент-кодирован). Обрезаем на первом
+// не-печатном/не-ASCII байте - так отсекается мусор от неверно декодированного
+// base64-хвоста, не трогая нормальные адреса.
+function cleanDecodedUrl(s) {
+  if (!s) return null;
+  const cut = s.replace(/[^\x20-\x7E].*$/s, '').trim();
+  return cut || null;
 }
 
 function base64Decode(str) {

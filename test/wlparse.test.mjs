@@ -217,3 +217,20 @@ test('parseProduct: битый og:title отклоняется, падаем н�
   assert.ok(!/\uFFFD/.test(r.title || ''));
   assert.match(r.title, /robot|pylesos|xiaomi/i, 'слаг из URL как запасной заголовок');
 });
+
+/* Реальный Я.Маркет: showcaptcha с retpath = base64(product-url) + подпись «,,_<hex>».
+   Хвост-подпись раньше приклеивался к URL при base64-декоде -> слаг «List<мусор>».
+   Теперь отрезаем -> чистый осмысленный слаг товара. */
+test('parseProduct: Я.Маркет retpath с подписью -> чистый слаг товара', async () => {
+  const productUrl = 'https://market.yandex.ru/product--besprovodnye-naushniki-airdots/123456789';
+  const b64 = Buffer.from(productUrl).toString('base64');
+  const captchaUrl = `https://market.yandex.ru/showcaptcha?cc=1&retpath=${encodeURIComponent(b64)}%2C%2C_517b839729ce658c00e3f86b25a6c81a&t=2%252F17&u=915`;
+  const fetchImpl = async () =>
+    mockRes({ ok: true, status: 200, url: captchaUrl, redirected: true, html: '<html><head><title>Вы не робот?</title></head></html>' });
+
+  const r = await parseProduct('https://market.yandex.ru/product--besprovodnye-naushniki-airdots/123456789', { fetchImpl });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, 'market.yandex.ru');
+  assert.match(r.title, /naushniki/i, 'слаг товара, а не мусор');
+  assert.ok([...r.title].every((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0xfffd), 'без управляющих/битых символов');
+});
