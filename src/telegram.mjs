@@ -187,9 +187,14 @@ export function startTelegramBot(store, token, log = console) {
 
     if (user.step === 'name') {
       store.setUser(chatId, { name: value, step: 'tz' });
-      return askLocation(chatId);
+      // Подтверждаем имя явно — иначе переход сразу к геолокации выглядит как
+      // «бот не увидел имя», и юзер вводит имя снова (оно уходило в «город»).
+      return askLocation(chatId, `Приятно, ${esc(value)}! `);
     }
     if (user.step === 'tz') {
+      // Повторно ввели имя (думая, что бот его не принял) — не пишем его в город.
+      const norm = (x) => String(x || '').toLowerCase().replace(/ё/g, 'е').trim();
+      if (norm(value) === norm(user.name)) return askLocation(chatId, `Имя уже запомнил, ${esc(user.name)} 🙂 Теперь про город — `);
       // ответ текстом (город или сдвиг); геолокация ловится отдельно (locationFlow)
       const off = parseTz(value);
       const looksLikeCity = /[а-яa-z]/i.test(value) && !/[+\-−]\s*\d/.test(value) && value.length <= 40;
@@ -209,10 +214,10 @@ export function startTelegramBot(store, token, log = console) {
     }
   }
 
-  function askLocation(chatId) {
+  function askLocation(chatId, prefix = '') {
     return send(
       chatId,
-      `${''}Чтобы напоминать в твоё время и показывать погоду - нажми «📍 Отправить геолокацию» (определю пояс и город сам). Или просто напиши город / сдвиг вроде «+3».`,
+      `${prefix}Чтобы напоминать в твоё время и показывать погоду - нажми «📍 Отправить геолокацию» (определю пояс и город сам). Или просто напиши город / сдвиг вроде «+3».`,
       {
         reply_markup: {
           keyboard: [[{ text: '📍 Отправить геолокацию', request_location: true }]],
