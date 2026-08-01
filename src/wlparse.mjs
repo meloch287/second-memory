@@ -22,6 +22,12 @@ export async function parseProduct(url, { fetchImpl = fetch, timeoutMs = 12000 }
     return { ok: false, url: typeof url === 'string' ? url : '', error: 'bad_url' };
   }
 
+  // Wildberries: сайт/API режут дата-центровый IP (403 Angie), а статический
+  // basket-CDN (wbbasket.ru) открыт и доступен с РФ-IP напрямую. Пробуем его
+  // раньше общего пути. Не WB / basket не нашёлся -> null -> идём дальше.
+  const wb = await parseWildberries(url, fetchImpl, timeoutMs);
+  if (wb) return wb;
+
   let res;
   try {
     res = await fetchWithTimeout(fetchImpl, url, timeoutMs);
@@ -184,6 +190,61 @@ function safeHeaderGet(res, name) {
 
 function isRedirectStatus(status) {
   return typeof status === 'number' && status >= 300 && status < 400;
+}
+
+// ---- Wildberries basket-CDN ------------------------------------------
+
+// Артикул (nm) из ссылки WB: /catalog/<nm>/detail.aspx либо ?card=/?nm=.
+function wbArticleFromUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)wildberries\.ru$/i.test(u.hostname)) return null;
+    const m = u.pathname.match(/\/catalog\/(\d{3,})\//i);
+    if (m) return m[1];
+    const q = u.searchParams.get('card') || u.searchParams.get('nm');
+    return q && /^\d{3,}$/.test(q) ? q : null;
+  } catch {
+    return null;
+  }
+}
+
+// Карточка WB из статического basket-CDN. Хост basket-NN зависит от vol и меняется
+// по мере роста WB, поэтому перебираем, пока card.json не отдаст 200. Возвращает
+// name/description/фото (цены в card.json нет - она в закрытом card.wb.ru).
+async function parseWildberries(url, fetchImpl, timeoutMs) {
+  const nm = wbArticleFromUrl(url);
+  if (!nm) return null;
+  const n = Number(nm);
+  const vol = Math.floor(n / 1e5);
+  const part = Math.floor(n / 1e3);
+  const per = Math.min(timeoutMs, 7000);
+  for (let i = 1; i <= 24; i++) {
+    const host = `basket-${String(i).padStart(2, '0')}.wbbasket.ru`;
+    const base = `https://${host}/vol${vol}/part${part}/${nm}`;
+    let card;
+    try {
+      const res = await fetchWithTimeout(fetchImpl, `${base}/info/ru/card.json`, per);
+      if (!res || !res.ok || typeof res.json !== 'function') continue;
+      card = await res.json();
+    } catch {
+      continue; // не тот basket / битый json - пробуем следующий
+    }
+    if (!card || typeof card !== 'object' || (!card.imt_name && !card.subj_name)) continue;
+    const title = cleanText(card.imt_name) || cleanText(card.subj_name);
+    const count = Math.max(1, Math.min(Number(card.media?.photo_count) || 1, MAX_PHOTOS));
+    const photos = [];
+    for (let p = 1; p <= count; p++) photos.push(`${base}/images/big/${p}.webp`);
+    return {
+      ok: true,
+      url,
+      title: title || null,
+      description: cleanText(card.description) || null,
+      photos,
+      price: null,
+      source: 'wildberries.ru',
+    };
+  }
+  return null;
 }
 
 // ---- капча / короткие ссылки ------------------------------------------

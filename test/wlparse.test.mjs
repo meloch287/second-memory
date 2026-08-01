@@ -280,3 +280,50 @@ test('tidyProductTitle: обычный заголовок со словом «к
   assert.equal(r.ok, true);
   assert.match(r.title, /Планшет/);
 });
+
+/* Wildberries: карточка из basket-CDN (обходит 403 Angie сайта/API), фото webp */
+test('parseProduct: WB basket-CDN -> title/description/photos, source wildberries.ru', async () => {
+  const card = {
+    imt_name: 'Кроссовки COPTER',
+    subj_name: 'Кроссовки',
+    description: 'Кроссовки со светящейся подошвой',
+    media: { photo_count: 3 },
+  };
+  // basket-01 отдаёт 404, basket-02 - карточку: проверяем перебор хостов.
+  const fetchImpl = async (u) => {
+    if (/basket-02\.wbbasket\.ru\/.*\/info\/ru\/card\.json$/.test(u)) {
+      return { ok: true, status: 200, url: u, json: async () => card, text: async () => JSON.stringify(card), headers: { get: () => null } };
+    }
+    return { ok: false, status: 404, url: u, json: async () => ({}), text: async () => '', headers: { get: () => null } };
+  };
+  const url = 'https://www.wildberries.ru/catalog/11853913/detail.aspx';
+  const r = await parseProduct(url, { fetchImpl });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, 'wildberries.ru');
+  assert.equal(r.title, 'Кроссовки COPTER');
+  assert.match(r.description, /светящейся/);
+  assert.equal(r.photos.length, 3);
+  assert.match(r.photos[0], /basket-02\.wbbasket\.ru\/vol118\/part11853\/11853913\/images\/big\/1\.webp/);
+});
+
+test('parseProduct: WB артикул из ?card= тоже работает', async () => {
+  const card = { imt_name: 'Термос', media: { photo_count: 1 } };
+  const fetchImpl = async (u) => (/\/info\/ru\/card\.json$/.test(u)
+    ? { ok: true, status: 200, url: u, json: async () => card, headers: { get: () => null } }
+    : { ok: false, status: 404, url: u, json: async () => ({}), headers: { get: () => null } });
+  const r = await parseProduct('https://www.wildberries.ru/product?card=123456', { fetchImpl });
+  assert.equal(r.ok, true);
+  assert.equal(r.title, 'Термос');
+});
+
+test('parseProduct: не-WB ссылка не трогает basket-путь (идёт общий разбор)', async () => {
+  const html = '<html><head><meta property="og:title" content="Обычный товар"></head></html>';
+  let basketHit = false;
+  const fetchImpl = async (u) => {
+    if (/wbbasket\.ru/.test(u)) basketHit = true;
+    return mockRes({ ok: true, status: 200, url: 'https://shop.example.com/x', html });
+  };
+  const r = await parseProduct('https://shop.example.com/x', { fetchImpl });
+  assert.equal(basketHit, false, 'для не-WB basket не запрашивается');
+  assert.equal(r.title, 'Обычный товар');
+});
