@@ -80,8 +80,8 @@ test('lk:wish список: заголовок с count, строки товар
   await bot.lk.onCallback('1', 'lk:wish', cbq('1', 11), s.getUser('1'));
   const r = lastRender(bot, '1');
   assert.match(r.text, /Вишлист \(2\)/);
-  assert.match(r.text, /1\. Товар A — 1\s000\s₽/);
-  assert.match(r.text, /2\. Товар B/);
+  assert.match(r.text, /1\. <b>Товар A<\/b> — 1\s000\s₽/);
+  assert.match(r.text, /2\. <b>Товар B<\/b>/);
 
   const flat = r.kb.flat();
   assert.ok(flat.some((btn) => btn.callback_data === 'lk:wish:view:0'));

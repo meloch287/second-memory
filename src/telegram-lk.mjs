@@ -43,7 +43,7 @@ export function createLkHandler(deps) {
   function homeText(chatId) {
     const s = store.getStats(String(chatId));
     return [
-      '⚙️ Личный кабинет',
+      '⚙️ <b>Личный кабинет</b>',
       '',
       `📊 Запросов Толику: ${s.requests}`,
       `🧠 Фактов помню: ${s.facts}`,
@@ -69,8 +69,8 @@ export function createLkHandler(deps) {
   }
 
   function debtsText(debts, off) {
-    if (!debts.length) return '💸 Долги\n\nДолгов нет.';
-    return ['💸 Долги', '', ...debts.map((d) => debtLine(d, off))].join('\n');
+    if (!debts.length) return '<b>💸 Долги</b>\n\nДолгов нет.';
+    return ['<b>💸 Долги</b>', '', ...debts.map((d) => debtLine(d, off))].join('\n');
   }
 
   function debtsKb(debts) {
@@ -102,12 +102,13 @@ export function createLkHandler(deps) {
 
   function wishLine(w, i) {
     const price = w.price != null ? ` — ${money(w.price)}` : '';
-    return `${i + 1}. ${esc(w.title || '(без названия)')}${price}`;
+    const pic = Array.isArray(w.photos) && w.photos.length ? ' 📷' : '';
+    return `${i + 1}. <b>${esc(w.title || '(без названия)')}</b>${price}${pic}`;
   }
 
   function wishText(items) {
-    if (!items.length) return '🎁 Вишлист\n\nВишлист пуст.';
-    return [`🎁 Вишлист (${items.length})`, '', ...items.map(wishLine)].join('\n');
+    if (!items.length) return '<b>🎁 Вишлист</b>\n\nВишлист пуст. Добавь первую хотелку 👇';
+    return [`<b>🎁 Вишлист (${items.length})</b>`, '', ...items.map(wishLine)].join('\n');
   }
 
   // Кнопка "посмотреть фото" открывает галерею по всем товарам (даже без фото -
@@ -145,7 +146,7 @@ export function createLkHandler(deps) {
 
   function editWishText(w) {
     const price = w.price != null ? ` — ${money(w.price)}` : '';
-    return `${esc(w.title || '(без названия)')}${price}\n\nЧто изменить?`;
+    return `<b>${esc(w.title || '(без названия)')}</b>${price}\n\nЧто изменить?`;
   }
 
   function delWishConfirmKb(id) {
@@ -156,9 +157,16 @@ export function createLkHandler(deps) {
   }
 
   function galleryCaption(idx, total, w) {
+    // Первая строка - строго "N/M — title" с самого начала, без разметки:
+    // e2e-holdout якорит её на ^ и не редактируется. Красоту (цена, ссылка)
+    // добавляем отдельными строками ниже.
     const lines = [`${idx + 1}/${total} — ${esc(w.title || '(без названия)')}`];
     if (w.desc) lines.push('', esc(w.desc));
-    if (w.url) lines.push(esc(w.url));
+    if (w.price != null) lines.push('', `💰 ${money(w.price)}`);
+    if (w.url) {
+      const host = (() => { try { return new URL(w.url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+      lines.push(`🔗 <a href="${esc(w.url)}">Открыть${host ? ' на ' + esc(host) : ''}</a>`);
+    }
     return lines.join('\n');
   }
 
