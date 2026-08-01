@@ -71,3 +71,21 @@ test('реестр обещает голосовые - бот не должен 
   assert.match(v.what, /голосов/i);
   assert.match(capabilitiesLine(), /отвечай голосом/i, 'подсказка команды в промпте');
 });
+
+test('voiceStateLine: бот знает текущий канал ответа', async () => {
+  const { voiceStateLine } = await import('../src/capabilities.mjs');
+  const on = voiceStateLine({ voiceReplies: true });
+  assert.match(on, /включён голосовой режим/i);
+  const off = voiceStateLine({});
+  assert.match(off, /отвечаешь ТЕКСТОМ/);
+  assert.match(off, /отвечай голосом/, 'подсказывает команду включения');
+  assert.match(off, /слушай, что скажу/i, 'явно запрещает притворяться, что говорит вслух');
+});
+
+test('friendSystem: при выключенном голосе не обещает говорить вслух', async () => {
+  const { friendSystem } = await import('../src/ai.mjs');
+  const sysOff = friendSystem({ name: 'Макс', botName: 'Толик' });
+  assert.match(sysOff, /отвечаешь ТЕКСТОМ/);
+  const sysOn = friendSystem({ name: 'Макс', botName: 'Толик', voiceReplies: true });
+  assert.match(sysOn, /включён голосовой режим/i);
+});
