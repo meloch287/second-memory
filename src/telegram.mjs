@@ -22,7 +22,7 @@ import { pickReaction, stickerMood } from './reactions.mjs';
 import { createMediaHandlers } from './telegram-media.mjs';
 import { createIntentHandler } from './telegram-intents.mjs';
 import { createLkHandler } from './telegram-lk.mjs';
-import { parseProduct } from './wlparse.mjs';
+import { parseProduct, titleFromSlug } from './wlparse.mjs';
 import { parseProductBrowser } from './wlparse-browser.mjs';
 import { createMessageRouter } from './telegram-router.mjs';
 import {
@@ -501,6 +501,15 @@ export function startTelegramBot(store, token, log = console) {
     let viaBrowser = null;
     try { viaBrowser = await parseProductBrowser(url); } catch { viaBrowser = null; }
     if (viaBrowser && viaBrowser.ok && viaBrowser.title) return viaBrowser;
+    if (fast.ok && fast.title) return fast; // слаг из fetch-пути (напр. капча-retpath)
+    // Последний шанс: имя из слага URL. Ozon режет антиботом даже РФ-IP - но имя
+    // товара из ссылки лучше пустого отказа (юзер дозаполнит фото/цену вручную).
+    const slug = titleFromSlug(url);
+    if (slug) {
+      let source = null;
+      try { source = new URL(url).hostname.replace(/^www\./i, ''); } catch {}
+      return { ok: true, url, title: slug, description: null, photos: [], price: null, source };
+    }
     return fast.ok ? fast : viaBrowser || fast;
   };
   const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, parseProduct: parseProductSmart });

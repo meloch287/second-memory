@@ -296,7 +296,7 @@ function base64Decode(str) {
   }
 }
 
-function titleFromSlug(rawUrl) {
+export function titleFromSlug(rawUrl) {
   try {
     const { pathname } = new URL(rawUrl);
     const segments = pathname.split('/').filter(Boolean).map(decodeSegment);
