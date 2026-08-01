@@ -234,20 +234,19 @@ export function createCalendarHandler(deps) {
   }
 
   // Разобрать «что и когда» из фразы; вернуть {title,due,hasTime} | {needWhen,title} | null.
+  // Срок ВСЕГДА через resolveWallDate(off) - offset-корректно (как normalizeReminderDue);
+  // parseMessage(text, new Date()) зовём только ради типа/заголовка (не из-за его due,
+  // иначе двойной сдвиг пояса). now = реальный, НЕ wall.
   function parseEvent(text, user) {
     const clean = stripCalWords(text);
     if (!clean) return null;
     const now = new Date();
     const off = userOffset(user);
-    const p = parseMessage(clean, wall(user, now));
-    if (p.kind === 'entry' && p.entry?.due) {
-      return { title: p.entry.title || p.entry.counterparty || stripTimeWords(clean) || clean.slice(0, 80), due: p.entry.due, hasTime: !!p.entry.hasTime };
-    }
-    // parseMessage не классифицировал как событие - пробуем вытащить срок напрямую.
     const r = resolveWallDate(off, clean, now);
+    const p = parseMessage(clean, now);
     const title = (p.kind === 'entry' ? (p.entry.title || p.entry.counterparty) : null) || stripTimeWords(clean) || clean.slice(0, 80);
-    if (r.due) return { title: title.slice(0, 80), due: r.due, hasTime: r.hasTime };
-    return { needWhen: true, title: title.slice(0, 80) };
+    if (!r.due) return { needWhen: true, title: title.slice(0, 80) };
+    return { title: title.slice(0, 80), due: r.due, hasTime: r.hasTime };
   }
 
   // Точка входа из роутера: сообщение с ключевым словом «календарь».

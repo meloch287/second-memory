@@ -76,6 +76,7 @@ test('cal: «…добавь в календарь» -> переспрос Да/
   assert.equal(handled, true);
   const r = lastRender(bot, '1');
   assert.match(r.text, /[Вв]ерно|Добавить в календарь/);
+  assert.match(r.text, /16:00/, 'время 16:00 без двойного сдвига пояса (МСК)');
   assert.ok(hasCb(r, 'lk:cal:add:yes') && hasCb(r, 'lk:cal:add:no'), 'кнопки Да/Нет');
   await bot.lk.onCallback('1', 'lk:cal:add:yes', cbq('1'), s.getUser('1'));
   const evs = s.calEvents('1');
