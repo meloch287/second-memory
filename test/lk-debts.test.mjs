@@ -55,7 +55,7 @@ function lastRender(bot, chatId) {
 
 const cbq = (chatId, messageId, id = 'cb1') => ({ id, message: { message_id: messageId, chat: { id: Number(chatId) } } });
 
-test('openSettings: показывает статистику и 3 кнопки (Фитнес / Долги / Вишлист)', async () => {
+test('openSettings: показывает статистику и кнопки (Фитнес / Долги / Вишлист / Календарь)', async () => {
   const s = new Store(tmpFile());
   s.setUser('1', { name: 'Саша', step: null });
   s.bumpRequests('1');
@@ -79,8 +79,8 @@ test('openSettings: показывает статистику и 3 кнопки 
   assert.match(r.text, /Со мной дней: \d/);
 
   const flat = r.kb.flat().map((b) => b.callback_data);
-  assert.deepEqual(flat, ['lk:fit', 'lk:debts', 'lk:wish'], 'ровно 3 кнопки, в двух рядах');
-  assert.equal(r.kb.length, 2, 'Фитнес отдельным рядом, Долги+Вишлист вторым');
+  assert.deepEqual(flat, ['lk:fit', 'lk:debts', 'lk:wish', 'lk:cal'], '4 кнопки: Фитнес/Долги/Вишлист/Календарь');
+  assert.equal(r.kb.length, 3, 'Фитнес, ряд Долги+Вишлист, Календарь');
 });
 
 test('lk:fit -> личный тренер (профиль/дни), фитнес реализован', async () => {

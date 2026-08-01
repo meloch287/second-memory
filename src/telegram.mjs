@@ -512,7 +512,8 @@ export function startTelegramBot(store, token, log = console) {
     }
     return fast.ok ? fast : viaBrowser || fast;
   };
-  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, withTyping, aiFitnessProgram, parseProduct: parseProductSmart });
+  const publicUrl = process.env.PUBLIC_BASE_URL || 'https://secondmemory.103.88.241.202.sslip.io';
+  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, withTyping, aiFitnessProgram, sendIcs, publicUrl, parseProduct: parseProductSmart });
 
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,

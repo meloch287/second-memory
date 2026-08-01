@@ -204,10 +204,11 @@ test('Tolik e2e (held-out): real bot driven end-to-end via spy Telegram transpor
       assert.match(r.text, /Вишлист/);
       const flatData = r.kb.flat().map((b) => b.callback_data);
       const flatText = r.kb.flat().map((b) => b.text);
-      assert.deepEqual(flatData, ['lk:fit', 'lk:debts', 'lk:wish']);
+      assert.deepEqual(flatData, ['lk:fit', 'lk:debts', 'lk:wish', 'lk:cal']);
       assert.ok(flatText.some((x) => /Фитнес/.test(x)));
       assert.ok(flatText.some((x) => /Долги/.test(x)));
       assert.ok(flatText.some((x) => /Вишлист/.test(x)));
+      assert.ok(flatText.some((x) => /Календар/.test(x)));
     });
 
     await t.test('2b) Фитнес callback -> личный тренер (профиль/дни)', async () => {

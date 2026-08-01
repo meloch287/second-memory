@@ -14,6 +14,7 @@ import { startTelegramBot } from './telegram.mjs';
 import { startFactWorker } from './worker.mjs';
 import { startScheduler } from './scheduler.mjs';
 import { aiTts, aiTranscribe, audioFormatFromMime, audioEnabled } from './ai.mjs';
+import { buildIcs } from './ics.mjs';
 import {
   ensureAuth, verifyPassword, setPassword, makeSession, validSession, bumpEpoch,
   parseCookies, sessionCookie, clearCookie, getWebSettings, setWebSettings,
@@ -87,6 +88,24 @@ export function createApp(store) {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
       if (url.pathname === '/api/health' && req.method === 'GET') return json(res, 200, { ok: true });
+
+      // Живой ICS-фид подписки Apple/Google Календаря. Публичный, но по секретному
+      // токену (capability URL) - без сессии/пароля, до /api-гейта аутентификации.
+      const calMatch = url.pathname.match(/^\/calendar\/([A-Za-z0-9]{8,})\.ics$/);
+      if (calMatch && req.method === 'GET') {
+        const found = store.userByCalToken(calMatch[1]);
+        if (!found || !found.user.calConnected) {
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+          return res.end('Not found');
+        }
+        const ics = buildIcs(store.calEvents(found.chatId), new Date().toISOString());
+        res.writeHead(200, {
+          'content-type': 'text/calendar; charset=utf-8',
+          'content-disposition': 'inline; filename="second-memory.ics"',
+          'cache-control': 'no-cache, must-revalidate',
+        });
+        return res.end(ics);
+      }
 
       // Вход: пароль -> сессионная кука
       if (url.pathname === '/api/login' && req.method === 'POST') {

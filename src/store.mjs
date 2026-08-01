@@ -587,6 +587,22 @@ export class Store {
     return w;
   }
 
+  /* ---- Календарь: события = записи с флагом calendar + due ---- */
+
+  // События для календаря/фида: только явно добавленные (calendar:true) со сроком.
+  calEvents(chatId) {
+    return this.list({ status: 'open', chatId: String(chatId) }).filter((e) => e.calendar && e.due);
+  }
+
+  // Найти юзера по секретному токену подписки (для ICS-фида веб-сервера).
+  userByCalToken(token) {
+    if (!token) return null;
+    for (const [chatId, u] of Object.entries(this.data.users)) {
+      if (u && u.calToken === token) return { chatId, user: u };
+    }
+    return null;
+  }
+
   /* ---- Фитнес-профиль (один на чат): вес/рост/цель/уровень/дни/план ---- */
 
   getFitness(chatId) {

@@ -7,6 +7,7 @@ import { audioFormatFromMime, audioEnabled, aiFollowup, aiEnabled } from './ai.m
 import { DEFAULT_OFFSET, fmtUser, userOffset } from './tz.mjs';
 import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
+import { parseIcs } from './ics.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 
@@ -31,8 +32,11 @@ export function createMessageRouter(deps) {
     if (user.step) return onboardingStep(id, user, text);
     // Личный кабинет (U3a-ui): «настройки»/«лк»/«кабинет» - до разговора
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
-    // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист)
+    // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)
     if (await lk.consumeInput(id, user, text)) return;
+    // Добавление события в календарь по ключевому слову «календарь» (с переспросом).
+    // Только по ключевому слову - иначе обычные встречи не сыпятся в календарь.
+    if (await lk.tryCalendar(id, user, text)) return;
     // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
     if (await handleIntent(id, user, text)) return;
     return friendFlow(id, text);
@@ -111,6 +115,20 @@ export function createMessageRouter(deps) {
       const name = doc.file_name || 'документ';
       if ((doc.file_size || 0) > 15 * 1024 * 1024) {
         return send(chatId, 'Файл тяжелее 15 МБ - не потяну. Пришли что-нибудь полегче?');
+      }
+      // Импорт календаря .ics - разбираем события и кладём в календарь.
+      if (name.toLowerCase().endsWith('.ics') || mime === 'text/calendar') {
+        try {
+          const buf = Buffer.from(await downloadBase64(doc.file_id), 'base64');
+          const events = parseIcs(buf.toString('utf8'));
+          const n = lk.importCalendar(String(chatId), events);
+          return send(chatId, n
+            ? `Добавил ${n} ${n === 1 ? 'событие' : 'событий'} в календарь 📅 Загляни в ЛК → Календарь.`
+            : 'В этом .ics не нашёл событий с датой. Проверь файл?');
+        } catch (e) {
+          log.error('[telegram] ics import', e.message);
+          return send(chatId, 'Не смог разобрать .ics. Это точно файл календаря?');
+        }
       }
       // Экспорт истории Telegram (result.json) - заливаем прошлое в память
       if (name.toLowerCase().endsWith('.json')) {

@@ -71,3 +71,45 @@ export function buildIcs(entries, stampIso) {
   lines.push('END:VCALENDAR');
   return lines.join('\r\n');
 }
+
+// Разбор .ics (импорт из внешнего календаря): достаём VEVENT -> {title, due, hasTime}.
+// Без зависимостей; терпим CRLF/LF и свёрнутые строки (RFC 5545 line folding).
+export function parseIcs(text) {
+  const raw = String(text || '').replace(/\r\n/g, '\n').replace(/\n[ \t]/g, ''); // разворачиваем сложенные строки
+  const events = [];
+  const blocks = raw.split(/BEGIN:VEVENT/i).slice(1);
+  for (const b of blocks) {
+    const body = b.split(/END:VEVENT/i)[0];
+    const get = (key) => {
+      const m = body.match(new RegExp(`(?:^|\\n)${key}(?:;[^:\\n]*)?:(.*)`, 'i'));
+      return m ? m[1].trim() : null;
+    };
+    const summary = unescapeIcs(get('SUMMARY') || '');
+    const dt = get('DTSTART');
+    if (!dt) continue;
+    const parsed = parseIcsDate(dt, body);
+    if (!parsed) continue;
+    events.push({ title: summary || 'Событие', due: parsed.due, hasTime: parsed.hasTime });
+  }
+  return events;
+}
+
+function unescapeIcs(s) {
+  return String(s).replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1').trim();
+}
+
+// DTSTART:20260815T160000Z | DTSTART;TZID=..:20260815T160000 | DTSTART;VALUE=DATE:20260815
+function parseIcsDate(val, body) {
+  const dateOnly = /VALUE=DATE(?![-])/i.test(body.match(/DTSTART[^:\n]*/i)?.[0] || '') || /^\d{8}$/.test(val);
+  const m = val.match(/(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?/);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm, ss, z] = m;
+  if (dateOnly || hh == null) {
+    // Дата без времени - ставим полдень UTC (как «весь день»); hasTime=false.
+    return { due: new Date(Date.UTC(+y, +mo - 1, +d, 9, 0, 0)).toISOString(), hasTime: false };
+  }
+  const iso = z
+    ? new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mm, +(ss || 0))).toISOString()
+    : new Date(Date.UTC(+y, +mo - 1, +d, +hh, +mm, +(ss || 0))).toISOString(); // без TZID трактуем как UTC (best-effort)
+  return { due: iso, hasTime: true };
+}

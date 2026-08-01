@@ -16,6 +16,7 @@ import { money } from './format.mjs';
 import { esc } from './telegram-helpers.mjs';
 import { parseProduct as parseProductLive } from './wlparse.mjs';
 import { createFitnessHandler } from './telegram-fitness.mjs';
+import { createCalendarHandler } from './telegram-calendar.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
@@ -27,7 +28,7 @@ export function createLkHandler(deps) {
   // parseProduct - переопределяемая зависимость (тесты подсовывают фейк вместо
   // реального сетевого похода в wlparse.mjs); в проде telegram.mjs передаёт ту
   // же функцию явно, а дефолт здесь - просто страховка.
-  const { store, send, sendButtons, api, log, withTyping, aiFitnessProgram, parseProduct = parseProductLive } = deps;
+  const { store, send, sendButtons, api, log, withTyping, aiFitnessProgram, sendIcs, publicUrl, parseProduct = parseProductLive } = deps;
 
   // chatId(string) -> { mode: 'add' } | { mode: 'edit', id }
   const pending = new Map();
@@ -38,6 +39,7 @@ export function createLkHandler(deps) {
     return [
       [{ text: '🏋️ Фитнес', callback_data: 'lk:fit' }],
       [{ text: '💸 Долги', callback_data: 'lk:debts' }, { text: '🎁 Вишлист', callback_data: 'lk:wish' }],
+      [{ text: '📅 Календарь', callback_data: 'lk:cal' }],
     ];
   }
 
@@ -265,7 +267,7 @@ export function createLkHandler(deps) {
   }
 
   function pendingInput(chatId) {
-    return pending.has(String(chatId)) || fitness.pendingInput(chatId);
+    return pending.has(String(chatId)) || fitness.pendingInput(chatId) || cal.pendingInput(chatId);
   }
 
   // Сброс незавершённого сценария извне (например, /reset): pending не должен
@@ -273,11 +275,20 @@ export function createLkHandler(deps) {
   function clearPending(chatId) {
     pending.delete(String(chatId));
     fitness.clearPending(chatId);
+    cal.clearPending(chatId);
   }
+
+  // Добавление события по ключевому слову «календарь» (из роутера, до разговора).
+  const tryCalendar = (chatId, user, text) => cal.tryAdd(chatId, user, text);
+  // Импорт событий из присланного .ics (из роутера).
+  const importCalendar = (chatId, events) => cal.importEvents(chatId, events);
 
   // Личный тренер вынесен в отдельный модуль (иначе LK > 700 строк); делит render/
   // send/api, но держит свой pending (fit_*). Колбэки lk:fit* и ввод чисел - к нему.
   const fitness = createFitnessHandler({ store, send, api, render, withTyping, aiFitnessProgram, log });
+  // Календарь: месячная сетка, Apple-подписка, выгрузка/загрузка .ics, добавление
+  // события по ключевому слову «календарь». Свой pending (cal_*), делит render.
+  const cal = createCalendarHandler({ store, send, sendButtons, api, render, sendIcs, publicUrl, log });
 
   async function onCallback(chatId, data, cbq, user) {
     if (!data || !data.startsWith('lk:')) return false;
@@ -287,6 +298,10 @@ export function createLkHandler(deps) {
     if (data.startsWith('lk:fit')) {
       pending.delete(id); // выходим из возможного долг/вишлист-сценария
       return fitness.onCallback(chatId, data, cbq, user);
+    }
+    if (data.startsWith('lk:cal')) {
+      pending.delete(id);
+      return cal.onCallback(chatId, data, cbq, user);
     }
     if (data === 'lk:home') {
       pending.delete(id);
@@ -420,8 +435,10 @@ export function createLkHandler(deps) {
 
   async function consumeInput(chatId, user, text) {
     const id = String(chatId);
-    // Ввод для тренера (вес/рост/возраст) перехватывает свой обработчик.
+    // Ввод для тренера (вес/рост/возраст) и календаря (подтверждение/время)
+    // перехватывают свои обработчики.
     if (await fitness.consumeInput(chatId, user, text)) return true;
+    if (await cal.consumeInput(chatId, user, text)) return true;
     const p = pending.get(id);
     if (!p) return false;
 
@@ -565,5 +582,5 @@ export function createLkHandler(deps) {
     return false;
   }
 
-  return { openSettings, onCallback, pendingInput, consumeInput, clearPending };
+  return { openSettings, onCallback, pendingInput, consumeInput, clearPending, tryCalendar, importCalendar };
 }
