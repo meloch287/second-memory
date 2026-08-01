@@ -192,3 +192,19 @@ test('friendSystem: при запрете вопросов нет инструк
   assert.match(sys, /ЖЁСТКОЕ ПРАВИЛО/);
   assert.ok(!/Иногда задавай один короткий встречный вопрос/.test(sys));
 });
+
+test('stripTrailingQuestion: срезает вопрос-хвост только при запрете', async () => {
+  const { stripTrailingQuestion } = await import('../src/capabilities.mjs');
+  const banned = { dontDo: ['задавать мне встречные вопросы'] };
+  const reply = 'Отпуск - отличная тема. Сразу мечты начинаются. А ты куда-нибудь присмотрел?';
+  const out = stripTrailingQuestion(reply, banned);
+  assert.ok(!out.includes('?'), 'вопрос срезан: ' + out);
+  assert.match(out, /мечты начинаются/, 'содержательная часть цела');
+  // без запрета - не трогаем
+  assert.equal(stripTrailingQuestion(reply, {}), reply);
+  // единственное предложение-вопрос не режем в пустоту
+  assert.equal(stripTrailingQuestion('А что случилось?', banned), 'А что случилось?');
+  // несколько вопросов подряд в конце
+  const multi = 'Понял тебя. Ты как? Что нового?';
+  assert.equal(stripTrailingQuestion(multi, banned), 'Понял тебя.');
+});

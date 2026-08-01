@@ -130,6 +130,24 @@ export function questionHabit(user) {
   return 'Иногда задавай один короткий встречный вопрос. ';
 }
 
+// Детерминированный гард: если человек запретил встречные вопросы, срезаем
+// вопрос-хвост из ответа. Промпта мало - модель всё равно иногда переспрашивает
+// (как было с botName-вокативом, который лечится только пост-обработкой).
+export function stripTrailingQuestion(reply, user) {
+  const dont = Array.isArray(user?.dontDo) ? user.dontDo.join(' ').toLowerCase() : '';
+  if (!/вопрос/.test(dont)) return reply;
+  const text = String(reply || '').trim();
+  if (!text || !text.includes('?')) return text || reply;
+
+  // Режем на предложения, выкидываем хвостовые вопросительные.
+  const parts = text.match(/[^.!?…]+[.!?…]+(?:\s|$)|[^.!?…]+$/g);
+  if (!parts || parts.length < 2) return reply; // одно предложение - не трогаем
+  const kept = [...parts];
+  while (kept.length > 1 && /\?\s*$/.test(kept[kept.length - 1].trim())) kept.pop();
+  const out = kept.join('').trim();
+  return out.length >= 10 ? out : reply; // не оставляем огрызок
+}
+
 // Кусок системного промпта под сохранённые предпочтения.
 export function stylePref(user) {
   const parts = [];

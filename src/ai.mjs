@@ -51,7 +51,7 @@ const stripThink = (s) =>
     .trim();
 
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
-import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit } from './capabilities.mjs';
+import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion } from './capabilities.mjs';
 
 // Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
 // формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
@@ -501,7 +501,8 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
     );
     if (forced && (hasSubstance(forced) || !isContentDeferral(text, forced))) reply = forced;
   }
-  return stripBotVocative(reply, user?.botName); // имя бота не должно стоять как обращение к человеку
+  // Имя бота не должно быть обращением; при запрете вопросов режем вопрос-хвост.
+  return stripTrailingQuestion(stripBotVocative(reply, user?.botName), user);
 }
 
 // Поиск по памяти: векторный recall + фокусный ответ строго по найденному.
