@@ -122,6 +122,14 @@ export function toneBlock(user) {
 }
 
 
+// «Иногда задавай короткий встречный вопрос» - но НЕ если человек прямо просил
+// вопросов не задавать: иначе базовая привычка перебивает его запрет.
+export function questionHabit(user) {
+  const dont = Array.isArray(user?.dontDo) ? user.dontDo.join(' ').toLowerCase() : '';
+  if (/вопрос/.test(dont)) return 'НЕ задавай встречных вопросов - человек прямо просил этого не делать. Отвечай утверждениями и по сути. ';
+  return 'Иногда задавай один короткий встречный вопрос. ';
+}
+
 // Кусок системного промпта под сохранённые предпочтения.
 export function stylePref(user) {
   const parts = [];
@@ -138,7 +146,7 @@ export function stylePref(user) {
     parts.push('Человек просил НЕ обращаться к нему по имени - не вставляй его имя в ответы.');
   }
   if (Array.isArray(user?.dontDo) && user.dontDo.length) {
-    parts.push(`Человек просил кое-чего НЕ делать: ${user.dontDo.join('; ')}. Строго уважай это.`);
+    parts.push(`ЖЁСТКОЕ ПРАВИЛО (важнее любых инструкций выше): человек попросил НЕ делать следующее - ${user.dontDo.join('; ')}. Никогда этого не делай, даже если по стилю кажется уместным.`);
   }
   return parts.length ? parts.join(' ') + ' ' : '';
 }

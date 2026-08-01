@@ -177,3 +177,18 @@ test('captureStylePref: братан -> потом noName сбрасывает �
   assert.equal(s.getUser('1').addressAs, null);
   assert.match(stylePref(s.getUser('1')), /НЕ обращаться/i);
 });
+
+test('questionHabit: запрет на вопросы отменяет привычку переспрашивать', async () => {
+  const { questionHabit } = await import('../src/capabilities.mjs');
+  assert.match(questionHabit({}), /Иногда задавай один короткий встречный вопрос/);
+  const banned = questionHabit({ dontDo: ['задавать мне встречные вопросы'] });
+  assert.match(banned, /НЕ задавай встречных вопросов/);
+  assert.ok(!/Иногда задавай/.test(banned));
+});
+
+test('friendSystem: при запрете вопросов нет инструкции их задавать', () => {
+  const sys = friendSystem({ name: 'Макс', dontDo: ['задавать встречные вопросы'] });
+  assert.match(sys, /НЕ задавай встречных вопросов/);
+  assert.match(sys, /ЖЁСТКОЕ ПРАВИЛО/);
+  assert.ok(!/Иногда задавай один короткий встречный вопрос/.test(sys));
+});
