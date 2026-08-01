@@ -8,7 +8,7 @@ import { DEFAULT_OFFSET, fmtUser, userOffset } from './tz.mjs';
 import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
-import { esc, hasFfmpeg } from './telegram-helpers.mjs';
+import { esc, hasFfmpeg, LK_TRIGGER_RE } from './telegram-helpers.mjs';
 
 export function createMessageRouter(deps) {
   const {
@@ -17,7 +17,7 @@ export function createMessageRouter(deps) {
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText,
+    upcomingEvents, sendIcs, sendDocumentText, lk,
   } = deps;
 
   async function onMessage(msg) {
@@ -140,6 +140,8 @@ export function createMessageRouter(deps) {
     if (!msg.text.startsWith('/')) maybeReact(chatId, msg.message_id, msg.text);
     let text = msg.text.trim();
     if (!text) return;
+    // Счётчик обращений к Толику (личный кабинет, U3a-ui) - раз на сообщение.
+    store.bumpRequests(String(chatId));
 
     // Пересланное сообщение: запоминаем, от кого оно
     const fwd = msg.forward_origin;
@@ -182,9 +184,15 @@ export function createMessageRouter(deps) {
     if (cmd === '/help') return send(chatId, helpText(user));
     if (cmd === '/summary') return sendSummary(String(chatId));
     if (cmd === '/reset') return askReset(String(chatId), user);
+    if (cmd === '/settings') return lk.openSettings(String(chatId), user);
 
     if (!user) return startOnboarding(String(chatId)); // первое сообщение без /start - тоже знакомимся
     if (user.step) return onboardingStep(String(chatId), user, text);
+
+    // Личный кабинет (U3a-ui): «настройки»/«лк»/«кабинет» текстом - до разговора
+    if (LK_TRIGGER_RE.test(text.toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(String(chatId), user);
+    // Продолжение многошагового сценария ЛК (добавить/изменить долг)
+    if (await lk.consumeInput(String(chatId), user, text)) return;
 
     // Спец-намерения (правка/повтор/поиск/календарь) - до обычного разговора
     if (await handleIntent(String(chatId), user, text)) return;
@@ -196,6 +204,11 @@ export function createMessageRouter(deps) {
     const chatId = String(cb.message?.chat?.id || '');
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
     if (!chatId) return;
+
+    // Личный кабинет (U3a-ui): все callback_data вида lk:... - домен lk.onCallback
+    if (cb.data && cb.data.startsWith('lk:')) {
+      if (await lk.onCallback(chatId, cb.data, cb, store.getUser(chatId))) return;
+    }
 
     if (cb.data === 'reset_no') {
       return send(chatId, 'Фух. Я уж испугался 😅 Продолжаем, я всё помню.');

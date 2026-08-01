@@ -1,4 +1,4 @@
-// Telegram-бот «друг и дневник» по имени Толик. Видимые команды: /start /help /reset.
+// Telegram-бот «друг и дневник» по имени Толик. Видимые команды: /start /help /settings /reset.
 // Всё остальное - живой разговор: сообщения падают в сырую базу,
 // фоновый worker превращает их в факты, ИИ отвечает как близкий друг.
 //
@@ -21,6 +21,7 @@ import { createGroupHandler } from './group.mjs';
 import { pickReaction, stickerMood } from './reactions.mjs';
 import { createMediaHandlers } from './telegram-media.mjs';
 import { createIntentHandler } from './telegram-intents.mjs';
+import { createLkHandler } from './telegram-lk.mjs';
 import { createMessageRouter } from './telegram-router.mjs';
 import {
   COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
@@ -69,6 +70,10 @@ export function startTelegramBot(store, token, log = console) {
       ...threadExtra(chat_id),
       ...extra,
     });
+
+  // Текст с инлайн-клавиатурой, экранированный целиком (для вызывающих,
+  // которые сами не думают про HTML - scheduler.mjs, telegram-lk.mjs).
+  const sendButtons = (chatId, text, inline_keyboard) => send(chatId, esc(text), { reply_markup: { inline_keyboard } });
 
   /* ---- Реакции и выученные стикеры (№8) ---- */
 
@@ -465,13 +470,16 @@ export function startTelegramBot(store, token, log = console) {
     api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
   });
 
+  // Личный кабинет (U3a-ui): статистика + CRUD долгов текстом и кнопками.
+  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log });
+
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
     isGroupChat, groupFlow, callerIsAdmin,
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText,
+    upcomingEvents, sendIcs, sendDocumentText, lk,
   });
   const onMessage = router.onMessage;
   const onCallback = router.onCallback;
@@ -540,8 +548,6 @@ export function startTelegramBot(store, token, log = console) {
     sendHtml(chatId, html) {
       return send(chatId, html);
     },
-    sendButtons(chatId, text, inline_keyboard) {
-      return send(chatId, esc(text), { reply_markup: { inline_keyboard } });
-    },
+    sendButtons,
   };
 }
