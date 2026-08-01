@@ -125,6 +125,9 @@ async function fetchWithTimeout(fetchImpl, url, timeoutMs) {
         'user-agent': DEFAULT_UA,
         'accept-language': 'ru,ru-RU;q=0.9,en;q=0.8',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        // Только то, что умеет разжать undici. Иначе (напр. Я.Маркет с zstd)
+        // res.text() отдаёт mojibake, и в вишлист улетает битый заголовок.
+        'accept-encoding': 'gzip, deflate, br',
       },
     });
   } finally {
@@ -248,8 +251,11 @@ function extractFromHtml(html, baseUrl) {
   const twDesc = firstMeta(html, ['name', 'property'], 'twitter:description');
   const twImages = metaContents(html, ['name', 'property'], 'twitter:image');
 
-  const title = ldTitle || ogTitle || twTitle || cleanText(plainTitleTag(html));
-  const description = ldDesc || ogDesc || twDesc || cleanText(firstMeta(html, ['name'], 'description'));
+  // Все кандидаты гоним через cleanText: og/twitter брались сырыми, поэтому
+  // битый (недекодированный) заголовок мог просочиться в вишлист.
+  const title = ldTitle || cleanText(ogTitle) || cleanText(twTitle) || cleanText(plainTitleTag(html));
+  const description =
+    ldDesc || cleanText(ogDesc) || cleanText(twDesc) || cleanText(firstMeta(html, ['name'], 'description'));
   const price = ldPrice ?? numericPrice(ogPriceRaw);
   const photos = normalizePhotos([...ldImages, ...ogImages, ...twImages], baseUrl);
 
@@ -356,7 +362,23 @@ function decodeHtmlEntities(s) {
 function cleanText(v) {
   if (v == null) return null;
   const s = decodeHtmlEntities(String(v)).replace(/\s+/g, ' ').trim();
-  return s || null;
+  if (!s || looksGarbled(s)) return null;
+  return s;
+}
+
+// Признак «текст не декодировался» - символы-замены U+FFFD или управляющие байты
+// (появляются, когда тело пришло в незнакомой компрессии/кодировке и read() выдал
+// мусор). Такой заголовок нельзя показывать - лучше упасть на слаг из URL.
+function looksGarbled(s) {
+  let bad = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    // U+FFFD (символ-замена при неудачном декоде) или управляющий байт,
+    // кроме \t \n \r - в нормальном заголовке товара их не бывает.
+    if (c === 0xfffd || (c < 0x20 && c !== 9 && c !== 10 && c !== 13)) bad++;
+  }
+  if (!bad) return false;
+  return bad >= 2 || bad / s.length > 0.05;
 }
 
 function numericPrice(raw) {

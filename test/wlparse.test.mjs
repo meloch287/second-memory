@@ -185,3 +185,35 @@ test('parseProduct: пустой url -> ok:false, без throw', async () => {
   assert.equal(r.ok, false);
   assert.equal(typeof r.error, 'string');
 });
+
+
+/* Битое (недекодированное) тело - напр. Я.Маркет с zstd: res.text() отдаёт
+   mojibake. В вишлист НЕ должен улетать мусорный заголовок - лучше слаг из URL
+   либо ok:false, но без символов-замен U+FFFD в title/description. */
+test('parseProduct: mojibake-тело -> без битого заголовка (слаг или ok:false)', async () => {
+  const garbled = 'List�����';
+  const html = `<html><head><title>${garbled}</title></head><body>���</body></html>`;
+  const url = 'https://market.yandex.ru/product--besprovodnye-naushniki/123456789';
+  const fetchImpl = async () => mockRes({ ok: true, status: 200, url, html });
+
+  const r = await parseProduct(url, { fetchImpl });
+  if (r.ok) {
+    assert.ok(!/\uFFFD/.test(r.title || ''), 'в title не должно быть символа-замены');
+    assert.ok(!/[\u0000-\u0008\u000E-\u001F]/.test(r.title || ''), 'в title не должно быть управляющих байтов');
+    assert.match(r.title, /naushniki/i, 'деградация на осмысленный слаг из URL');
+  } else {
+    assert.equal(typeof r.error, 'string');
+  }
+});
+
+/* Битый og:title (раньше брался сырым, мимо cleanText) - тоже отклоняется. */
+test('parseProduct: битый og:title отклоняется, падаем на слаг', async () => {
+  const html = `<html><head><meta property="og:title" content="����"></head></html>`;
+  const url = 'https://www.ozon.ru/product/robot-pylesos-xiaomi-229809575/';
+  const fetchImpl = async () => mockRes({ ok: true, status: 200, url, html });
+
+  const r = await parseProduct(url, { fetchImpl });
+  assert.equal(r.ok, true);
+  assert.ok(!/\uFFFD/.test(r.title || ''));
+  assert.match(r.title, /robot|pylesos|xiaomi/i, 'слаг из URL как запасной заголовок');
+});
