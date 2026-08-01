@@ -269,7 +269,7 @@ test('Tolik e2e (held-out): real bot driven end-to-end via spy Telegram transpor
       spy.pushCallback('lk:home');
       await waitFor(() => /Личный кабинет/.test(lastRender(spy)?.text || ''));
       spy.pushCallback('lk:wish');
-      await waitFor(() => /Вишлист/.test(lastRender(spy)?.text || ''));
+      await waitFor(() => /Вишлист пуст|Вишлист \(\d+\)/.test(lastRender(spy)?.text || ''));
       assert.match(lastRender(spy).text, /Вишлист пуст/);
     });
 
