@@ -260,3 +260,23 @@ test('parseRenderedHtml: нет метаданных -> слаг из URL', () =
   assert.equal(r.ok, true);
   assert.match(r.title, /kolonka/i);
 });
+
+/* Чистка маркетингового хвоста заголовка (Я.Маркет og:title) */
+test('parseRenderedHtml: срезает "– купить на … , undefined" из og:title', () => {
+  const html = `<html><head>
+    <meta property="og:title" content="Наушники Sony WH-1000XM5 81524961|779938 – купить на Яндекс Маркете, undefined">
+    <meta property="og:image" content="https://avatars.mds.yandex.net/x.jpg">
+    </head></html>`;
+  const r = parseRenderedHtml(html, 'https://market.yandex.ru/product--naushniki/1');
+  assert.equal(r.ok, true);
+  assert.ok(!/купить|undefined/i.test(r.title), 'хвост срезан: ' + r.title);
+  assert.match(r.title, /Sony WH-1000XM5/);
+});
+
+test('tidyProductTitle: обычный заголовок со словом «купить» в середине не рушится целиком', () => {
+  // "купить" как часть названия без разделителя-тире не срезаем
+  const html = `<html><head><meta property="og:title" content="Планшет для записей купить-продай"></head></html>`;
+  const r = parseRenderedHtml(html, 'https://shop.example.com/x');
+  assert.equal(r.ok, true);
+  assert.match(r.title, /Планшет/);
+});

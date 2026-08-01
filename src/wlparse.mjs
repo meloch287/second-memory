@@ -295,7 +295,7 @@ function extractFromHtml(html, baseUrl) {
 
   // Все кандидаты гоним через cleanText: og/twitter брались сырыми, поэтому
   // битый (недекодированный) заголовок мог просочиться в вишлист.
-  const title = ldTitle || cleanText(ogTitle) || cleanText(twTitle) || cleanText(plainTitleTag(html));
+  const title = tidyProductTitle(ldTitle || cleanText(ogTitle) || cleanText(twTitle) || cleanText(plainTitleTag(html)));
   const description =
     ldDesc || cleanText(ogDesc) || cleanText(twDesc) || cleanText(firstMeta(html, ['name'], 'description'));
   const price = ldPrice ?? numericPrice(ogPriceRaw);
@@ -399,6 +399,20 @@ function decodeHtmlEntities(s) {
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
+}
+
+// Срезаем маркетинговые/шаблонные хвосты из заголовка товара:
+// «… – купить на Яндекс Маркете, undefined», «… | OZON» и т.п. Если срезали всё -
+// возвращаем исходное (перестраховка от слишком жадного шаблона).
+function tidyProductTitle(s) {
+  if (!s) return s;
+  let t = String(s);
+  // NB: \b с кириллицей в JS не работает - границы слова тут не используем.
+  t = t.replace(/,?\s*undefined\s*$/i, ''); // битый JS-шаблон Я.Маркета: "…, undefined"
+  t = t.replace(/\s*[–—-]\s*купить\s.*$/iu, ''); // "… – купить на … Маркете" (дефис перед словом)
+  t = t.replace(/\s*[|–—]\s*(Яндекс\s*Маркет|OZON|Ozon|Wildberries|AliExpress|АлиЭкспресс).*$/iu, '');
+  t = t.trim();
+  return t || s;
 }
 
 function cleanText(v) {
