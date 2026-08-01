@@ -32,6 +32,13 @@ Autonomous run; ambiguities resolved as below and proceeded.
 - "напомни через 10 минут/3 дня/2 часа" → fires exactly after that interval.
 - Reminder must fire once, at the right time, and re-asking must not duplicate.
 
+## No-voice parity (user clarification, 11.07.2026)
+- Долги, Вишлист и Настройки/ЛК Толика ОБЯЗАНЫ работать БЕЗ голосовых — полностью
+  через **текстовые команды и inline-кнопки**. Голос (гс) — лишь дополнительный способ,
+  не единственный. Every action (open LK, list/add/edit/delete debts & wishlist items,
+  gallery nav, set a reminder) must be reachable by typing and by tapping buttons.
+  Acceptance for U3a/b/c must be driven text+callback-only (no transcript path required).
+
 ## Settings / личный кабинет (U3a)
 - Command `/settings` and Russian «настройки» open an inline-keyboard LK showing stats:
   requests to Толик (new per-user counter), facts remembered, open debts, open tasks/meetings,
