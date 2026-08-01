@@ -60,19 +60,24 @@ test('migrateChat: переносит ВСЮ память from -> to, ничег
   s.addRaw('web', 'сырьё');
   s.pushHistory('user', 'привет', 'web');
   s.addRecurring({ chatId: 'web', title: 'вода', kind: 'daily', hour: 9, min: 0 });
+  s.addWish('web', { title: 'ноутбук' });
+  s.addWish('tg-other', { title: 'чужой подарок' }); // не должно тронуться
   s.setPersonas?.('web', { Дима: 'друг' });
 
   const n = s.migrateChat('web', '999');
-  assert.equal(n, 4, 'вернул число перенесённых записей+фактов (2 записи + 2 факта)');
+  assert.equal(n, 5, 'вернул число перенесённых записей+фактов+желаний (2 записи + 2 факта + 1 желание)');
   assert.equal(s.list({ chatId: 'web' }).length, 0, 'в web записей не осталось');
   assert.equal(s.list({ chatId: '999' }).length, 2, 'обе записи переехали');
   assert.equal(s.data.facts.filter((f) => f.chatId === '999').length, 2);
   assert.equal(s.data.raw.filter((r) => r.chatId === '999').length, 1, 'сырьё переехало');
   assert.equal(s.recentHistory(10, '999').length, 1, 'история переехала');
   assert.equal(s.recurringFor('999').length, 1, 'повторяющееся переехало');
+  assert.equal(s.listWish('999').length, 1, 'желание переехало');
+  assert.equal(s.listWish('web').length, 0, 'в web желаний не осталось');
   // чужой чат не тронут
   assert.equal(s.list({ chatId: 'tg-other' }).length, 1);
   assert.equal(s.data.facts.filter((f) => f.chatId === 'tg-other').length, 1);
+  assert.equal(s.listWish('tg-other').length, 1, 'чужое желание не тронуто');
   // самоперенос — no-op
   assert.equal(s.migrateChat('999', '999'), 0);
 });

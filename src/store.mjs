@@ -444,6 +444,7 @@ export class Store {
     for (const r of this.data.raw) if ((r.chatId || 'web') === from) r.chatId = to;
     for (const h of this.data.history) if ((h.chatId || 'web') === from) h.chatId = to;
     for (const rec of this.data.recurring) if ((rec.chatId || 'web') === from) rec.chatId = to;
+    for (const w of this.data.wishlist) if (w.chatId === from) { w.chatId = to; n++; }
     if (this.data.personas[from]) {
       this.data.personas[to] = { ...(this.data.personas[to] || {}), ...this.data.personas[from] };
       delete this.data.personas[from];
