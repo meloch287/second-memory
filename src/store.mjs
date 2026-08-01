@@ -31,7 +31,7 @@ const keyV2 = (salt) => scryptSync(process.env.SM_ENCRYPTION_KEY, salt, 32);
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [] };
+    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [], wishlist: [] };
     this._dirty = false;
     this._saveTimer = null;
     this.load();
@@ -80,6 +80,7 @@ export class Store {
         if (!parsed.personas || typeof parsed.personas !== 'object') parsed.personas = {};
         if (!parsed.meta || typeof parsed.meta !== 'object') parsed.meta = {};
         if (!Array.isArray(parsed.recurring)) parsed.recurring = [];
+        if (!Array.isArray(parsed.wishlist)) parsed.wishlist = [];
         this.data = parsed;
       }
     } catch (e) {
@@ -298,10 +299,61 @@ export class Store {
     return this.data.users[chatId] || null;
   }
 
+  // Гарантирует профиль чата: если его ещё нет — создаёт минимальный с
+  // createdAt (первый заход), не трогает save() (это дело вызывающего).
+  _ensureUser(chatId) {
+    if (!this.data.users[chatId]) {
+      this.data.users[chatId] = { createdAt: new Date().toISOString() };
+    }
+    return this.data.users[chatId];
+  }
+
   setUser(chatId, patch) {
-    this.data.users[chatId] = { ...(this.data.users[chatId] || {}), ...patch };
+    const u = this._ensureUser(chatId);
+    this.data.users[chatId] = { ...u, ...patch };
     this.save();
     return this.data.users[chatId];
+  }
+
+  // Счётчик обращений к Толику (личный кабинет). Безопасен без профиля -
+  // создаёт минимальный (см. _ensureUser).
+  bumpRequests(chatId) {
+    const u = this._ensureUser(chatId);
+    u.requests = (u.requests || 0) + 1;
+    this.save();
+    return u.requests;
+  }
+
+  // Статистика личного кабинета: счётчики + «дней с Толиком».
+  getStats(chatId) {
+    const user = this.data.users[chatId];
+    return {
+      requests: user?.requests || 0,
+      facts: this.data.facts.filter((f) => f.chatId === chatId).length,
+      openDebts: this.list({ type: 'debt', status: 'open', chatId }).length,
+      openTasks: this.list({ type: 'task', status: 'open', chatId }).length,
+      openMeetings: this.list({ type: 'meeting', status: 'open', chatId }).length,
+      wishlist: this.listWish(chatId).length,
+      days: this._daysWithUs(chatId),
+    };
+  }
+
+  // «Дней с Толиком»: от users[chatId].createdAt; если профиля/метки нет -
+  // от самого раннего сырого сообщения или деловой записи чата (что раньше).
+  // 0, если по чату вообще ничего не нашлось.
+  _daysWithUs(chatId) {
+    const user = this.data.users[chatId];
+    let earliest = user?.createdAt ? Date.parse(user.createdAt) : NaN;
+    if (isNaN(earliest)) {
+      const times = [
+        ...this.data.raw.filter((r) => r.chatId === chatId).map((r) => Date.parse(r.ts)),
+        ...this.data.entries.filter((e) => (e.chatId || 'web') === chatId).map((e) => Date.parse(e.createdAt)),
+      ].filter((t) => !isNaN(t));
+      if (!times.length) return 0;
+      earliest = Math.min(...times);
+    }
+    const days = Math.floor((Date.now() - earliest) / 86400000);
+    return days > 0 ? days : 0;
   }
 
   // БД №1: сырой поток сообщений пользователя.
@@ -360,6 +412,7 @@ export class Store {
     this.data.facts = this.data.facts.filter((f) => f.chatId !== chatId);
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
     this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
+    this.data.wishlist = this.data.wishlist.filter((w) => w.chatId !== chatId);
     this.save();
   }
 
@@ -374,6 +427,7 @@ export class Store {
     this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
     this.data.recurring = this.data.recurring.filter((r) => r.chatId !== chatId);
+    this.data.wishlist = this.data.wishlist.filter((w) => w.chatId !== chatId);
     delete this.data.personas[chatId];
     this.save();
     return { facts, entries };
@@ -477,6 +531,52 @@ export class Store {
       .slice(0, limit)
       .filter((x) => x.dot > 0.2)
       .map((x) => x.f);
+  }
+
+  // --- Вишлист (список желаемых подарков) ---
+
+  addWish(chatId, fields = {}) {
+    const item = {
+      id: ++this.data.seq,
+      chatId,
+      title: fields.title,
+      desc: fields.desc || '',
+      url: fields.url || '',
+      photos: fields.photos || [],
+      price: fields.price ?? null,
+      giftedBy: fields.giftedBy ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    this.data.wishlist.push(item);
+    this.save();
+    return item;
+  }
+
+  listWish(chatId) {
+    return this.data.wishlist.filter((w) => w.chatId === chatId);
+  }
+
+  wishById(id) {
+    return this.data.wishlist.find((w) => w.id === id) || null;
+  }
+
+  updateWish(id, fields = {}) {
+    const w = this.wishById(id);
+    if (!w) return null;
+    const allowed = ['title', 'desc', 'url', 'photos', 'price', 'giftedBy'];
+    const patch = {};
+    for (const k of allowed) if (k in fields) patch[k] = fields[k];
+    Object.assign(w, patch);
+    this.save();
+    return w;
+  }
+
+  removeWish(id) {
+    const i = this.data.wishlist.findIndex((w) => w.id === id);
+    if (i < 0) return null;
+    const [w] = this.data.wishlist.splice(i, 1);
+    this.save();
+    return w;
   }
 
   // Резервная копия файла данных, храним последние 14.
