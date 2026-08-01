@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseProduct } from '../src/wlparse.mjs';
+import { parseProduct, parseRenderedHtml } from '../src/wlparse.mjs';
 
 // Мок WHATWG Response - без сети, детерминированно.
 function mockRes({ ok = true, status = 200, url, redirected = false, html = '', headers = {} } = {}) {
@@ -233,4 +233,30 @@ test('parseProduct: Я.Маркет retpath с подписью -> чистый 
   assert.equal(r.source, 'market.yandex.ru');
   assert.match(r.title, /naushniki/i, 'слаг товара, а не мусор');
   assert.ok([...r.title].every((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0xfffd), 'без управляющих/битых символов');
+});
+
+/* parseRenderedHtml: разбор уже отрендеренного HTML (путь Playwright) */
+test('parseRenderedHtml: og/JSON-LD из готового HTML', async () => {
+  const html = `<html><head>
+    <meta property="og:title" content="Кофеварка De'Longhi">
+    <meta property="og:image" content="https://cdn.example.com/coffee.jpg">
+    <script type="application/ld+json">{"@type":"Product","name":"Кофеварка De'Longhi","offers":{"price":"15990"}}</script>
+    </head></html>`;
+  const r = parseRenderedHtml(html, 'https://market.yandex.ru/product--kofevarka/55');
+  assert.equal(r.ok, true);
+  assert.match(r.title, /De'Longhi/);
+  assert.equal(r.price, 15990);
+  assert.ok(r.photos.length >= 1);
+  assert.equal(r.source, 'market.yandex.ru');
+});
+
+test('parseRenderedHtml: пустой HTML -> ok:false', () => {
+  const r = parseRenderedHtml('', 'https://x/y');
+  assert.equal(r.ok, false);
+});
+
+test('parseRenderedHtml: нет метаданных -> слаг из URL', () => {
+  const r = parseRenderedHtml('<html><body>no meta</body></html>', 'https://shop.example.com/besprovodnaya-kolonka');
+  assert.equal(r.ok, true);
+  assert.match(r.title, /kolonka/i);
 });

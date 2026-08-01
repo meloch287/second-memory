@@ -112,6 +112,35 @@ export async function parseProduct(url, { fetchImpl = fetch, timeoutMs = 12000 }
   };
 }
 
+/**
+ * Разбор УЖЕ отрендеренного HTML (напр. из headless-браузера): та же извлекалка
+ * og/JSON-LD/фото/цены, что и в fetch-пути - чтобы был один путь разбора.
+ * @param {string} html   полный HTML отрендеренной страницы
+ * @param {string} finalUrl фактический адрес (для абсолютных фото и слаг-фолбэка)
+ */
+export function parseRenderedHtml(html, finalUrl) {
+  if (typeof html !== 'string' || !html.trim()) {
+    return { ok: false, url: finalUrl || '', error: 'empty_body' };
+  }
+  const extracted = extractFromHtml(html, finalUrl);
+  if (!extracted.title && !extracted.description && extracted.photos.length === 0) {
+    const slug = titleFromSlug(finalUrl);
+    if (slug) {
+      return { ok: true, url: finalUrl, title: slug, description: null, photos: [], price: null, source: hostnameOf(finalUrl) };
+    }
+    return { ok: false, url: finalUrl, error: 'no_data' };
+  }
+  return {
+    ok: true,
+    url: finalUrl,
+    title: extracted.title || null,
+    description: extracted.description || null,
+    photos: extracted.photos,
+    price: extracted.price ?? null,
+    source: hostnameOf(finalUrl),
+  };
+}
+
 // ---- сеть -------------------------------------------------------------
 
 async function fetchWithTimeout(fetchImpl, url, timeoutMs) {

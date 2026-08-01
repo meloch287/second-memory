@@ -23,6 +23,7 @@ import { createMediaHandlers } from './telegram-media.mjs';
 import { createIntentHandler } from './telegram-intents.mjs';
 import { createLkHandler } from './telegram-lk.mjs';
 import { parseProduct } from './wlparse.mjs';
+import { parseProductBrowser } from './wlparse-browser.mjs';
 import { createMessageRouter } from './telegram-router.mjs';
 import {
   COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
@@ -490,7 +491,19 @@ export function startTelegramBot(store, token, log = console) {
   // sendPhoto для вишлиста не переиспользует media.sendPhoto (тот только для
   // локальных PNG-буферов графиков) - карточки товара шлются по URL через api()
   // напрямую (sendPhoto в Bot API принимает как файл, так и http/https-строку).
-  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, parseProduct });
+  // Двухступенчатый разбор ссылки вишлиста: сначала быстрый zero-dep fetch;
+  // если не вышло или добыли только слаг без фото - пробуем реальным браузером
+  // (Playwright, если установлен на сервере). Я.Маркет/JS-магазины браузер берёт;
+  // Ozon/WB режут по IP и в браузере -> оба ok:false -> ЛК уходит на ручной ввод.
+  const parseProductSmart = async (url) => {
+    const fast = await parseProduct(url);
+    if (fast.ok && fast.title && Array.isArray(fast.photos) && fast.photos.length) return fast;
+    let viaBrowser = null;
+    try { viaBrowser = await parseProductBrowser(url); } catch { viaBrowser = null; }
+    if (viaBrowser && viaBrowser.ok && viaBrowser.title) return viaBrowser;
+    return fast.ok ? fast : viaBrowser || fast;
+  };
+  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, parseProduct: parseProductSmart });
 
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
