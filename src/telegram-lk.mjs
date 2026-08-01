@@ -15,6 +15,7 @@ import { captureEntry, entryConfirmation } from './brain.mjs';
 import { money } from './format.mjs';
 import { esc } from './telegram-helpers.mjs';
 import { parseProduct as parseProductLive } from './wlparse.mjs';
+import { createFitnessHandler } from './telegram-fitness.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
@@ -26,7 +27,7 @@ export function createLkHandler(deps) {
   // parseProduct - переопределяемая зависимость (тесты подсовывают фейк вместо
   // реального сетевого похода в wlparse.mjs); в проде telegram.mjs передаёт ту
   // же функцию явно, а дефолт здесь - просто страховка.
-  const { store, send, sendButtons, api, log, parseProduct = parseProductLive } = deps;
+  const { store, send, sendButtons, api, log, withTyping, aiFitnessProgram, parseProduct = parseProductLive } = deps;
 
   // chatId(string) -> { mode: 'add' } | { mode: 'edit', id }
   const pending = new Map();
@@ -264,28 +265,33 @@ export function createLkHandler(deps) {
   }
 
   function pendingInput(chatId) {
-    return pending.has(String(chatId));
+    return pending.has(String(chatId)) || fitness.pendingInput(chatId);
   }
 
   // Сброс незавершённого сценария извне (например, /reset): pending не должен
   // пережить стирание памяти и перехватить первое сообщение нового знакомства.
   function clearPending(chatId) {
     pending.delete(String(chatId));
+    fitness.clearPending(chatId);
   }
+
+  // Личный тренер вынесен в отдельный модуль (иначе LK > 700 строк); делит render/
+  // send/api, но держит свой pending (fit_*). Колбэки lk:fit* и ввод чисел - к нему.
+  const fitness = createFitnessHandler({ store, send, api, render, withTyping, aiFitnessProgram, log });
 
   async function onCallback(chatId, data, cbq, user) {
     if (!data || !data.startsWith('lk:')) return false;
     const messageId = cbq?.message?.message_id;
     const id = String(chatId);
 
+    if (data.startsWith('lk:fit')) {
+      pending.delete(id); // выходим из возможного долг/вишлист-сценария
+      return fitness.onCallback(chatId, data, cbq, user);
+    }
     if (data === 'lk:home') {
       pending.delete(id);
+      fitness.clearPending(id);
       await render(chatId, messageId, homeText(chatId), homeKb());
-      return true;
-    }
-    if (data === 'lk:fit') {
-      pending.delete(id);
-      await render(chatId, messageId, '🏋️ Личный тренер — в разработке, включим в следующей фазе.', BACK_HOME_KB);
       return true;
     }
     if (data === 'lk:wish') {
@@ -414,6 +420,8 @@ export function createLkHandler(deps) {
 
   async function consumeInput(chatId, user, text) {
     const id = String(chatId);
+    // Ввод для тренера (вес/рост/возраст) перехватывает свой обработчик.
+    if (await fitness.consumeInput(chatId, user, text)) return true;
     const p = pending.get(id);
     if (!p) return false;
 

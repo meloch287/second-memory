@@ -31,7 +31,7 @@ const keyV2 = (salt) => scryptSync(process.env.SM_ENCRYPTION_KEY, salt, 32);
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [], wishlist: [] };
+    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [], wishlist: [], fitness: {} };
     this._dirty = false;
     this._saveTimer = null;
     this.load();
@@ -81,6 +81,7 @@ export class Store {
         if (!parsed.meta || typeof parsed.meta !== 'object') parsed.meta = {};
         if (!Array.isArray(parsed.recurring)) parsed.recurring = [];
         if (!Array.isArray(parsed.wishlist)) parsed.wishlist = [];
+        if (!parsed.fitness || typeof parsed.fitness !== 'object') parsed.fitness = {};
         this.data = parsed;
       }
     } catch (e) {
@@ -413,6 +414,7 @@ export class Store {
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
     this.data.entries = this.data.entries.filter((e) => (e.chatId || 'web') !== chatId);
     this.data.wishlist = this.data.wishlist.filter((w) => w.chatId !== chatId);
+    delete this.data.fitness[chatId];
     this.save();
   }
 
@@ -428,6 +430,7 @@ export class Store {
     this.data.history = this.data.history.filter((h) => (h.chatId || 'web') !== chatId);
     this.data.recurring = this.data.recurring.filter((r) => r.chatId !== chatId);
     this.data.wishlist = this.data.wishlist.filter((w) => w.chatId !== chatId);
+    delete this.data.fitness[chatId];
     delete this.data.personas[chatId];
     this.save();
     return { facts, entries };
@@ -445,6 +448,10 @@ export class Store {
     for (const h of this.data.history) if ((h.chatId || 'web') === from) h.chatId = to;
     for (const rec of this.data.recurring) if ((rec.chatId || 'web') === from) rec.chatId = to;
     for (const w of this.data.wishlist) if (w.chatId === from) { w.chatId = to; n++; }
+    if (this.data.fitness[from]) {
+      this.data.fitness[to] = { ...(this.data.fitness[to] || {}), ...this.data.fitness[from] };
+      delete this.data.fitness[from];
+    }
     if (this.data.personas[from]) {
       this.data.personas[to] = { ...(this.data.personas[to] || {}), ...this.data.personas[from] };
       delete this.data.personas[from];
@@ -578,6 +585,21 @@ export class Store {
     const [w] = this.data.wishlist.splice(i, 1);
     this.save();
     return w;
+  }
+
+  /* ---- Фитнес-профиль (один на чат): вес/рост/цель/уровень/дни/план ---- */
+
+  getFitness(chatId) {
+    return this.data.fitness[String(chatId)] || null;
+  }
+
+  // Мерж-патч профиля; вернёт актуальный профиль.
+  setFitness(chatId, patch = {}) {
+    const id = String(chatId);
+    const cur = this.data.fitness[id] || {};
+    this.data.fitness[id] = { ...cur, ...patch, updatedAt: new Date().toISOString() };
+    this.save();
+    return this.data.fitness[id];
   }
 
   // Резервная копия файла данных, храним последние 14.

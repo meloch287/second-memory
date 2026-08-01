@@ -83,13 +83,14 @@ test('openSettings: показывает статистику и 3 кнопки 
   assert.equal(r.kb.length, 2, 'Фитнес отдельным рядом, Долги+Вишлист вторым');
 });
 
-test('lk:fit -> заглушка "в разработке", без логики фитнеса', async () => {
+test('lk:fit -> личный тренер (профиль/дни), фитнес реализован', async () => {
   const s = new Store(tmpFile());
   const bot = fakeBot(s);
   await bot.lk.onCallback('1', 'lk:fit', cbq('1', 10), s.getUser('1'));
   const r = lastRender(bot, '1');
-  assert.match(r.text, /в разработке/);
-  assert.match(r.text, /Фитнес|тренер/i);
+  assert.match(r.text, /Личный тренер/);
+  assert.ok(r.kb.flat().some((b) => b.callback_data === 'lk:fit:prof'));
+  assert.ok(r.kb.flat().some((b) => b.callback_data === 'lk:fit:days'));
 });
 
 test('lk:debts: список открытых долгов юзера, "Долгов нет" для пустого', async () => {

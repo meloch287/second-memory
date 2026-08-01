@@ -11,7 +11,7 @@
 // и финальная сшивка всех кластеров через явные зависимости.
 
 import {
-  aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiTts,
+  aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiTts, aiFitnessProgram,
 } from './ai.mjs';
 import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import { buildIcs } from './ics.mjs';
@@ -512,7 +512,7 @@ export function startTelegramBot(store, token, log = console) {
     }
     return fast.ok ? fast : viaBrowser || fast;
   };
-  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, parseProduct: parseProductSmart });
+  const lk = createLkHandler({ store, send, sendButtons, api, botNameOf, log, withTyping, aiFitnessProgram, parseProduct: parseProductSmart });
 
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
