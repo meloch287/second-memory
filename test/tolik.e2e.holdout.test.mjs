@@ -210,13 +210,15 @@ test('Tolik e2e (held-out): real bot driven end-to-end via spy Telegram transpor
       assert.ok(flatText.some((x) => /Вишлист/.test(x)));
     });
 
-    await t.test('2b) Фитнес callback -> "в разработке" stub', async () => {
+    await t.test('2b) Фитнес callback -> личный тренер (профиль/дни)', async () => {
       spy.pushCallback('lk:fit');
-      await waitFor(() => /в разработке/.test(lastRender(spy)?.text || ''));
+      await waitFor(() => /Личный тренер/.test(lastRender(spy)?.text || ''));
       const r = lastRender(spy);
       console.log('[step2b] editMessageText:', JSON.stringify({ text: r.text }));
       assert.equal(r.method, 'editMessageText');
-      assert.match(r.text, /в разработке/);
+      assert.match(r.text, /Личный тренер/);
+      assert.ok(r.kb.flat().some((b) => b.callback_data === 'lk:fit:prof'));
+      assert.ok(r.kb.flat().some((b) => b.callback_data === 'lk:fit:days'));
     });
 
     // ---- 3) Долги: add via text flow, persists, appears in the list, delete it ----
