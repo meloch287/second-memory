@@ -334,6 +334,19 @@ export function startTelegramBot(store, token, log = console) {
       .filter((e) => Date.parse(e.due) >= now - 86400000 && Date.parse(e.due) <= to);
   }
 
+  // Подпись к .ics - пошагово, что делать с файлом: без неё юзер получает
+  // документ и не понимает, куда его девать (реальная жалоба).
+  const ICS_CAPTION = [
+    '📅 Файл с твоими событиями',
+    '',
+    'Что делать дальше:',
+    '1. Нажми на файл выше - откроется просмотр',
+    '2. Кнопка «Поделиться» (квадрат со стрелкой)',
+    '3. Выбери «Календарь» → «Добавить все»',
+    '',
+    'Это разовый снимок - новые события сюда уже не попадут. Чтобы календарь обновлялся сам, подключи подписку: ЛК → Календарь → Подключение.',
+  ].join('\n');
+
   async function sendIcs(chatId, events, filename = 'raspisanie.ics') {
     const ics = buildIcs(events, new Date().toISOString());
     const form = new FormData();
@@ -341,7 +354,7 @@ export function startTelegramBot(store, token, log = console) {
     const _th = activeThread.get(String(chatId));
     if (_th) form.append('message_thread_id', String(_th));
     form.append('document', new Blob([ics], { type: 'text/calendar' }), filename);
-    form.append('caption', 'Открой файл - события добавятся в календарь телефона 📅');
+    form.append('caption', ICS_CAPTION);
     const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: 'POST', body: form });
     return res.json();
   }
