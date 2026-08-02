@@ -254,3 +254,49 @@ test('fit: главная тренера - премиум-иконки на кн
   assert.ok(btns.every((b) => b.callback_data === 'lk:home' || b.icon_custom_emoji_id), 'у разделов премиум-иконки');
   assert.ok(hasCb(r, 'lk:fit:food'));
 });
+
+/* ---- Пересоставление плана ---- */
+
+test('fit: план уже есть -> спрашивает, не перетирает молча', async () => {
+  const s = new Store(tmpFile());
+  let called = 0;
+  const bot = fakeBot(s, { aiFitnessProgram: async (...a) => { called++; return fakeAiPlan(...a); } });
+  s.setFitness('1', { weight: 80, height: 180, goal: 'масса', days: [1, 3], plan: { 1: 'Фокус: Грудь\n- Жим лёжа — 4x8', 3: 'Фокус: Спина\n- Тяга — 4x10' } });
+  await bot.lk.onCallback('1', 'lk:fit:gen', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /План уже есть/);
+  assert.match(r.text, /Пересоставить/);
+  assert.ok(hasCb(r, 'lk:fit:gen:yes'), 'кнопка подтверждения');
+  assert.ok(hasCb(r, 'lk:fit:plan:0'), 'кнопка оставить текущий');
+  assert.equal(called, 0, 'ИИ не дёргали, план не тронут');
+  assert.match(s.getFitness('1').plan[1], /Жим лёжа/, 'старый план на месте');
+});
+
+test('fit: подтверждение -> пересоставляет и передаёт прошлые упражнения+фокус', async () => {
+  const s = new Store(tmpFile());
+  let passed = null;
+  const bot = fakeBot(s, {
+    aiFitnessProgram: async (profile, dayNames, opts) => { passed = opts; return fakeAiPlan(profile, dayNames); },
+  });
+  s.setFitness('1', {
+    weight: 80, height: 180, goal: 'масса', days: [1, 3],
+    plan: { 1: 'Фокус: Грудь, Трицепс\n- Жим лёжа — 4x8\n- Отжимания на брусьях — 3x10', 3: 'Фокус: Спина\n- Подтягивания — 4x8' },
+  });
+  await bot.lk.onCallback('1', 'lk:fit:gen:yes', cbq('1'), s.getUser('1'));
+  assert.ok(passed?.previous?.length === 2, 'прошлый план передан в генератор');
+  assert.equal(passed.previous[0].day, 'Понедельник');
+  assert.match(passed.previous[0].focus, /Грудь, Трицепс/, 'группа мышц сохраняется');
+  assert.ok(passed.previous[0].exercises.includes('Жим лёжа'), 'упражнения переданы, чтобы не повторялись');
+  assert.ok(passed.previous[0].exercises.includes('Отжимания на брусьях'));
+  assert.match(lastRender(bot, '1').text, /Пересоставил|1\/2/, 'показал новый план');
+});
+
+test('fit: первый план (плана нет) генерится сразу, без переспроса', async () => {
+  const s = new Store(tmpFile());
+  let passed = 'нет вызова';
+  const bot = fakeBot(s, { aiFitnessProgram: async (p, d, opts) => { passed = opts; return fakeAiPlan(p, d); } });
+  s.setFitness('1', { weight: 80, height: 180, goal: 'масса', days: [1, 3] });
+  await bot.lk.onCallback('1', 'lk:fit:gen', cbq('1'), s.getUser('1'));
+  assert.deepEqual(passed?.previous, [], 'для нового плана прошлого нет');
+  assert.equal(Object.keys(s.getFitness('1').plan).length, 2);
+});

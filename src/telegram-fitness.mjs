@@ -126,7 +126,38 @@ export function createFitnessHandler(deps) {
     return plan;
   }
 
-  async function generate(chatId, messageId, user) {
+  // Разбор сохранённого дня плана: первая строка - фокус, дальше упражнения.
+  // Нужно, чтобы при пересоставлении сохранить те же группы мышц, а упражнения
+  // попросить ДРУГИЕ (иначе модель выдаёт ровно тот же список).
+  function planBrief(f) {
+    return planDays(f).map((d) => {
+      const lines = String(f.plan[d] || '').split('\n').map((s) => s.trim()).filter(Boolean);
+      const focus = (lines[0] || '').replace(/^фокус\s*:?\s*/i, '').slice(0, 60);
+      const exercises = lines
+        .filter((l) => /^[-•]/.test(l))
+        .map((l) => l.replace(/^[-•]\s*/, '').replace(/\s*[—-]\s*\d+[xх×].*$/i, '').trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      return { day: DAY_FULL[d], focus, exercises };
+    });
+  }
+
+  async function generate(chatId, messageId, user, { force = false } = {}) {
+    const existing = store.getFitness(chatId);
+    // План уже есть - не перетираем молча, спрашиваем.
+    if (!force && planDays(existing).length) {
+      await render(
+        chatId,
+        messageId,
+        `${pe('bolt')} <b>План уже есть</b> — на ${planDays(existing).length} дн.\n\nПересоставить? Группы мышц по дням оставлю те же, а упражнения подберу другие.`,
+        [
+          [{ text: '🔄 Да, пересоставить', callback_data: 'lk:fit:gen:yes' }],
+          [{ text: '👁️ Оставить текущий', callback_data: 'lk:fit:plan:0' }],
+          [{ text: '‹ Назад', callback_data: 'lk:fit' }],
+        ],
+      );
+      return;
+    }
     const f = store.getFitness(chatId);
     if (!profileReady(f)) {
       await render(chatId, messageId, 'Сначала заполни профиль: минимум вес, рост и цель.',
@@ -141,18 +172,21 @@ export function createFitnessHandler(deps) {
     }
     let raw = '';
     try {
-      raw = await withTyping(chatId, () => aiFitnessProgram(f, days.map((d) => DAY_FULL[d])));
+      const previous = force ? planBrief(f) : [];
+      raw = await withTyping(chatId, () => aiFitnessProgram(f, days.map((d) => DAY_FULL[d]), { previous }));
     } catch (e) {
       log?.error?.('[fit] generate', e?.message);
     }
     const plan = splitProgram(raw, days);
     if (!Object.keys(plan).length) {
       await render(chatId, messageId, 'Не получилось составить план, попробуй ещё раз чуть позже.',
-        [[{ text: '⚡ Ещё раз', callback_data: 'lk:fit:gen' }], [{ text: '‹ Назад', callback_data: 'lk:fit' }]]);
+        [[{ text: '⚡ Ещё раз', callback_data: 'lk:fit:gen:yes' }], [{ text: '‹ Назад', callback_data: 'lk:fit' }]]);
       return;
     }
     store.setFitness(chatId, { plan });
-    await send(chatId, `Готово! Составил план на ${Object.keys(plan).length} дн. 💪`);
+    await send(chatId, force
+      ? `Готово! Пересоставил план на ${Object.keys(plan).length} дн. - те же группы, новые упражнения 💪`
+      : `Готово! Составил план на ${Object.keys(plan).length} дн. 💪`);
     await showPlan(chatId, null, 0);
   }
 
@@ -263,6 +297,7 @@ export function createFitnessHandler(deps) {
     if (data === 'lk:fit:prof') { pending.delete(id); await render(chatId, messageId, profText(chatId), profKb()); return true; }
     if (data === 'lk:fit:days') { pending.delete(id); await render(chatId, messageId, 'Отметь дни тренировок (жми, чтобы включить/выключить):', daysKb(chatId)); return true; }
     if (data === 'lk:fit:gen') { pending.delete(id); await generate(chatId, messageId, user); return true; }
+    if (data === 'lk:fit:gen:yes') { pending.delete(id); await generate(chatId, messageId, user, { force: true }); return true; }
     if (data === 'lk:fit:nop') return true;
 
     /* ---- Питание ---- */
