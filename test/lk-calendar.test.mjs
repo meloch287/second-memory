@@ -36,30 +36,35 @@ const flat = (r) => (r.kb || []).flat();
 const hasCb = (r, cb) => flat(r).some((b) => b.callback_data === cb);
 const user = (s) => { s.setUser('1', { name: 'Макс', tzOffset: 180, step: null }); return s.getUser('1'); };
 
-test('cal: месячная сетка - месяц, дни недели, коннект/выгрузка/загрузка', async () => {
+test('cal: месячная сетка - месяц, дни недели, кнопка Подключение', async () => {
   const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
   await bot.lk.onCallback('1', 'lk:cal', cbq('1'), u);
   const r = lastRender(bot, '1');
   assert.match(r.text, /\d{4}/, 'есть год в заголовке');
   assert.ok(flat(r).some((b) => b.text === 'Пн') && flat(r).some((b) => b.text === 'Вс'), 'ряд дней недели');
-  assert.ok(hasCb(r, 'lk:cal:connect'));
-  assert.ok(hasCb(r, 'lk:cal:export'));
-  assert.ok(hasCb(r, 'lk:cal:import'));
-  assert.ok(flat(r).some((b) => /Подключить Apple/.test(b.text)), 'кнопка подключения');
+  assert.ok(hasCb(r, 'lk:cal:today') && hasCb(r, 'lk:cal:list'), 'Сегодня и Ближайшие');
+  assert.ok(hasCb(r, 'lk:cal:conn'), 'экран Подключение');
+  assert.ok(!hasCb(r, 'lk:cal:export') && !hasCb(r, 'lk:cal:import'), 'ics-кнопки уехали внутрь Подключения');
+  assert.match(r.text, /<tg-emoji emoji-id="\d+">/, 'заголовок месяца с премиум-эмодзи');
 });
 
 test('cal: коннект Apple - тумблер (подключил -> ✅ + ссылка, ещё раз -> отвязал)', async () => {
   const s = new Store(tmpFile()); const u = user(s); const bot = fakeBot(s);
   await bot.lk.onCallback('1', 'lk:cal:connect', cbq('1'), s.getUser('1'));
-  let f = s.getFitness; // noop
   assert.equal(s.getUser('1').calConnected, true);
   assert.ok(s.getUser('1').calToken, 'токен создан');
-  assert.match(lastRender(bot, '1').text, /webcal:\/\/cal\.example\.io\/calendar\/[a-z0-9]+\.ics/i);
-  // ещё раз -> отвязка
+  let r = lastRender(bot, '1');
+  assert.match(r.text, /webcal:\/\/cal\.example\.io\/calendar\/[a-z0-9]+\.ics/i, 'ссылка подписки');
+  assert.match(r.text, /Настройки → Приложения → Календарь/, 'подробная инструкция');
+  assert.ok(flat(r).some((b) => /Отвязать/.test(b.text)), 'кнопка стала «Отвязать»');
+  assert.ok(hasCb(r, 'lk:cal:export') && hasCb(r, 'lk:cal:import'), 'выгрузка/загрузка тут же');
+  // ещё раз -> отвязка, остаёмся на том же экране
   await bot.lk.onCallback('1', 'lk:cal:connect', cbq('1'), s.getUser('1'));
   assert.equal(s.getUser('1').calConnected, false);
   assert.equal(s.getUser('1').calToken, null);
-  assert.match(lastRender(bot, '1').text, /[Оо]твяз/);
+  r = lastRender(bot, '1');
+  assert.match(r.text, /Подключение календаря/);
+  assert.ok(flat(r).some((b) => /Подключить Apple/.test(b.text)), 'кнопка снова «Подключить»');
 });
 
 test('cal: userByCalToken находит юзера по токену (для веб-фида)', async () => {

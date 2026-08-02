@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { esc } from './telegram-helpers.mjs';
+import { pe, peButton } from './premium-emoji.mjs';
 import { parseMessage } from './parser.mjs';
 import { userOffset, fmtUser, resolveWallDate, wall } from './tz.mjs';
 
@@ -47,7 +48,7 @@ export function createCalendarHandler(deps) {
   /* ---- Месячная сетка ---- */
 
   function monthText(user, y, m) {
-    return `📅 <b>${MONTHS[m]} ${y}</b>`;
+    return `${pe('calendarBtn')} <b>${MONTHS[m]} ${y}</b>`;
   }
 
   function monthKb(user, y, m) {
@@ -89,10 +90,15 @@ export function createCalendarHandler(deps) {
       rows.push(week);
     }
 
-    rows.push([{ text: '📆 Сегодня', callback_data: 'lk:cal:today' }, { text: '📋 Ближайшие', callback_data: 'lk:cal:list' }]);
-    const connected = !!user.calConnected;
-    rows.push([{ text: connected ? '✅ Apple Календарь' : '🔗 Подключить Apple Календарь', callback_data: 'lk:cal:connect' }]);
-    rows.push([{ text: '📤 Выгрузить .ics', callback_data: 'lk:cal:export' }, { text: '📥 Загрузить', callback_data: 'lk:cal:import' }]);
+    rows.push([
+      peButton('days', 'Сегодня', { callback_data: 'lk:cal:today' }),
+      peButton('eye', 'Ближайшие', { callback_data: 'lk:cal:list' }),
+    ]);
+    // Всё про Apple/ics - в отдельном экране «Подключение», чтобы сетка не тонула
+    // в кнопках. Галочка сразу показывает, подключена подписка или нет.
+    rows.push([
+      peButton('bolt', user.calConnected ? 'Подключение ✅' : 'Подключение', { callback_data: 'lk:cal:conn' }),
+    ]);
     rows.push([{ text: '‹ Назад', callback_data: 'lk:home' }]);
     return rows;
   }
@@ -102,7 +108,7 @@ export function createCalendarHandler(deps) {
     const evs = store.calEvents(user._chatId)
       .filter((e) => { const p = localParts(e.due, off); return p.y === y && p.m === m && p.d === d; })
       .sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
-    const head = `📅 <b>${d} ${MONTHS[m].toLowerCase()} ${y}</b>`;
+    const head = `${pe('calendarBtn')} <b>${d} ${MONTHS[m].toLowerCase()} ${y}</b>`;
     if (!evs.length) return `${head}\n\nНа этот день ничего не запланировано.`;
     const lines = evs.map((e) => {
       const p = localParts(e.due, off);
@@ -137,7 +143,7 @@ export function createCalendarHandler(deps) {
       ? evs.map((e) => `• ${esc(e.title || 'событие')} — ${esc(fmtUser(e.due, off, e.hasTime))}`).join('\n')
       : 'Пока ничего в календаре. Скажи, например: «встреча с другом завтра в 16, добавь в календарь».';
     const t = todayParts(user);
-    return render(chatId, messageId, `📋 <b>Ближайшие события</b>\n\n${body}`, [[{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }]]);
+    return render(chatId, messageId, `${pe('eye')} <b>Ближайшие события</b>\n\n${body}`, [[{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }]]);
   }
 
   /* ---- Подключение Apple Календаря (живая подписка) ---- */
@@ -148,32 +154,70 @@ export function createCalendarHandler(deps) {
     return { https, webcal };
   }
 
-  async function toggleConnect(chatId, messageId, user) {
-    const t = todayParts(user);
-    if (user.calConnected && user.calToken) {
-      store.setUser(String(chatId), { calConnected: false, calToken: null });
-      await render(chatId, messageId, '🔌 Отвязал Apple Календарь. Подписка больше не обновляется (в календаре можешь удалить её вручную).', [[{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }]]);
-      return;
+  // Экран «Подключение»: статус подписки, инструкция и обмен .ics в одном месте.
+  function connText(user) {
+    const on = !!(user.calConnected && user.calToken);
+    const lines = [`${pe('bolt')} <b>Подключение календаря</b>`, ''];
+    if (on) {
+      const { https, webcal } = feedUrls(user.calToken);
+      lines.push(
+        '✅ <b>Apple Календарь подключён</b> — события из бота сами приезжают в телефон.',
+        '',
+        `<a href="${esc(webcal)}">📲 Открыть подписку в Календаре</a>`,
+        '',
+        'Если ссылка не открылась, добавь вручную:',
+        '1. Настройки → Приложения → Календарь → Учётные записи',
+        '2. Добавить учётную запись → Другое → Подписной календарь',
+        '3. Вставь адрес:',
+        `<code>${esc(https)}</code>`,
+        '',
+        '<i>Обновляется автоматически, интервал задаёт iOS (обычно от часа). Работает и в Google Календаре: Другие календари → Добавить по URL.</i>',
+      );
+    } else {
+      lines.push(
+        'Подписка — это живая связь: добавил событие в боте, и оно само появилось в Календаре iPhone. Ничего выгружать каждый раз не нужно.',
+        '',
+        'Нажми «Подключить» — дам персональную ссылку и покажу, куда её вставить.',
+      );
     }
-    const token = (user.calToken || randomUUID().replace(/-/g, ''));
-    store.setUser(String(chatId), { calConnected: true, calToken: token });
-    const { https, webcal } = feedUrls(token);
-    const text = [
-      '✅ <b>Apple Календарь подключён</b>',
+    lines.push(
       '',
-      'Добавь этот календарь по подписке — и события из бота будут сами появляться в Календаре iPhone:',
-      '',
-      `<a href="${esc(webcal)}">📲 Открыть в Apple Календаре</a>`,
-      '',
-      'Или вручную: Настройки → Календарь → Учётные записи → Добавить учётную запись → Другое → Подписной календарь, и вставь ссылку:',
-      `<code>${esc(https)}</code>`,
-      '',
-      'Обновляется автоматически (интервал задаёт iOS). Нажми кнопку ещё раз, чтобы отвязать.',
-    ].join('\n');
-    await render(chatId, messageId, text, [
-      [{ text: '✅ Подключено (нажми, чтобы отвязать)', callback_data: 'lk:cal:connect' }],
-      [{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }],
-    ]);
+      `${pe('pen')} <b>Обмен файлами</b>`,
+      '• «Выгрузить .ics» — разовый файл со всеми событиями: открыл — события в календаре телефона.',
+      '• «Загрузить» — пришли мне .ics из любого календаря, я разберу и добавлю события к себе.',
+    );
+    return lines.join('\n');
+  }
+
+  function connKb(user) {
+    const on = !!(user.calConnected && user.calToken);
+    return [
+      [peButton('calendarBtn', on ? 'Отвязать Apple Календарь' : 'Подключить Apple Календарь', {
+        callback_data: 'lk:cal:connect',
+        ...(on ? { style: 'danger' } : { style: 'primary' }),
+      })],
+      [
+        peButton('pen', 'Выгрузить .ics', { callback_data: 'lk:cal:export' }),
+        peButton('food', 'Загрузить', { callback_data: 'lk:cal:import' }),
+      ],
+      [{ text: '‹ К календарю', callback_data: 'lk:cal' }],
+    ];
+  }
+
+  async function showConn(chatId, messageId, user) {
+    pending.delete(String(chatId));
+    return render(chatId, messageId, connText(user), connKb(user));
+  }
+
+  // Тумблер подписки: переключаем состояние и остаёмся на экране «Подключение» -
+  // там сразу видно новый статус и актуальная ссылка/инструкция.
+  async function toggleConnect(chatId, messageId, user) {
+    const on = !!(user.calConnected && user.calToken);
+    const patch = on
+      ? { calConnected: false, calToken: null }
+      : { calConnected: true, calToken: user.calToken || randomUUID().replace(/-/g, '') };
+    const fresh = store.setUser(String(chatId), patch);
+    await showConn(chatId, messageId, fresh);
   }
 
   /* ---- Выгрузка / загрузка ---- */
@@ -181,14 +225,14 @@ export function createCalendarHandler(deps) {
   async function exportIcs(chatId, messageId, user) {
     const evs = store.calEvents(String(chatId));
     const t = todayParts(user);
-    if (!evs.length) { await render(chatId, messageId, 'В календаре пока нет событий для выгрузки.', [[{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }]]); return; }
+    if (!evs.length) { await render(chatId, messageId, 'В календаре пока нет событий для выгрузки.', [[{ text: '‹ Назад', callback_data: 'lk:cal:conn' }]]); return; }
     try { await sendIcs(String(chatId), evs, 'calendar.ics'); }
     catch (e) { log?.error?.('[cal] export', e?.message); await send(chatId, 'Не смог собрать файл, попробуй ещё раз.'); }
   }
 
   async function importHint(chatId, messageId, user) {
     const t = todayParts(user);
-    await render(chatId, messageId, '📥 Пришли мне файл <b>.ics</b> (экспорт из любого календаря) — разберу и добавлю события в календарь.', [[{ text: '‹ К календарю', callback_data: `lk:cal:m:${t.y}-${t.m}` }]]);
+    await render(chatId, messageId, `${pe('food')} <b>Загрузить календарь</b>\n\nПришли мне файл <b>.ics</b> - экспорт из Apple Календаря, Google Календаря или любого другого. Я разберу события и добавлю их к себе.\n\n<i>В Apple Календаре: Файл → Экспорт. В Google: Настройки → Импорт и экспорт → Экспорт.</i>`, [[{ text: '‹ Назад', callback_data: 'lk:cal:conn' }]]);
   }
 
   // Импорт .ics: вызывается из роутера, когда прислали text/calendar. Возвращает N.
@@ -322,6 +366,7 @@ export function createCalendarHandler(deps) {
     if (data === 'lk:cal:tell') { pending.delete(id); await send(chatId, tellText(chatId, user)); return true; }
     if (data === 'lk:cal:nop') return true;
     if (data === 'lk:cal:list') { pending.delete(id); await showList(chatId, messageId, user); return true; }
+    if (data === 'lk:cal:conn') { await showConn(chatId, messageId, user); return true; }
     if (data === 'lk:cal:connect') { pending.delete(id); await toggleConnect(chatId, messageId, user); return true; }
     if (data === 'lk:cal:export') { pending.delete(id); await exportIcs(chatId, messageId, user); return true; }
     if (data === 'lk:cal:import') { pending.delete(id); await importHint(chatId, messageId, user); return true; }
