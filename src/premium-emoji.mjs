@@ -2,13 +2,15 @@
 // /id (см. telegram-idpicker.mjs) - там же лежит инструкция, как достать новые.
 //
 // ВАЖНО про Telegram:
-//  - работают ТОЛЬКО в тексте сообщения (parse_mode HTML, тег <tg-emoji>);
-//    в подписях инлайн-КНОПОК их нет - InlineKeyboardButton.text это обычная
-//    строка без разметки, поэтому кнопки оформляем обычными эмодзи;
-//  - тег обязан оборачивать РОВНО ОДИН обычный эмодзи - он же фолбэк, если
-//    у клиента/бота нет прав на премиум (вёрстка тогда не ломается);
-//  - у @SecondBrainNTGbot право подтверждено живой отправкой (в ответе API
-//    приходит entity type=custom_emoji).
+//  - в ТЕКСТЕ сообщения: тег <tg-emoji emoji-id="..">🙂</tg-emoji> (parse_mode
+//    HTML). Тег обязан оборачивать РОВНО ОДИН обычный эмодзи - он же фолбэк,
+//    если прав на премиум нет (вёрстка не ломается);
+//  - в КНОПКАХ: отдельное поле `icon_custom_emoji_id` у InlineKeyboardButton
+//    и KeyboardButton (иконка ПЕРЕД текстом). В сам `text` разметку класть
+//    нельзя - уедет сырым «<tg-emoji…>» (проверено живой отправкой);
+//  - право на премиум: бот с купленным на Fragment юзернеймом ЛИБО личные/
+//    групповые чаты, если у владельца бота есть Telegram Premium. У нас второе -
+//    подтверждено живой отправкой (в ответе API приходит entity custom_emoji).
 
 // key -> { id, fallback } (fallback = обычный эмодзи того же смысла)
 export const PREMIUM = {
@@ -17,7 +19,7 @@ export const PREMIUM = {
   money: { id: '5319268815152909865', fallback: '💸' }, // долги
   calendar: { id: '5321448751573795291', fallback: '📆' }, // встречи
   gift: { id: '5456174045923926926', fallback: '🎁' }, // вишлист
-  // Для кнопок ЛК (используем как обычные эмодзи - см. ограничение выше)
+  // Кнопки ЛК (уезжают в icon_custom_emoji_id, fallback - в текст кнопки)
   muscle: { id: '5307575053724950740', fallback: '💪' },
   moneyBtn: { id: '5382199784075448966', fallback: '💸' },
   giftBtn: { id: '5433837978306766664', fallback: '💝' },
@@ -35,4 +37,18 @@ export function pe(key) {
 // Обычный эмодзи того же смысла - для подписей кнопок.
 export function plain(key) {
   return PREMIUM[key]?.fallback || '';
+}
+
+/**
+ * Инлайн-кнопка с премиум-иконкой. Telegram рисует иконку ПЕРЕД текстом
+ * (icon_custom_emoji_id), поэтому эмодзи в сам text НЕ кладём - был бы дубль.
+ * Разметку (<tg-emoji>) в text класть нельзя: уедет сырым тегом.
+ * @param {string} key   ключ из PREMIUM
+ * @param {string} label подпись кнопки без эмодзи
+ * @param {object} extra остальные поля (callback_data, style: danger|success|primary)
+ */
+export function peButton(key, label, extra = {}) {
+  const e = PREMIUM[key];
+  if (!e) return { text: label, ...extra };
+  return { text: label, icon_custom_emoji_id: e.id, ...extra };
 }

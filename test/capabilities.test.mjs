@@ -218,3 +218,17 @@ test('stripTrailingQuestion: режет вопросы и в середине о
   assert.match(out, /Погода влияет/);
   assert.match(out, /Солнце бодрит/, 'текст после вопроса сохранён');
 });
+
+/* ---- Премиум-эмодзи оформления ---- */
+test('peButton: премиум-иконка кнопки через icon_custom_emoji_id, без дубля в тексте', async () => {
+  const { peButton, pe, PREMIUM } = await import('../src/premium-emoji.mjs');
+  const b = peButton('muscle', 'Фитнес', { callback_data: 'lk:fit' });
+  assert.equal(b.text, 'Фитнес', 'эмодзи в text не дублируем - иконку рисует Telegram');
+  assert.equal(b.icon_custom_emoji_id, PREMIUM.muscle.id);
+  assert.equal(b.callback_data, 'lk:fit');
+  assert.ok(!/tg-emoji/.test(b.text), 'разметки в тексте кнопки быть не должно - уедет сырым тегом');
+  // неизвестный ключ не роняет экран
+  assert.deepEqual(peButton('нетТакого', 'Ок', { callback_data: 'x' }), { text: 'Ок', callback_data: 'x' });
+  // а в ТЕКСТЕ сообщения - именно тег
+  assert.match(pe('gear'), /^<tg-emoji emoji-id="\d+">⚙️<\/tg-emoji>$/);
+});

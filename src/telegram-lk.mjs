@@ -17,7 +17,7 @@ import { esc } from './telegram-helpers.mjs';
 import { parseProduct as parseProductLive } from './wlparse.mjs';
 import { createFitnessHandler } from './telegram-fitness.mjs';
 import { createCalendarHandler } from './telegram-calendar.mjs';
-import { pe, plain } from './premium-emoji.mjs';
+import { pe, peButton } from './premium-emoji.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
@@ -36,17 +36,16 @@ export function createLkHandler(deps) {
 
   /* ---- Тексты и клавиатуры ---- */
 
-  // Кнопки: премиум-эмодзи в подписях НЕ поддерживаются (текст кнопки - обычная
-  // строка), поэтому берём обычные эмодзи тех же наборов. Раскладка 2x2.
+  // Кнопки с премиум-иконками (icon_custom_emoji_id), раскладка 2x2.
   function homeKb() {
     return [
       [
-        { text: `${plain('muscle')} Фитнес`, callback_data: 'lk:fit' },
-        { text: `${plain('calendarBtn')} Календарь`, callback_data: 'lk:cal' },
+        peButton('muscle', 'Фитнес', { callback_data: 'lk:fit' }),
+        peButton('calendarBtn', 'Календарь', { callback_data: 'lk:cal' }),
       ],
       [
-        { text: `${plain('moneyBtn')} Долги`, callback_data: 'lk:debts' },
-        { text: `${plain('giftBtn')} Вишлист`, callback_data: 'lk:wish' },
+        peButton('moneyBtn', 'Долги', { callback_data: 'lk:debts' }),
+        peButton('giftBtn', 'Вишлист', { callback_data: 'lk:wish' }),
       ],
     ];
   }
