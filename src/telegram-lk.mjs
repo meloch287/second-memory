@@ -76,9 +76,12 @@ export function createLkHandler(deps) {
     return `№${d.id} — ${who} ${sum}${due}`;
   }
 
+  // Заголовки внутренних экранов - с премиум-эмодзи (тег в ТЕКСТЕ сообщения).
+  const DEBTS_HEADER = `${pe('moneyBtn')} <b>Долги</b>`;
+
   function debtsText(debts, off) {
-    if (!debts.length) return '<b>💸 Долги</b>\n\nДолгов нет.';
-    return ['<b>💸 Долги</b>', '', ...debts.map((d) => debtLine(d, off))].join('\n');
+    if (!debts.length) return `${DEBTS_HEADER}\n\nДолгов нет.`;
+    return [DEBTS_HEADER, '', ...debts.map((d) => debtLine(d, off))].join('\n');
   }
 
   function debtsKb(debts) {
@@ -115,8 +118,8 @@ export function createLkHandler(deps) {
   }
 
   function wishText(items) {
-    if (!items.length) return '<b>🎁 Вишлист</b>\n\nВишлист пуст. Добавь первую хотелку 👇';
-    return [`<b>🎁 Вишлист (${items.length})</b>`, '', ...items.map(wishLine)].join('\n');
+    if (!items.length) return `${pe('wishHeader')} <b>Вишлист</b>\n\nВишлист пуст. Добавь первую хотелку 👇`;
+    return [`${pe('wishHeader')} <b>Вишлист (${items.length})</b>`, '', ...items.map(wishLine)].join('\n');
   }
 
   // Кнопка "посмотреть фото" открывает галерею по всем товарам (даже без фото -

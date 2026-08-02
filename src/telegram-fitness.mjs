@@ -182,7 +182,7 @@ export function createFitnessHandler(deps) {
       `🍽 Съедено: <b>${log.kcal}</b> / ${norm.kcal} ккал`,
       `${bar(log.kcal, norm.kcal)} ${kcalLeft ? `осталось ${kcalLeft}` : 'норма закрыта 👍'}`,
       '',
-      `💧 Вода: <b>${(log.water / 1000).toFixed(1)}</b> / ${(norm.water / 1000).toFixed(1)} л`,
+      `💦 Вода: <b>${(log.water / 1000).toFixed(1)}</b> / ${(norm.water / 1000).toFixed(1)} л`,
       `${bar(log.water, norm.water)} ${waterLeft ? `осталось ${waterLeft} мл` : 'норма закрыта 👍'}`,
     ];
     if (log.items.length) {
@@ -194,7 +194,7 @@ export function createFitnessHandler(deps) {
 
   function foodKb() {
     return [
-      [{ text: '＋ Еда', callback_data: 'lk:fit:food:meal' }, { text: '💧 +250', callback_data: 'lk:fit:food:w:250' }, { text: '💧 +500', callback_data: 'lk:fit:food:w:500' }],
+      [{ text: '＋ Еда', callback_data: 'lk:fit:food:meal' }, { text: '💦 +250', callback_data: 'lk:fit:food:w:250' }, { text: '💦 +500', callback_data: 'lk:fit:food:w:500' }],
       [{ text: '🍽 Разбивка по приёмам', callback_data: 'lk:fit:food:split' }, { text: '♻️ Сбросить день', callback_data: 'lk:fit:food:reset' }],
       [{ text: '‹ Назад', callback_data: 'lk:fit' }],
     ];
@@ -334,7 +334,7 @@ export function createFitnessHandler(deps) {
         if (!ml) { await send(chatId, 'Не понял сколько. Напиши «500», «стакан» или «0.5 л».'); return true; }
         pending.delete(id);
         bumpLog(chatId, user, { water: ml });
-        await send(chatId, `Записал ${ml} мл воды 💧`);
+        await send(chatId, `Записал ${ml} мл воды 💦`);
         await showFood(chatId, null, user);
         return true;
       }
