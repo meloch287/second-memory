@@ -190,21 +190,22 @@ test('Tolik e2e (held-out): real bot driven end-to-end via spy Telegram transpor
     });
 
     // ---- 2) «настройки» -> stats + Фитнес/Долги/Вишлист; Фитнес -> "в разработке" ----
-    await t.test('2) «настройки» shows stats lines and Фитнес/Долги/Вишлист buttons', async () => {
+    await t.test('2) «настройки» shows stats lines and 2x2 buttons with premium emoji', async () => {
       spy.pushMessage('настройки');
       await waitFor(() => /Личный кабинет/.test(lastRender(spy)?.text || ''));
       const r = lastRender(spy);
       console.log('[step2] sendMessage:', JSON.stringify({ text: r.text, kb: r.kb }));
       assert.equal(r.method, 'sendMessage');
-      assert.match(r.text, /Запросов Толику/);
       assert.match(r.text, /Фактов помню/);
-      assert.match(r.text, /Открытых долгов/);
-      assert.match(r.text, /Задач/);
+      assert.match(r.text, /Долгов/);
       assert.match(r.text, /Встреч/);
       assert.match(r.text, /Вишлист/);
+      // премиум-эмодзи оформления в тексте (в кнопках Telegram их не поддерживает)
+      assert.match(r.text, /<tg-emoji emoji-id="\d+">/, 'заголовок и строки с премиум-эмодзи');
       const flatData = r.kb.flat().map((b) => b.callback_data);
       const flatText = r.kb.flat().map((b) => b.text);
-      assert.deepEqual(flatData, ['lk:fit', 'lk:debts', 'lk:wish', 'lk:cal']);
+      assert.deepEqual(flatData, ['lk:fit', 'lk:cal', 'lk:debts', 'lk:wish'], 'раскладка 2x2');
+      assert.equal(r.kb.length, 2, 'два ряда: Фитнес+Календарь / Долги+Вишлист');
       assert.ok(flatText.some((x) => /Фитнес/.test(x)));
       assert.ok(flatText.some((x) => /Долги/.test(x)));
       assert.ok(flatText.some((x) => /Вишлист/.test(x)));

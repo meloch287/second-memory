@@ -17,6 +17,7 @@ import { esc } from './telegram-helpers.mjs';
 import { parseProduct as parseProductLive } from './wlparse.mjs';
 import { createFitnessHandler } from './telegram-fitness.mjs';
 import { createCalendarHandler } from './telegram-calendar.mjs';
+import { pe, plain } from './premium-emoji.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
@@ -35,26 +36,31 @@ export function createLkHandler(deps) {
 
   /* ---- Тексты и клавиатуры ---- */
 
+  // Кнопки: премиум-эмодзи в подписях НЕ поддерживаются (текст кнопки - обычная
+  // строка), поэтому берём обычные эмодзи тех же наборов. Раскладка 2x2.
   function homeKb() {
     return [
-      [{ text: '🏋️ Фитнес', callback_data: 'lk:fit' }],
-      [{ text: '💸 Долги', callback_data: 'lk:debts' }, { text: '🎁 Вишлист', callback_data: 'lk:wish' }],
-      [{ text: '📅 Календарь', callback_data: 'lk:cal' }],
+      [
+        { text: `${plain('muscle')} Фитнес`, callback_data: 'lk:fit' },
+        { text: `${plain('calendarBtn')} Календарь`, callback_data: 'lk:cal' },
+      ],
+      [
+        { text: `${plain('moneyBtn')} Долги`, callback_data: 'lk:debts' },
+        { text: `${plain('giftBtn')} Вишлист`, callback_data: 'lk:wish' },
+      ],
     ];
   }
 
+  // Текст ЛК - тут премиум-эмодзи работают (HTML + <tg-emoji>).
   function homeText(chatId) {
     const s = store.getStats(String(chatId));
     return [
-      '⚙️ <b>Личный кабинет</b>',
+      `${pe('gear')} <b>Личный кабинет</b>`,
       '',
-      `📊 Запросов Толику: ${s.requests}`,
-      `🧠 Фактов помню: ${s.facts}`,
-      `💸 Открытых долгов: ${s.openDebts}`,
-      `✅ Задач: ${s.openTasks}`,
-      `📅 Встреч: ${s.openMeetings}`,
-      `🎁 Вишлист: ${s.wishlist}`,
-      `📆 Со мной дней: ${s.days}`,
+      `${pe('brain')} Фактов помню: ${s.facts}`,
+      `${pe('money')} Долгов: ${s.openDebts}`,
+      `${pe('calendar')} Встреч: ${s.openMeetings}`,
+      `${pe('gift')} Вишлист: ${s.wishlist}`,
     ].join('\n');
   }
 
@@ -263,7 +269,10 @@ export function createLkHandler(deps) {
 
   async function openSettings(chatId, _user) {
     pending.delete(String(chatId));
-    return sendButtons(chatId, homeText(chatId), homeKb());
+    // НЕ sendButtons: он экранирует текст целиком, и премиум-эмодзи уехали бы
+    // сырым «&lt;tg-emoji…&gt;». homeText сам собирает безопасный HTML (внутри
+    // только числа из getStats), поэтому отправляем как есть.
+    return send(chatId, homeText(chatId), { reply_markup: { inline_keyboard: homeKb() } });
   }
 
   function pendingInput(chatId) {

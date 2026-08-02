@@ -150,7 +150,7 @@ test('голосовое «настройки» открывает ЛК (как 
 
     const r = spy.lastRender(CHAT);
     assert.match(r.text, /Личный кабинет/, 'голос попал в ЛК');
-    assert.deepEqual(r.kb.flat().map((b) => b.callback_data), ['lk:fit', 'lk:debts', 'lk:wish', 'lk:cal']);
+    assert.deepEqual(r.kb.flat().map((b) => b.callback_data), ['lk:fit', 'lk:cal', 'lk:debts', 'lk:wish']);
     assert.ok(
       !spy.textsTo(CHAT).some((t) => /Твои настройки/.test(t)),
       'старый settingsText (интент settings) не отправлялся'

@@ -70,17 +70,17 @@ test('openSettings: показывает статистику и кнопки (�
 
   const r = lastRender(bot, '1');
   assert.match(r.text, /Личный кабинет/);
-  assert.match(r.text, /Запросов Толику: 2/);
   assert.match(r.text, /Фактов помню: 1/);
-  assert.match(r.text, /Открытых долгов: 1/);
-  assert.match(r.text, /Задач: 1/);
+  assert.match(r.text, /Долгов: 1/);
   assert.match(r.text, /Встреч: 1/);
   assert.match(r.text, /Вишлист: 0/);
-  assert.match(r.text, /Со мной дней: \d/);
+  // премиум-эмодзи в тексте (в кнопках Telegram их не поддерживает)
+  assert.match(r.text, /<tg-emoji emoji-id="\d+">⚙️<\/tg-emoji>/, 'заголовок с премиум-эмодзи');
+  assert.match(r.text, /<tg-emoji emoji-id="\d+">🧠<\/tg-emoji>/);
 
   const flat = r.kb.flat().map((b) => b.callback_data);
-  assert.deepEqual(flat, ['lk:fit', 'lk:debts', 'lk:wish', 'lk:cal'], '4 кнопки: Фитнес/Долги/Вишлист/Календарь');
-  assert.equal(r.kb.length, 3, 'Фитнес, ряд Долги+Вишлист, Календарь');
+  assert.deepEqual(flat, ['lk:fit', 'lk:cal', 'lk:debts', 'lk:wish'], 'раскладка 2x2: Фитнес+Календарь / Долги+Вишлист');
+  assert.equal(r.kb.length, 2, 'два ряда по две кнопки');
 });
 
 test('lk:fit -> личный тренер (профиль/дни), фитнес реализован', async () => {
