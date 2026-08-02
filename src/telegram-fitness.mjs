@@ -5,6 +5,9 @@
 // делегированием колбэков lk:fit* и текстового ввода (fit_* pending).
 
 import { esc } from './telegram-helpers.mjs';
+import { pe, peButton } from './premium-emoji.mjs';
+import { dailyNorm, todayLog, dayKey, parseMeal, parseWater, bar } from './nutrition.mjs';
+import { userOffset } from './tz.mjs';
 
 const DAYS = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const DAY_FULL = ['', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
@@ -26,19 +29,32 @@ export function createFitnessHandler(deps) {
   function homeText(chatId) {
     const f = store.getFitness(chatId);
     const days = selectedDays(f);
-    const prof = f && (f.weight || f.height || f.goal)
-      ? `${f.sex === 'ж' ? '👩' : '🧑'} ${f.weight || '—'} кг · ${f.height || '—'} см${f.age ? ' · ' + f.age + ' лет' : ''}\n🎯 ${goalLabel(f?.goal)} · ${levelLabel(f?.level)}`
-      : 'Профиль не заполнен — начни с него 👇';
-    const daysLine = days.length ? days.map((d) => DAYS[d]).join(', ') : 'не выбраны';
-    const plan = planDays(f).length ? `готов на ${planDays(f).length} дн.` : 'не составлен';
-    return ['🏋️ <b>Личный тренер</b>', '', prof, `📅 Дни: ${daysLine}`, `📋 План: ${plan}`].join('\n');
+    const lines = [`${pe('muscle')} <b>Личный тренер</b>`, ''];
+    if (f && (f.weight || f.height || f.goal)) {
+      const body = [f.weight ? `${f.weight} кг` : null, f.height ? `${f.height} см` : null, f.age ? `${f.age} лет` : null]
+        .filter(Boolean)
+        .join(' · ');
+      if (body) lines.push(`${pe('star')} ${body}`);
+      lines.push(`${pe('target')} ${goalLabel(f?.goal)} · ${levelLabel(f?.level)}`);
+    } else {
+      lines.push(`${pe('star')} Профиль не заполнен — начни с него 👇`);
+    }
+    lines.push(`${pe('days')} Дни: ${days.length ? days.map((d) => DAYS[d]).join(', ') : 'не выбраны'}`);
+    lines.push(`${pe('pen')} План: ${planDays(f).length ? `готов на ${planDays(f).length} дн.` : 'не составлен'}`);
+    return lines.join('\n');
   }
 
   function homeKb(chatId) {
     const f = store.getFitness(chatId);
-    const rows = [[{ text: '📋 Профиль', callback_data: 'lk:fit:prof' }, { text: '📅 Дни', callback_data: 'lk:fit:days' }]];
-    if (profileReady(f) && selectedDays(f).length) rows.push([{ text: '⚡ Составить план', callback_data: 'lk:fit:gen' }]);
-    if (planDays(f).length) rows.push([{ text: '👁 Мой план', callback_data: 'lk:fit:plan:0' }]);
+    const rows = [[
+      peButton('pen', 'Профиль', { callback_data: 'lk:fit:prof' }),
+      peButton('days', 'Дни', { callback_data: 'lk:fit:days' }),
+    ]];
+    const second = [];
+    if (profileReady(f) && selectedDays(f).length) second.push(peButton('bolt', 'Составить план', { callback_data: 'lk:fit:gen' }));
+    if (planDays(f).length) second.push(peButton('eye', 'Мой план', { callback_data: 'lk:fit:plan:0' }));
+    if (second.length) rows.push(second);
+    rows.push([peButton('food', 'Питание', { callback_data: 'lk:fit:food' })]);
     rows.push([{ text: '‹ Назад', callback_data: 'lk:home' }]);
     return rows;
   }
@@ -140,6 +156,84 @@ export function createFitnessHandler(deps) {
     await showPlan(chatId, null, 0);
   }
 
+  /* ---- Питание: норма по профилю + дневной трекер ---- */
+
+  const isTrainingToday = (f, off) => {
+    const jsDow = new Date(Date.now() + off * 60000).getUTCDay();
+    return selectedDays(f).includes(jsDow === 0 ? 7 : jsDow);
+  };
+
+  function foodText(chatId, user) {
+    const f = store.getFitness(chatId);
+    const off = userOffset(user);
+    const norm = dailyNorm(f, isTrainingToday(f, off));
+    if (!norm) {
+      return `${pe('food')} <b>Питание</b>\n\nЧтобы посчитать норму, нужен профиль: вес и рост (возраст и пол уточнят цифры).`;
+    }
+    const log = todayLog(f, off);
+    const kcalLeft = Math.max(0, norm.kcal - log.kcal);
+    const waterLeft = Math.max(0, norm.water - log.water);
+    const lines = [
+      `${pe('food')} <b>Питание на сегодня</b>`,
+      '',
+      `${pe('target')} Норма: <b>${norm.kcal}</b> ккал${norm.trainingDay ? ' (тренировочный день)' : ''}`,
+      `Б ${norm.protein} г · Ж ${norm.fat} г · У ${norm.carbs} г`,
+      '',
+      `🍽 Съедено: <b>${log.kcal}</b> / ${norm.kcal} ккал`,
+      `${bar(log.kcal, norm.kcal)} ${kcalLeft ? `осталось ${kcalLeft}` : 'норма закрыта 👍'}`,
+      '',
+      `💧 Вода: <b>${(log.water / 1000).toFixed(1)}</b> / ${(norm.water / 1000).toFixed(1)} л`,
+      `${bar(log.water, norm.water)} ${waterLeft ? `осталось ${waterLeft} мл` : 'норма закрыта 👍'}`,
+    ];
+    if (log.items.length) {
+      lines.push('', 'Сегодня ел:', ...log.items.slice(-6).map((i) => `• ${esc(i.title)} — ${i.kcal} ккал`));
+    }
+    lines.push('', `<i>Ориентир по формуле Миффлина-Сан Жеора: обмен ${norm.bmr}, расход ${norm.tdee} ккал.</i>`);
+    return lines.join('\n');
+  }
+
+  function foodKb() {
+    return [
+      [{ text: '＋ Еда', callback_data: 'lk:fit:food:meal' }, { text: '💧 +250', callback_data: 'lk:fit:food:w:250' }, { text: '💧 +500', callback_data: 'lk:fit:food:w:500' }],
+      [{ text: '🍽 Разбивка по приёмам', callback_data: 'lk:fit:food:split' }, { text: '♻️ Сбросить день', callback_data: 'lk:fit:food:reset' }],
+      [{ text: '‹ Назад', callback_data: 'lk:fit' }],
+    ];
+  }
+
+  // Обновить дневной трекер (вода/еда) с авто-сбросом при смене даты.
+  function bumpLog(chatId, user, patch) {
+    const off = userOffset(user);
+    const f = store.getFitness(chatId);
+    const log = todayLog(f, off);
+    const next = {
+      date: dayKey(off),
+      water: log.water + (patch.water || 0),
+      kcal: log.kcal + (patch.kcal || 0),
+      items: patch.item ? [...log.items, patch.item].slice(-20) : log.items,
+    };
+    store.setFitness(chatId, { log: next });
+    return next;
+  }
+
+  async function showFood(chatId, messageId, user) {
+    pending.delete(String(chatId));
+    return render(chatId, messageId, foodText(chatId, user), foodKb());
+  }
+
+  function splitText(chatId, user) {
+    const f = store.getFitness(chatId);
+    const norm = dailyNorm(f, isTrainingToday(f, userOffset(user)));
+    if (!norm) return 'Сначала заполни профиль (вес и рост).';
+    const names = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
+    return [
+      `🍽 <b>Разбивка ${norm.kcal} ккал</b>`,
+      '',
+      ...norm.meals.map((k, i) => `${names[i]}: <b>${k}</b> ккал`),
+      '',
+      `Белок за день: ${norm.protein} г (примерно ${Math.round(norm.protein / 4)} г на приём).`,
+    ].join('\n');
+  }
+
   /* ---- Экраны ---- */
 
   async function showFit(chatId, messageId) {
@@ -170,6 +264,31 @@ export function createFitnessHandler(deps) {
     if (data === 'lk:fit:days') { pending.delete(id); await render(chatId, messageId, 'Отметь дни тренировок (жми, чтобы включить/выключить):', daysKb(chatId)); return true; }
     if (data === 'lk:fit:gen') { pending.delete(id); await generate(chatId, messageId, user); return true; }
     if (data === 'lk:fit:nop') return true;
+
+    /* ---- Питание ---- */
+    if (data === 'lk:fit:food') { await showFood(chatId, messageId, user); return true; }
+    if (data === 'lk:fit:food:split') {
+      pending.delete(id);
+      await render(chatId, messageId, splitText(chatId, user), [[{ text: '‹ Назад', callback_data: 'lk:fit:food' }]]);
+      return true;
+    }
+    if ((m = data.match(/^lk:fit:food:w:(\d+)$/))) {
+      bumpLog(chatId, user, { water: Number(m[1]) });
+      await showFood(chatId, messageId, user);
+      return true;
+    }
+    if (data === 'lk:fit:food:meal') {
+      pending.set(id, { mode: 'fit_meal' });
+      await render(chatId, messageId, 'Что съел? Напиши калории и (по желанию) название: «омлет 350» или просто «600».', [
+        [{ text: '‹ Назад', callback_data: 'lk:fit:food' }],
+      ]);
+      return true;
+    }
+    if (data === 'lk:fit:food:reset') {
+      store.setFitness(chatId, { log: { date: dayKey(userOffset(user)), water: 0, kcal: 0, items: [] } });
+      await showFood(chatId, messageId, user);
+      return true;
+    }
 
     if ((m = data.match(/^lk:fit:plan:(\d+)$/))) { pending.delete(id); await showPlan(chatId, messageId, Number(m[1])); return true; }
 
@@ -205,6 +324,29 @@ export function createFitnessHandler(deps) {
     const id = String(chatId);
     const p = pending.get(id);
     if (!p || !/^fit_/.test(p.mode)) return false;
+
+    // Приём пищи: «омлет 350», «600», «выпил 500 мл» (воду тоже ловим тут).
+    if (p.mode === 'fit_meal') {
+      const t = String(text);
+      const isWater = /(вод|выпил|стакан|бутыл|попил)/i.test(t.replace(/ё/g, 'е'));
+      if (isWater) {
+        const ml = parseWater(t);
+        if (!ml) { await send(chatId, 'Не понял сколько. Напиши «500», «стакан» или «0.5 л».'); return true; }
+        pending.delete(id);
+        bumpLog(chatId, user, { water: ml });
+        await send(chatId, `Записал ${ml} мл воды 💧`);
+        await showFood(chatId, null, user);
+        return true;
+      }
+      const meal = parseMeal(t);
+      if (!meal) { await send(chatId, 'Не понял калории. Напиши, например «омлет 350» или просто «600».'); return true; }
+      pending.delete(id);
+      bumpLog(chatId, user, { kcal: meal.kcal, item: meal });
+      await send(chatId, `Записал: ${esc(meal.title)} — ${meal.kcal} ккал 🍽`);
+      await showFood(chatId, null, user);
+      return true;
+    }
+
     const field = p.mode.slice(4); // weight | height | age
     const num = parseInt(String(text).replace(/[^\d]/g, ''), 10);
     const ok = Number.isFinite(num) && (field === 'weight' ? num >= 30 && num <= 400 : field === 'height' ? num >= 100 && num <= 250 : num >= 8 && num <= 120);

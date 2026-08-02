@@ -157,3 +157,100 @@ test('fit: не-фитнес ввод не перехватывается (об�
   // нет активного fit-pending -> consumeInput не должен возвращать true из-за фитнеса
   assert.equal(await bot.lk.consumeInput('1', s.getUser('1'), 'просто текст'), false);
 });
+
+/* ---- Питание: норма по профилю + дневной трекер ---- */
+
+test('fit: экран Питание считает норму по профилю', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, age: 20, sex: 'м', goal: 'масса', level: 'новичок', days: [1, 3, 5] });
+  await bot.lk.onCallback('1', 'lk:fit:food', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /Питание на сегодня/);
+  assert.match(r.text, /Норма: <b>\d{4}<\/b> ккал/);
+  assert.match(r.text, /Б \d+ г · Ж \d+ г · У \d+ г/);
+  assert.match(r.text, /Вода/);
+  assert.ok(hasCb(r, 'lk:fit:food:w:500'));
+  assert.ok(hasCb(r, 'lk:fit:food:meal'));
+});
+
+test('fit: Питание без профиля просит заполнить, цифр не выдумывает', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  await bot.lk.onCallback('1', 'lk:fit:food', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /нужен профиль/i);
+  assert.ok(!/Норма: <b>\d/.test(r.text), 'нормы без данных нет');
+});
+
+test('fit: вода +500 копится и переживает перезаход', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, goal: 'масса', days: [1] });
+  await bot.lk.onCallback('1', 'lk:fit:food:w:500', cbq('1'), s.getUser('1'));
+  await bot.lk.onCallback('1', 'lk:fit:food:w:250', cbq('1'), s.getUser('1'));
+  assert.equal(s.getFitness('1').log.water, 750);
+  assert.match(lastRender(bot, '1').text, /Вода: <b>0\.8<\/b>/, 'показывает 0.75 -> 0.8 л');
+});
+
+test('fit: «омлет 480» пишется в дневник калорий', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, goal: 'масса', days: [1] });
+  await bot.lk.onCallback('1', 'lk:fit:food:meal', cbq('1'), s.getUser('1'));
+  assert.equal(bot.lk.pendingInput('1'), true);
+  assert.equal(await bot.lk.consumeInput('1', s.getUser('1'), 'омлет с беконом 480'), true);
+  const f = s.getFitness('1');
+  assert.equal(f.log.kcal, 480);
+  assert.equal(f.log.items.at(-1).title, 'омлет с беконом');
+  assert.match(lastRender(bot, '1').text, /Съедено: <b>480<\/b>/);
+});
+
+test('fit: воду можно записать словами в том же диалоге', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, goal: 'масса', days: [1] });
+  await bot.lk.onCallback('1', 'lk:fit:food:meal', cbq('1'), s.getUser('1'));
+  await bot.lk.consumeInput('1', s.getUser('1'), 'выпил стакан воды');
+  assert.equal(s.getFitness('1').log.water, 250);
+});
+
+test('fit: сброс дня обнуляет трекер', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, goal: 'масса', days: [1], log: { date: '2020-01-01', water: 1, kcal: 1, items: [] } });
+  await bot.lk.onCallback('1', 'lk:fit:food:w:250', cbq('1'), s.getUser('1'));
+  assert.equal(s.getFitness('1').log.water, 250, 'вчерашний лог не суммируется');
+  await bot.lk.onCallback('1', 'lk:fit:food:reset', cbq('1'), s.getUser('1'));
+  assert.equal(s.getFitness('1').log.water, 0);
+  assert.equal(s.getFitness('1').log.kcal, 0);
+});
+
+test('fit: разбивка по приёмам', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  s.setUser('1', { name: 'Саня', tzOffset: 180, step: null });
+  s.setFitness('1', { weight: 72, height: 181, goal: 'масса', days: [1] });
+  await bot.lk.onCallback('1', 'lk:fit:food:split', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /Завтрак: <b>\d+<\/b> ккал/);
+  assert.match(r.text, /Перекус/);
+});
+
+test('fit: главная тренера - премиум-иконки на кнопках, Питание всегда есть', async () => {
+  const s = new Store(tmpFile());
+  const bot = fakeBot(s);
+  await bot.lk.onCallback('1', 'lk:fit', cbq('1'), s.getUser('1'));
+  const r = lastRender(bot, '1');
+  assert.match(r.text, /Личный тренер/);
+  assert.match(r.text, /<tg-emoji emoji-id="\d+">/, 'премиум-эмодзи в тексте');
+  const btns = flat(r);
+  assert.ok(btns.every((b) => b.callback_data === 'lk:home' || b.icon_custom_emoji_id), 'у разделов премиум-иконки');
+  assert.ok(hasCb(r, 'lk:fit:food'));
+});
