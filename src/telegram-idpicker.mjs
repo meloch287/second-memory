@@ -17,8 +17,9 @@
 
 import { esc } from './telegram-helpers.mjs';
 
-// Секретные алиасы: в меню команд их нет.
-export const ID_CMD = /^\/(?:id|stickerid|emojiid|ids)(?:@\w+)?$/i;
+// Секретные алиасы: в меню команд их нет. Хвост после команды разрешён -
+// самый частый сценарий «/id 🏋️» (команда и премиум-эмодзи одним сообщением).
+export const ID_CMD = /^\/(?:id|stickerid|emojiid|ids)(?:@\w+)?(?:\s|$|\P{L})/iu;
 
 export function createIdPicker(deps) {
   const { send, api, log } = deps;
@@ -29,8 +30,18 @@ export function createIdPicker(deps) {
 
   const DONE_KB = { inline_keyboard: [[{ text: '✅ Готово', callback_data: 'idp:off' }]] };
 
-  async function start(chatId) {
+  // msg передаём, чтобы обработать ВЛОЖЕНИЯ ТОГО ЖЕ сообщения: «/id 🏋️» или
+  // команда реплаем на стикер - юзеру не нужно слать вторым сообщением.
+  async function start(chatId, msg = null) {
     active.add(String(chatId));
+
+    if (msg) {
+      const inline = await reportFrom(chatId, msg);
+      if (inline) return inline;
+      const reply = msg.reply_to_message ? await reportFrom(chatId, msg.reply_to_message) : null;
+      if (reply) return reply;
+    }
+
     await send(
       chatId,
       [
@@ -101,15 +112,13 @@ export function createIdPicker(deps) {
     return lines.join('\n').trim();
   }
 
-  // Перехват сообщения в режиме пипетки. true = сообщение обработано.
-  async function consume(chatId, msg) {
-    if (!isOn(chatId)) return false;
-
+  // Отдать ID из любого сообщения (стикер или премиум-эмодзи). null - нечего.
+  async function reportFrom(chatId, msg) {
+    if (!msg) return null;
     if (msg.sticker) {
       await send(chatId, stickerReport(msg.sticker), { reply_markup: DONE_KB });
       return true;
     }
-
     const entities = msg.entities || msg.caption_entities || [];
     const text = msg.text || msg.caption || '';
     if (entities.some((e) => e.type === 'custom_emoji')) {
@@ -119,6 +128,15 @@ export function createIdPicker(deps) {
         return true;
       }
     }
+    return null;
+  }
+
+  // Перехват сообщения в режиме пипетки. true = сообщение обработано.
+  async function consume(chatId, msg) {
+    if (!isOn(chatId)) return false;
+
+    if (await reportFrom(chatId, msg)) return true;
+    const text = msg.text || msg.caption || '';
 
     // Выход по слову или команде - иначе пипетка перехватывала бы весь диалог.
     const t = String(text).trim().toLowerCase().replace(/ё/g, 'е');

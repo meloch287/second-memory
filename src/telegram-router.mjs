@@ -60,7 +60,7 @@ export function createMessageRouter(deps) {
     // Секретная пипетка ID (стикеры/премиум-эмодзи): пока включена, забирает
     // сообщения себе. Команду /id ловим тут же - в список команд она не входит.
     if (typeof msg.text === 'string' && ID_CMD.test(msg.text.trim())) {
-      if (user && !user.step) return idPicker.start(chatId);
+      if (user && !user.step) return idPicker.start(chatId, msg);
     }
     if (idPicker && (await idPicker.consume(chatId, msg))) return;
 

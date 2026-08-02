@@ -34,6 +34,7 @@ function boot() {
     store, calls, bot,
     text: (c, t, entities) => queue.push({ update_id: uid++, message: { ...base(c), text: t, ...(entities ? { entities } : {}) } }),
     sticker: (c, s) => queue.push({ update_id: uid++, message: { ...base(c), sticker: s } }),
+    replyText: (c, txt, reply) => queue.push({ update_id: uid++, message: { ...base(c), text: txt, reply_to_message: { message_id: 999, chat: { id: c }, ...reply } } }),
     cb: (c, data) => queue.push({ update_id: uid++, callback_query: { id: 'x', from: { id: c }, message: { message_id: 1, chat: { id: c } }, data } }),
     texts: (c) => calls.filter((x) => x.m === 'sendMessage' && String(x.p.chat_id) === String(c)).map((x) => x.p.text),
     restore() { bot?.stop?.(); global.fetch = original; },
@@ -106,4 +107,40 @@ test('без включённой пипетки стикеры идут обы�
     // и стикер выучен в библиотеку, как раньше
     assert.ok(h.store.data.meta.stickerLib?.['😀']?.includes('XYZ'), 'learnSticker отработал');
   } finally { h.restore(); }
+});
+
+test('«/id 🏋️» одним сообщением сразу отдаёт custom_emoji_id (баг со скриншота)', async () => {
+  const h = boot();
+  try {
+    h.store.setUser('60', { name: 'Саня', botName: 'Толик', tzOffset: 180, step: null });
+    // Telegram шлёт «/id » + премиум-эмодзи: entity указывает на позицию эмодзи
+    h.text(60, '/id 🏋️', [
+      { type: 'bot_command', offset: 0, length: 3 },
+      { type: 'custom_emoji', offset: 4, length: 2, custom_emoji_id: '5368324170671202286' },
+    ]);
+    await waitFor(() => h.texts(60).some((t) => /5368324170671202286/.test(t)));
+    const last = h.texts(60).at(-1);
+    assert.match(last, /5368324170671202286/, 'ID выдан сразу, без второго сообщения');
+    assert.match(last, /tg-emoji emoji-id/);
+    assert.ok(!/айди со штангой|Ого/.test(last), 'не ушло в обычный разговор');
+  } finally { h.restore(); }
+});
+
+test('/id реплаем на стикер отдаёт его file_id', async () => {
+  const h = boot();
+  try {
+    h.store.setUser('61', { name: 'Саня', botName: 'Толик', tzOffset: 180, step: null });
+    h.replyText(61, '/id', { sticker: { file_id: 'REPLYSTK', file_unique_id: 'ru1', type: 'regular', emoji: '💪', set_name: 'GymPack' } });
+    await waitFor(() => h.texts(61).some((t) => /REPLYSTK/.test(t)));
+    assert.match(h.texts(61).at(-1), /REPLYSTK/);
+    assert.match(h.texts(61).at(-1), /GymPack/);
+  } finally { h.restore(); }
+});
+
+test('ID_CMD: команда с хвостом матчится, «/idea» - нет', () => {
+  assert.ok(ID_CMD.test('/id 🏋️'));
+  assert.ok(ID_CMD.test('/id'));
+  assert.ok(ID_CMD.test('/emojiid 😀'));
+  assert.ok(!ID_CMD.test('/idea новая'));
+  assert.ok(!ID_CMD.test('/identity'));
 });
