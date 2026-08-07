@@ -598,6 +598,18 @@ export function startTelegramBot(store, token, log = console) {
   // Очередь на каждый чат: внутри чата сообщения обрабатываются по порядку,
   // но один зависший ответ не блокирует остальные чаты и приём апдейтов.
   const chatQueues = new Map();
+  // Команды, которые не ходят в ИИ и не зависят от порядка сообщений.
+  const FAST_CMD = /^\/(?:settings|help|start|admin|id|stickerid|emojiid|ids|reset)(?:@\w+)?\s*$/i;
+  const isFastCommand = (msg) =>
+    msg?.chat?.type === 'private' && typeof msg.text === 'string' && FAST_CMD.test(msg.text.trim());
+
+  // Мимо очереди, но с тем же логом ошибок.
+  function runNow(chatKey, work) {
+    Promise.resolve()
+      .then(work)
+      .catch((e) => log.error('[telegram] flow', chatKey, e.message));
+  }
+
   function enqueue(chatKey, work) {
     const prev = chatQueues.get(chatKey) || Promise.resolve();
     const queued = Date.now();
@@ -644,8 +656,19 @@ export function startTelegramBot(store, token, log = console) {
           const chatKey = String(
             update.message?.chat?.id ?? update.callback_query?.message?.chat?.id ?? 'unknown'
           );
-          if (update.message) enqueue(chatKey, () => onMessage(update.message));
-          else if (update.callback_query) enqueue(chatKey, () => onCallback(update.callback_query));
+          // Очередь на чат последовательная - иначе разговор путается. Но
+          // ЛК, кнопки и служебные команды - это чистая локальная работа
+          // (200-400мс), и стоять 11 секунд за ответом ИИ им незачем: именно
+          // так «/settings шёл миллион лет». Пускаем их мимо очереди.
+          // Только в личке: в группах порядок и тема сообщения важнее.
+          if (update.callback_query) {
+            const cb = update.callback_query;
+            if (cb.message?.chat?.type === 'private') runNow(chatKey, () => onCallback(cb));
+            else enqueue(chatKey, () => onCallback(cb));
+          } else if (update.message) {
+            if (isFastCommand(update.message)) runNow(chatKey, () => onMessage(update.message));
+            else enqueue(chatKey, () => onMessage(update.message));
+          }
         }
       } catch (e) {
         log.error('[telegram]', e.message);
