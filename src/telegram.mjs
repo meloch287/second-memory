@@ -43,21 +43,42 @@ export function startTelegramBot(store, token, log = console) {
   // Таймаут на каждый запрос к Telegram: без него зависший вызов (медленный
   // прокси) стопорил бота молча. getUpdates - длинный (long poll), остальное
   // короткое. Аборт роняет вызов, а цикл/обработчик ловит и продолжает.
-  const api = async (method, params) => {
+  // Сеть до Telegram рвётся: node переиспользует keep-alive соединение, а фронт
+  // его закрывает - первая же попытка падает с «fetch failed». В логах это было
+  // ~14 раз в час: long polling переподключался (бот «тормозил»), а сообщения
+  // из flow терялись совсем. Поэтому сетевые сбои переигрываем сами.
+  const NET_ERR = /fetch failed|ECONNRESET|socket hang up|ETIMEDOUT|EPIPE|ENOTFOUND|other side closed|terminated/i;
+  const apiOnce = async (method, params, timeoutMs) => {
     const controller = new AbortController();
-    const timeoutMs = method === 'getUpdates' ? 35000 : 15000;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
         method: 'POST',
         signal: controller.signal,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', connection: 'close' },
         body: JSON.stringify(params),
       });
       return res.json();
     } finally {
       clearTimeout(timer);
     }
+  };
+  const api = async (method, params) => {
+    const timeoutMs = method === 'getUpdates' ? 35000 : 15000;
+    // getUpdates переигрывать не нужно - его цикл сам сделает следующий заход
+    const tries = method === 'getUpdates' ? 1 : 3;
+    let lastError;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await apiOnce(method, params, timeoutMs);
+      } catch (e) {
+        lastError = e;
+        const cause = e?.cause?.message || '';
+        if (!NET_ERR.test(e?.message || '') && !NET_ERR.test(cause)) throw e;
+        if (i < tries - 1) await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+      }
+    }
+    throw lastError;
   };
 
   // Топики форум-групп: пока обрабатывается сообщение из темы, все ответы
