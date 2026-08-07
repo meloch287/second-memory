@@ -270,6 +270,26 @@ export function createMessageRouter(deps) {
       // Deep-link «Подключить Telegram» из веба: /start sm-<token>. Привязываем
       // этот чат к веб-профилю и переносим ВСЮ веб-память сюда (общая память).
       const param = text.split(/\s+/)[1] || '';
+      // Watch Films (specca.online): deep-link «/start wf_<nonce>». Подтверждаем
+      // привязку в соседнем сервисе и выходим — своей памяти это не касается.
+      // Блок живёт в репозитории, а не заплаткой на проде: раньше его правили
+      // прямо на сервере, и очередной деплой его стирал. Вход в Watch Films
+      // отваливался молча — .env с ключами деплой переживал, а код нет.
+      if (param.startsWith('wf_') && process.env.WF_CALLBACK_URL && process.env.WF_CALLBACK_SECRET) {
+        const wfNonce = param.slice(3);
+        try {
+          const r = await fetch(process.env.WF_CALLBACK_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-auth-secret': process.env.WF_CALLBACK_SECRET },
+            body: JSON.stringify({ nonce: wfNonce, telegramId: Number(chatId), telegramName: (user && user.name) || '' }),
+          });
+          return send(chatId, r.ok
+            ? '✅ Вход в Watch Films подтверждён — возвращайтесь в браузер.'
+            : '⚠️ Ссылка устарела. Откройте Watch Films и начните вход заново.');
+        } catch {
+          return send(chatId, '⚠️ Не удалось подтвердить вход. Попробуйте ещё раз.');
+        }
+      }
       const tok = param.startsWith('sm-') ? param.slice(3) : null;
       const dir = tok ? consumeTgLink(store, tok, chatId) : null;
       if (dir) {
