@@ -12,6 +12,7 @@ import { ID_CMD } from './telegram-idpicker.mjs';
 import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel } from './adminlog.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
+import { parseRemember, rememberEcho } from './remember.mjs';
 
 export function createMessageRouter(deps) {
   const {
@@ -36,6 +37,12 @@ export function createMessageRouter(deps) {
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
     // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)
     if (await lk.consumeInput(id, user, text)) return;
+    // «запомни ...» - пишем сразу и дословно, не дожидаясь фонового worker'а
+    const note = parseRemember(text);
+    if (note) {
+      store.addFacts([{ chatId: id, text: note }]);
+      return send(id, `записал ✍️\n<i>${esc(rememberEcho(note))}</i>`);
+    }
     // Добавление события в календарь по ключевому слову «календарь» (с переспросом).
     // Только по ключевому слову - иначе обычные встречи не сыпятся в календарь.
     if (await lk.tryCalendar(id, user, text)) return;

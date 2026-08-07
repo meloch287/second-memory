@@ -4,7 +4,21 @@
 // chatCompletion, AUDIO, WORKER, fmtLocal, friendSystem, STYLE_FMT).
 
 import { userOffset, fmtUser } from './tz.mjs';
-import { ask, askWorker, chatCompletion, AUDIO, fmtLocal, friendSystem, STYLE_FMT } from './ai.mjs';
+import { ask, chatCompletion, AUDIO, TEXT, WORKER, fmtLocal, friendSystem, STYLE_FMT } from './ai.mjs';
+
+// Фоновые задачи могут ходить на свой шлюз. Когда он лежит, молча копится
+// необработанное сырьё - память бота встаёт, а человек этого не видит.
+// Поэтому при отказе повторяем на основном провайдере.
+async function askWorker(messages, opts) {
+  const w = WORKER();
+  const main = TEXT();
+  try {
+    return await chatCompletion(w, messages, opts);
+  } catch (e) {
+    if ((w.url === main.url && w.model === main.model) || !main.key) throw e;
+    return chatCompletion(main, messages, opts);
+  }
+}
 
 // Спецификация графика по памяти чата: ИИ выбирает данные и тип.
 // null - если по памяти нечего рисовать.

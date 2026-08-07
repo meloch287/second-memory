@@ -4,7 +4,7 @@
 // Рассуждения reasoning-моделей в <think>-тегах всё равно вырезаем: провайдера
 // можно сменить через AI_BASE_URL/AI_MODEL, не трогая код.
 
-const TEXT = () => ({
+export const TEXT = () => ({
   key: process.env.AI_API_KEY,
   url: process.env.AI_BASE_URL || 'https://api.polza.ai/v1',
   model: process.env.AI_MODEL || 'google/gemini-2.5-flash',
@@ -196,20 +196,6 @@ export async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutM
 
 export const ask = (messages, opts) => chatCompletion(TEXT(), messages, opts);
 
-// Фоновые задачи ходят на свой (часто более дешёвый) шлюз. Когда он лежит,
-// молча копится необработанное сырьё - память бота встаёт, а пользователь
-// этого не видит. Поэтому при отказе повторяем на основном провайдере.
-export async function askWorker(messages, opts) {
-  const w = WORKER();
-  const main = TEXT();
-  try {
-    return await chatCompletion(w, messages, opts);
-  } catch (e) {
-    const sameGate = w.url === main.url && w.model === main.model;
-    if (sameGate || !main.key) throw e;
-    return chatCompletion(main, messages, opts);
-  }
-}
 
 const pad = (n) => String(n).padStart(2, '0');
 
