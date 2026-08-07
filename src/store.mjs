@@ -31,7 +31,7 @@ const keyV2 = (salt) => scryptSync(process.env.SM_ENCRYPTION_KEY, salt, 32);
 export class Store {
   constructor(file) {
     this.file = file;
-    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [], wishlist: [], fitness: {} };
+    this.data = { seq: 0, entries: [], history: [], users: {}, raw: [], facts: [], personas: {}, meta: {}, recurring: [], wishlist: [], fitness: {}, adminLog: [] };
     this._dirty = false;
     this._saveTimer = null;
     this.load();
@@ -82,6 +82,7 @@ export class Store {
         if (!Array.isArray(parsed.recurring)) parsed.recurring = [];
         if (!Array.isArray(parsed.wishlist)) parsed.wishlist = [];
         if (!parsed.fitness || typeof parsed.fitness !== 'object') parsed.fitness = {};
+        if (!Array.isArray(parsed.adminLog)) parsed.adminLog = [];
         this.data = parsed;
       }
     } catch (e) {

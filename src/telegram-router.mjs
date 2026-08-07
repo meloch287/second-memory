@@ -9,6 +9,7 @@ import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { parseIcs } from './ics.mjs';
 import { ID_CMD } from './telegram-idpicker.mjs';
+import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage } from './adminlog.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 
@@ -19,7 +20,7 @@ export function createMessageRouter(deps) {
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker,
+    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker, audioChoice, isAudioFile, audioInfo,
   } = deps;
 
   // ЕДИНАЯ маршрутизация готового текста - и набранного руками (onMessage),
@@ -43,7 +44,59 @@ export function createMessageRouter(deps) {
     return friendFlow(id, text);
   }
 
+  // Владелец бота: только ему доступна команда /admin. Берём из окружения,
+  // без него режим недоступен никому.
+  const OWNER = String(process.env.OWNER_CHAT_ID || '');
+  const isOwner = (msg) => OWNER && String(msg?.from?.id || '') === OWNER;
+
+  function adminPanelText(chatId, title) {
+    const on = adminLogOn(store, chatId);
+    const s = adminLogStats(store, chatId);
+    const kinds = Object.entries(s.byKind).map(([k, n]) => `${k}: ${n}`).join(', ') || 'пусто';
+    const people = Object.entries(s.byUser).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([w, n]) => `${w} - ${n}`).join('\n') || 'никого';
+    return [
+      `🛡 <b>Админ-режим</b>${title ? ' · ' + esc(title) : ''}`,
+      '',
+      on ? '🟢 Запись ВКЛЮЧЕНА - пишу в базу всё: текст, фото, видео, файлы, кто и когда' : '🔴 Запись выключена',
+      '',
+      `Записей в этом чате: <b>${s.total}</b>`,
+      `Типы: ${esc(kinds)}`,
+      '',
+      'Кто писал:',
+      esc(people),
+    ].join('\n');
+  }
+  const adminPanelKb = (chatId) => [
+    [{ text: adminLogOn(store, chatId) ? '🔴 Выключить запись' : '🟢 Включить запись', callback_data: 'adm:toggle' }],
+    [{ text: '📊 Последние 20', callback_data: 'adm:last' }, { text: '📥 Выгрузить JSON', callback_data: 'adm:dump' }],
+  ];
+
   async function onMessage(msg) {
+    // Админ-журнал: пишем ВСЁ, что пришло в чат, до любой другой обработки -
+    // иначе групповые сообщения ушли бы в groupFlow мимо журнала.
+    try {
+      const cid = msg?.chat?.id;
+      if (cid != null && adminLogOn(store, cid)) {
+        const d = describeMessage(msg);
+        if (d) logAdmin(store, {
+          ...d,
+          chatId: cid,
+          chatTitle: msg.chat.title || null,
+          userId: msg.from?.id,
+          username: msg.from?.username || null,
+          name: msg.from?.first_name || null,
+        });
+      }
+    } catch (e) { log.error('[admin] log', e.message); }
+
+    // /admin - панель владельца. Работает и в личке, и в группе.
+    if (typeof msg.text === 'string' && /^\/admin(?:@\w+)?\b/i.test(msg.text.trim())) {
+      if (!isOwner(msg)) return; // чужим молчим, команды как будто нет
+      return send(msg.chat.id, adminPanelText(msg.chat.id, msg.chat.title), {
+        reply_markup: { inline_keyboard: adminPanelKb(msg.chat.id) },
+      });
+    }
+
     if (isGroupChat(msg)) {
       // тема форум-группы: ответы уходят в неё же
       if (msg.message_thread_id) activeThread.set(String(msg.chat.id), msg.message_thread_id);
@@ -72,11 +125,12 @@ export function createMessageRouter(deps) {
     if (msg.voice) {
       return audioFlow(chatId, user, msg.voice.file_id, 'ogg', msg.voice.duration);
     }
-    if (msg.audio) {
-      return audioFlow(chatId, user, msg.audio.file_id, audioFormatFromMime(msg.audio.mime_type), msg.audio.duration);
-    }
-    if (msg.document && String(msg.document.mime_type || '').startsWith('audio/')) {
-      return audioFlow(chatId, user, msg.document.file_id, audioFormatFromMime(msg.document.mime_type), 0);
+    // Аудиофайл (mp3/m4a/wav и audio-документы) - не расшифровываем молча,
+    // а спрашиваем: транскрипция или саммари. Голосовые идут выше как раньше.
+    if (audioChoice && isAudioFile(msg)) {
+      if (!user) return startOnboarding(String(chatId));
+      if (!audioEnabled()) return send(chatId, 'Аудио пока не разбираю: нет ключа для расшифровки');
+      return audioChoice.ask(chatId, audioInfo(msg));
     }
 
     if (msg.photo && msg.photo.length) {
@@ -245,6 +299,39 @@ export function createMessageRouter(deps) {
     const chatId = String(cb.message?.chat?.id || '');
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
     if (!chatId) return;
+
+    if (audioChoice && (await audioChoice.onCallback(chatId, cb.data))) return;
+
+    // Панель админ-журнала (только владелец)
+    if (cb.data?.startsWith('adm:')) {
+      if (!OWNER || String(cb.from?.id || '') !== OWNER) return;
+      if (cb.data === 'adm:toggle') {
+        setAdminLog(store, chatId, !adminLogOn(store, chatId));
+        return api('editMessageText', {
+          chat_id: chatId, message_id: cb.message.message_id, parse_mode: 'HTML',
+          text: adminPanelText(chatId, cb.message.chat?.title),
+          reply_markup: { inline_keyboard: adminPanelKb(chatId) },
+        });
+      }
+      if (cb.data === 'adm:last') {
+        const rows = adminLogList(store, { chatId, limit: 20 });
+        if (!rows.length) return send(chatId, 'Журнал пуст - включи запись и напиши что-нибудь');
+        const body = rows.map((r) => {
+          const t2 = new Date(r.ts).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+          const who = r.name || r.username || r.userId || '?';
+          const what = r.kind === 'text' ? (r.text || '') : `[${r.kind}]${r.fileName ? ' ' + r.fileName : ''} ${r.text || ''}`;
+          return `${t2} · ${who}${r.username ? ' (@' + r.username + ')' : ''}: ${what}`.slice(0, 160);
+        }).join('\n');
+        return send(chatId, `<b>Последние ${rows.length}</b>\n\n<code>${esc(body)}</code>`);
+      }
+      if (cb.data === 'adm:dump') {
+        const rows = adminLogList(store, { chatId, limit: 5000 });
+        if (!rows.length) return send(chatId, 'Журнал пуст');
+        return sendDocumentText(chatId, JSON.stringify(rows, null, 2), 'admin-log.json', 'application/json',
+          `Журнал: ${rows.length} записей. Можно скормить ИИ целиком`);
+      }
+      return;
+    }
 
     if (cb.data === 'idp:off' && idPicker) { if (await idPicker.onCallback(chatId, cb.data)) return; }
 

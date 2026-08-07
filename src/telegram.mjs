@@ -12,10 +12,12 @@
 
 import {
   aiEnabled, audioEnabled, aiFriendReply, aiDiarySummary, aiTts, aiFitnessProgram,
+  aiTranscribe, aiSummarizeText, audioFormatFromMime,
 } from './ai.mjs';
 import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import { captureStylePref } from './capabilities.mjs';
 import { createIdPicker } from './telegram-idpicker.mjs';
+import { createAudioChoice, isAudioFile, audioInfo } from './telegram-audio.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
@@ -269,7 +271,7 @@ export function startTelegramBot(store, token, log = console) {
       '',
       '<blockquote>🎙 «Отвечай голосом» - буду отвечать войсами, «отвечай текстом» - обратно. Пишешь на другом языке - отвечу на нём.</blockquote>',
       '',
-      '<blockquote>🎙 Отправь голосовое, кружок или mp3 (даже длинное) - расшифрую и сразу отвечу. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
+      '<blockquote>🎙 Голосовое или кружок - расшифрую и сразу отвечу. А если кинешь аудиофайл (mp3, m4a, wav) - спрошу, что сделать: 📝 транскрипцию или 🧾 саммари. Фото, стикеры и документы (PDF, DOCX) тоже пойму.</blockquote>',
       '',
       '<blockquote>⚙️ «Настройки» покажут всё про тебя. Пришли геолокацию - сам определю часовой пояс и город. «Напоминай за 30 минут», «мой город Казань» - тоже подстрою. По утрам расскажу про дела и погоду.</blockquote>',
       '',
@@ -505,8 +507,22 @@ export function startTelegramBot(store, token, log = console) {
   });
   const handleIntent = intents.handleIntent;
 
+// Аудиофайл (mp3/m4a/wav, не голосовое) - спрашиваем: расшифровка или саммари.
+  const audioChoice = createAudioChoice({
+    send, withTyping, log,
+    transcribe: async (card) => {
+      const b64 = await downloadBase64(card.fileId);
+      const fmt = audioFormatFromMime(card.mime || '') || 'mp3';
+      return (card.duration || 0) > 170 ? transcribeLong(b64, fmt) : aiTranscribe(b64, fmt);
+    },
+    summarize: (text, title) => aiSummarizeText(text, title || 'аудио'),
+    // расшифровка всё равно ложится в память - как обычный рассказ
+    onTranscript: (chatId, text) => { try { store.addRaw(String(chatId), text.slice(0, 4000)); } catch {} },
+  });
+
   const { groupFlow, isGroupChat, callerIsAdmin } = createGroupHandler({
     api, send, esc, store, log, withTyping, handleIntent, sendSummary, askReset, readDoc, downloadBase64, sleepyText, maybeReact, deliver,
+    audioChoice, isAudioFile, audioInfo,
   });
 
   // Личный кабинет (U3a-ui статистика+долги, U3c-ui вишлист): текст+кнопки.
@@ -540,13 +556,14 @@ export function startTelegramBot(store, token, log = console) {
   // Секретная пипетка ID (стикеры и премиум-эмодзи) - команда /id.
   const idPicker = createIdPicker({ send, api, log });
 
+
   const router = createMessageRouter({
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
     isGroupChat, groupFlow, callerIsAdmin,
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker,
+    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker, audioChoice, isAudioFile, audioInfo,
   });
   const onMessage = router.onMessage;
   const onCallback = router.onCallback;
