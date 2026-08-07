@@ -96,17 +96,17 @@ test('«не называй меня по имени» -> noName', () => {
   assert.deepEqual(parseStylePref('не называй меня по имени'), { noName: true, addressAs: null });
 });
 
-test('мат ВКЛЮЧЁН по умолчанию, выключается только явной просьбой', () => {
-  // дефолт: настройки нет - значит матерится
+test('мат ВЫКЛЮЧЕН по умолчанию, включается явной просьбой', () => {
   assert.equal(parseStylePref('привет'), null, 'обычное сообщение стиль не трогает');
-  // выключение (главная формулировка из /help)
-  assert.equal(parseStylePref('Толя не общайся матом')?.talkStyle, 'clean');
-  assert.equal(parseStylePref('не матерись больше')?.talkStyle, 'clean');
-  assert.equal(parseStylePref('без мата пожалуйста')?.talkStyle, 'clean');
-  assert.equal(parseStylePref('перестань материться')?.talkStyle, 'clean');
-  // возврат к дефолту
-  assert.equal(parseStylePref('можешь материться')?.talkStyle, null);
-  assert.equal(parseStylePref('общайся попроще')?.talkStyle, null);
+  // включение (формулировка из /help)
+  assert.equal(parseStylePref('Толян включи мат')?.talkStyle, 'mat');
+  assert.equal(parseStylePref('можешь материться')?.talkStyle, 'mat');
+  assert.equal(parseStylePref('общайся матом')?.talkStyle, 'mat');
+  assert.equal(parseStylePref('вруби мат')?.talkStyle, 'mat');
+  // выключение обратно в дефолт
+  assert.equal(parseStylePref('не общайся матом')?.talkStyle, null);
+  assert.equal(parseStylePref('выключи мат')?.talkStyle, null);
+  assert.equal(parseStylePref('не матерись больше')?.talkStyle, null);
   // официальный тон
   assert.equal(parseStylePref('давай общайся официально')?.talkStyle, 'official');
   assert.equal(parseStylePref('перейдем на вы')?.talkStyle, 'official');
@@ -138,7 +138,7 @@ test('captureStylePref сохраняет в профиль и подтверж�
 test('stylePref -> инструкции в системный промпт', () => {
   assert.match(stylePref({ addressAs: 'Братан' }), /Братан/);
   assert.match(stylePref({ talkStyle: 'official' }), /ОФИЦИАЛЬНО/);
-  assert.match(stylePref({ talkStyle: 'clean' }), /не материться/i);
+  assert.match(stylePref({ talkStyle: 'mat' }), /разрешил мат/i);
   assert.match(stylePref({ noName: true }), /НЕ обращаться/i);
   assert.match(stylePref({ dontDo: ['задавать встречные вопросы'] }), /НЕ делать/i);
   assert.equal(stylePref({}), '');
@@ -151,26 +151,28 @@ test('friendSystem учитывает предпочтения юзера', () =
 });
 
 /* ---- Официальный тон реально переключает базовую персону ---- */
-test('toneBlock: три режима - дефолт с матом, clean без мата, official', async () => {
+test('toneBlock: три режима - дефолт без мата, mat по просьбе, official', async () => {
   const { toneBlock } = await import('../src/capabilities.mjs');
 
   const def = toneBlock({});
-  assert.match(def, /МАТ - ЧАСТЬ ТВОЕЙ ОБЫЧНОЙ РЕЧИ/, 'по умолчанию матерится');
-  assert.match(def, /НЕ ставь точку в конце/, 'без точки в конце');
+  assert.match(def, /БЕЗ МАТА/, 'по умолчанию не матерится');
+  assert.match(def, /НЕ ставь точку в конце/, 'живость сохраняется');
   assert.match(def, /НИКАКИХ вводных/);
   assert.match(def, /НИКАКИХ сложноподчинённых/);
   assert.match(def, /живой пацан/i, 'не как бот');
 
-  const clean = toneBlock({ talkStyle: 'clean' });
-  assert.match(clean, /МАТ ВЫКЛЮЧЕН/);
-  assert.ok(!/МАТ - ЧАСТЬ/.test(clean), 'дефолтная мат-инструкция убрана');
-  assert.match(clean, /НЕ ставь точку в конце/, 'живость и рубленость остаются');
+  const mat = toneBlock({ talkStyle: 'mat' });
+  assert.match(mat, /МАТ ВКЛЮЧЁН/);
+  assert.ok(!/БЕЗ МАТА/.test(mat), 'дефолтный запрет убран');
+  assert.match(mat, /НЕ ставь точку в конце/, 'механика речи та же');
+
+  // старое значение из ранее сохранённых профилей = дефолт
+  assert.match(toneBlock({ talkStyle: 'clean' }), /БЕЗ МАТА/, 'обратная совместимость');
 
   const off = toneBlock({ talkStyle: 'official' });
   assert.match(off, /ОФИЦИАЛЬНО/);
   assert.match(off, /«вы»/);
-  assert.match(off, /без сленга/i);
-  assert.ok(!/МАТ - ЧАСТЬ/.test(off), 'в официальном тоне мата нет');
+  assert.ok(!/МАТ ВКЛЮЧЁН/.test(off), 'в официальном тоне мата нет');
 });
 
 test('friendSystem: official не содержит противоречивого «на ты, неформально»', () => {
@@ -258,7 +260,7 @@ test('groupPersona: знает фичи, стиль и правила «кто �
   // раньше группа жила своей жизнью и не получала обновлений лички
   assert.match(g, /ВИШЛИСТ/i, 'реестр возможностей подтянут');
   assert.match(g, /КАЛЕНДАРЬ/i);
-  assert.match(g, /МАТ - ЧАСТЬ/, 'тот же стиль, что в личке');
+  assert.match(g, /БЕЗ МАТА/, 'тот же стиль, что в личке');
   assert.match(g, /НЕ ставь точку в конце/);
   // защита от путаницы людей
   assert.match(g, /НЕ приписывай одному человеку/);
@@ -273,7 +275,7 @@ test('groupPersona: официальный тон в группе тоже ра�
   const { groupPersona } = await import('../src/capabilities.mjs');
   const g = groupPersona({ isGroup: true, name: 'Работа', talkStyle: 'official' }, '');
   assert.match(g, /ОФИЦИАЛЬНО/);
-  assert.ok(!/МАТ - ЧАСТЬ/.test(g), 'в официальной группе мата нет');
+  assert.ok(!/МАТ ВКЛЮЧЁН/.test(g), 'в официальной группе мата нет');
 });
 
 test('friendSystem(isGroup) отдаёт групповую персону', () => {
