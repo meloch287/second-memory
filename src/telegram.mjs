@@ -600,8 +600,18 @@ export function startTelegramBot(store, token, log = console) {
   const chatQueues = new Map();
   function enqueue(chatKey, work) {
     const prev = chatQueues.get(chatKey) || Promise.resolve();
+    const queued = Date.now();
     const next = prev
-      .then(work)
+      // очередь на чат последовательная: медленный ИИ-ответ задерживает
+      // следующее нажатие кнопки. Без замера это выглядит как «бот завис»
+      .then(async () => {
+        const started = Date.now();
+        const r = await work();
+        const wait = started - queued;
+        const took = Date.now() - started;
+        if (wait + took > 5000) log.log(`[telegram] чат ${chatKey}: ожидание ${wait}мс, обработка ${took}мс`);
+        return r;
+      })
       .catch((e) => log.error('[telegram] flow', chatKey, e.message))
       .finally(() => {
         if (chatQueues.get(chatKey) === next) chatQueues.delete(chatKey);
