@@ -18,6 +18,7 @@ import { parseProduct as parseProductLive } from './wlparse.mjs';
 import { createFitnessHandler } from './telegram-fitness.mjs';
 import { createCalendarHandler } from './telegram-calendar.mjs';
 import { pe, peButton } from './premium-emoji.mjs';
+import { persistentPending } from './pending.mjs';
 
 const KIND_WORD = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 
@@ -31,8 +32,9 @@ export function createLkHandler(deps) {
   // же функцию явно, а дефолт здесь - просто страховка.
   const { store, send, sendButtons, api, log, withTyping, aiFitnessProgram, sendIcs, publicUrl, parseProduct = parseProductLive } = deps;
 
-  // chatId(string) -> { mode: 'add' } | { mode: 'edit', id }
-  const pending = new Map();
+  // Сценарий переживает рестарт: в памяти процесса он терялся при каждом деплое
+  // (бот спрашивал ссылку, человек присылал - а бот уже забыл, чего ждал).
+  const pending = persistentPending(store, 'lk');
 
   /* ---- Тексты и клавиатуры ---- */
 

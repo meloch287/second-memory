@@ -9,6 +9,7 @@ import { esc } from './telegram-helpers.mjs';
 import { pe, peButton } from './premium-emoji.mjs';
 import { parseMessage } from './parser.mjs';
 import { userOffset, fmtUser, resolveWallDate, wall } from './tz.mjs';
+import { persistentPending } from './pending.mjs';
 
 const WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const MONTHS = ['', 'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -24,7 +25,9 @@ const CAL_QUERY =
 
 export function createCalendarHandler(deps) {
   const { store, send, sendButtons, api, render, sendIcs, publicUrl, log } = deps;
-  const pending = new Map(); // chatId -> { mode:'cal_confirm', ev } | { mode:'cal_reask' } | { mode:'cal_when', title }
+  // Сценарий переживает рестарт: в памяти процесса он терялся при каждом деплое
+  // (бот спрашивал ссылку, человек присылал - а бот уже забыл, чего ждал).
+  const pending = persistentPending(store, 'calendar');
 
   const base = (publicUrl || 'https://secondmemory.103.88.241.202.sslip.io').replace(/\/+$/, '');
 

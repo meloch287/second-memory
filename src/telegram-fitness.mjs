@@ -8,6 +8,7 @@ import { esc } from './telegram-helpers.mjs';
 import { pe, peButton } from './premium-emoji.mjs';
 import { dailyNorm, todayLog, dayKey, parseMeal, parseWater, bar } from './nutrition.mjs';
 import { userOffset } from './tz.mjs';
+import { persistentPending } from './pending.mjs';
 
 const DAYS = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const DAY_FULL = ['', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
@@ -16,7 +17,9 @@ const LEVELS = [['новичок', 'Новичок'], ['средний', 'Сре
 
 export function createFitnessHandler(deps) {
   const { store, send, api, render, withTyping, aiFitnessProgram, log } = deps;
-  const pending = new Map(); // chatId -> { mode: 'fit_weight' | 'fit_height' | 'fit_age' }
+  // Сценарий переживает рестарт: в памяти процесса он терялся при каждом деплое
+  // (бот спрашивал ссылку, человек присылал - а бот уже забыл, чего ждал).
+  const pending = persistentPending(store, 'fitness');
 
   const goalLabel = (g) => (GOALS.find((x) => x[0] === g) || [null, 'не задана'])[1];
   const levelLabel = (l) => (LEVELS.find((x) => x[0] === l) || [null, 'не задан'])[1];
