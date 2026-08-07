@@ -120,3 +120,12 @@ test('список участников в контексте пропускае
   const g = friendSystem({ isGroup: true, name: 'Банда', members: { 1: { name: '⁠', username: 'ghost' }, 2: { name: 'Аня' } } });
   assert.match(g, /участник группы «Банда»/);
 });
+
+test('групповая персона: список участников и запрет звать себя ботом', async () => {
+  const { groupPersona } = await import('../src/capabilities.mjs');
+  const g = groupPersona({ isGroup: true, name: 'Банда', botName: 'Толик' }, '');
+  assert.match(g, /перечисляй ЛЮДЕЙ ИЗ СПИСКА УЧАСТНИКОВ/);
+  assert.match(g, /Никогда не отвечай «никого нет»/);
+  assert.match(g, /спрашивают про УЧАСТНИКА с этим именем, а НЕ про тебя/);
+  assert.match(g, /ЗАПРЕЩЕНО называть себя ботом/);
+});
