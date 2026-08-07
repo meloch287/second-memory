@@ -360,7 +360,10 @@ export function findMember(members, query) {
   for (const [id, m] of Object.entries(members || {})) {
     if (namesOf(m).some((nm) => { const n = stem(nm); return n && (n === qs || toLat(n) === toLat(qs)); })) return { id, ...m };
   }
-  const match = (n) => n && (n.startsWith(qs) || qs.startsWith(n) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
+  // Префикс годится для «Саш»/«Сашенька», но не для «санитара»: длинный хвост
+  // поверх короткой основы - это уже другое слово. Разницу держим в 3 буквы.
+  const near = (a, b2) => a.startsWith(b2) && a.length - b2.length <= 3;
+  const match = (n) => n && (near(n, qs) || near(qs, n) || near(toLat(n), toLat(qs)) || near(toLat(qs), toLat(n)));
   for (const [id, m] of Object.entries(members || {})) {
     if (namesOf(m).some((nm) => match(stem(nm)))) return { id, ...m };
   }

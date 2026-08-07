@@ -9,6 +9,7 @@ import { captureEntry, handleMessage } from './brain.mjs';
 import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
 import { canonStem, nickStem } from './nicknames.mjs';
+import { parseCallRequest } from './callparse.mjs';
 
 // Родственные/ролевые слова - валидные «имена» в строчном виде («это мама»,
 // «это батя»). Основа = слово без хвостовых гласных/ь/й, как в findMember,
@@ -66,9 +67,6 @@ export function toNominative(word) {
 }
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-
-// Слова, которые в «позови X» именем быть не могут.
-const NOT_A_NAME = /^(?:ты|вы|я|мы|он|она|они|нас|вас|их|кто|кого|кого[- ]нибудь|кого[- ]то|сюда|туда|тут|там|сам|сама|уже|быстро|давай|плиз|пожалуйста)$/i;
 
 // Похоже ли слово на имя человека. Глаголы («починил», «устал», «пришёл»)
 // отсекаем по окончаниям - иначе «Я починил» переименовывало человека.
@@ -540,16 +538,12 @@ export function createGroupHandler(deps) {
 
     // Тегнуть участника: «тегни Никиту», «серег, тегни никиту и скажи что...».
     // «скажи/передай что X» - ИИ формулирует реплику адресату сам.
-    const tag = text.match(/(?:^|[\s,!])(?:т[еэ]гни+|т[еэ]гай|пингани|пингуй|позови|призови|зови|дерни|дёрни|свистни|крикни|кликни|разбуди)\s+@?(.+)$/i);
-    if (tag) {
-      let who = tag[1].trim();
-      let relay = null;
-      const say = who.match(/^(.+?)\s+(?:и\s+)?(?:скажи|передай|напиши)(?:\s+(?:ему|ей))?\s*,?\s*(?:что\s+)?(.+)$/i);
-      if (say) {
-        who = say[1].trim();
-        relay = say[2].trim();
-      }
-      who = who.replace(/[,!?.\s]+$/, '');
+    // Разбор просьбы позвать: имя может стоять и до глагола («Маму позови»),
+    // а хвост «сообщи ей об этом» - это поручение, а не имя.
+    const call = parseCallRequest(text);
+    if (call && call.who !== '*') {
+      const who = call.who;
+      const relay = call.relay;
       const relayText = async (targetName) => {
         if (!relay) return null;
         if (aiEnabled()) {
@@ -558,7 +552,8 @@ export function createGroupHandler(deps) {
         }
         return `${fromName} просил передать: «${relay}»`;
       };
-      if (/^(?:его|её|ее)$/i.test(who)) {
+      // «тегни его» ответом на сообщение - зовём автора того сообщения
+      if (/^(?:его|её|ее)$/i.test(call.pronoun || '')) {
         const t = msg.reply_to_message?.from;
         if (t && !t.is_bot) {
           const m2 = mentionOf({ username: t.username, name: t.first_name }, t.id);
@@ -567,9 +562,9 @@ export function createGroupHandler(deps) {
         }
         return send(chatId, 'Ответь командой на сообщение самого человека - пойму, кого звать.');
       }
-      // «Позови ты», «позови сюда», «позови кого-нибудь» - тут нет имени.
+      // «Позови ты», «позови сюда», просто «позови» - имени в просьбе нет.
       // Раньше бот отвечал «Не знаю, кто тут Ты» и выглядел дураком.
-      if (NOT_A_NAME.test(who)) return send(chatId, 'Кого позвать-то? Напиши имя или @ник');
+      if (!who) return send(chatId, 'Кого позвать-то? Напиши имя или @ник');
       const hit = findMember(g.members, who);
       if (!hit) {
         // Фраза без согласования по роду и падежу: раньше выходило «чтобы маму
