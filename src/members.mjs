@@ -100,18 +100,22 @@ export function stemsOf(word) {
 
 // Как звать человека, о котором сказали любым его обозначением.
 // «Аню», «@meloch287», «маму» -> «Мама».
+//
+// Два прохода: сначала ТОЧНОЕ совпадение по всем участникам, и только потом
+// сравнение основ. Иначе «Лёня» отдавал «Лену» - у них общая основа «лен», а
+// первый в реестре выигрывал. И если по основам подходят двое разных людей,
+// честнее вернуть null: склеить двоих хуже, чем не узнать одного.
 export function canonicalName(user, word) {
   const w = low(word).replace(/^@/, '');
   if (!w) return null;
+  const list = membersList(user);
+  const formsOf = (m) => [m.call, m.real, ...m.aliases, ...(m.username ? [m.username] : [])].filter(Boolean);
+
+  for (const m of list) if (formsOf(m).some((f) => low(f) === w)) return m.call;
+
   const ws = stemsOf(w);
-  for (const m of membersList(user)) {
-    const forms = [m.call, m.real, ...m.aliases, ...(m.username ? [m.username] : [])].filter(Boolean);
-    for (const f of forms) {
-      if (low(f) === w) return m.call;
-      for (const s of stemsOf(f)) if (ws.has(s)) return m.call;
-    }
-  }
-  return null;
+  const hits = list.filter((m) => formsOf(m).some((f) => [...stemsOf(f)].some((s) => ws.has(s))));
+  return hits.length === 1 ? hits[0].call : null;
 }
 
 // Подписи в записях («Аня: текст») переписываем на выученное обращение -

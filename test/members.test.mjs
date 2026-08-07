@@ -124,3 +124,16 @@ test('без выученных обращений подписи не трог�
   const u = { isGroup: true, members: { 1: { name: 'Оля', username: 'olya' } } };
   assert.equal(renameAuthors('Оля: привет', u), 'Оля: привет');
 });
+
+test('двое с похожими именами не склеиваются в одного', () => {
+  const u = { isGroup: true, members: { 1: { name: 'Лена' }, 2: { name: 'Лёня' } } };
+  assert.equal(canonicalName(u, 'Лёня'), 'Лёня', 'точное имя не должно уступать основе соседа');
+  assert.equal(canonicalName(u, 'Лена'), 'Лена');
+  assert.equal(canonicalName(u, 'Лену'), null, 'неоднозначность честнее склейки');
+});
+
+test('однозначные падежи по-прежнему узнаются', () => {
+  const u = { isGroup: true, members: { 1: { name: 'Сергей', username: 'Jjjoopes' }, 2: { name: 'Антон' } } };
+  assert.equal(canonicalName(u, 'Сергея'), 'Сергей');
+  assert.equal(canonicalName(u, 'Антона'), 'Антон');
+});
