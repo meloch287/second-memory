@@ -68,3 +68,9 @@ test('дубль имени в псевдонимах не задваивает�
   const u = { isGroup: true, members: { 1: { name: 'Аня', username: 'a', aliases: ['аня', 'Мама', 'Мама'] } } };
   assert.equal(membersBlock(u), 'Аня (@a, он же: Мама)');
 });
+
+test('псевдоним, совпадающий с @ником, - не псевдоним (мусор от схлопывания заглушки)', () => {
+  const u = { isGroup: true, members: { 1: { name: 'Сергей', username: 'Jjjoopes', aliases: ['Jjjoopes'] } } };
+  assert.equal(membersBlock(u), 'Сергей (@Jjjoopes)');
+  assert.ok(!membersRule(u).includes('Одно и то же лицо'));
+});

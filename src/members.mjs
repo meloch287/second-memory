@@ -17,9 +17,9 @@ const readable = (m) => {
 // Псевдонимы: «Мама», «Батя», второе имя - всё, чем человека зовут в чате.
 const aliasesOf = (m, name) => {
   const list = Array.isArray(m?.aliases) ? m.aliases : [];
-  const low = String(name).toLowerCase();
+  const skip = new Set([String(name).toLowerCase(), String(m?.username || '').toLowerCase()]);
   return [...new Set(list.map((a) => String(a).trim()).filter(Boolean))]
-    .filter((a) => a.toLowerCase() !== low)
+    .filter((a) => !skip.has(a.toLowerCase()))
     .slice(0, 5);
 };
 

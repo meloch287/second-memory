@@ -275,7 +275,9 @@ export function createGroupHandler(deps) {
         const stubKey = 'u:' + username.toLowerCase();
         const stub = members[stubKey];
         if (stub) {
-          const aliases = [...new Set([...(members[u.id].aliases || []), ...(stub.aliases || []), ...(stub.name && stub.name !== members[u.id].name ? [stub.name] : [])])].slice(0, 5);
+          // имя заглушки часто = её @ник: как псевдоним он бесполезен
+          const stubAlias = stub.name && stub.name !== members[u.id].name && stub.name.toLowerCase() !== String(username).toLowerCase() ? [stub.name] : [];
+          const aliases = [...new Set([...(members[u.id].aliases || []), ...(stub.aliases || []), ...stubAlias])].slice(0, 5);
           members[u.id] = { ...members[u.id], ...(aliases.length ? { aliases } : {}) };
           delete members[stubKey];
           membersChanged = true;
