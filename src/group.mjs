@@ -466,13 +466,14 @@ export function createGroupHandler(deps) {
           continue;
         }
         const [id, cur] = existing;
-        // «мама - @ник» для уже известной Ани раньше ПЕРЕТИРАЛО имя: человек
-        // становился «Мамой». Родственное слово - это псевдоним, а не имя.
+        // Как научили - так и зовём. «мама - @ник» для уже известной Ани не
+        // затирает паспортное имя (оно нужно, чтобы связывать её сообщения),
+        // но становится ОСНОВНЫМ обращением: дальше она везде «Мама».
         if (isRel && cur.name && !isRelName(cur.name)) {
           const aliases = [...new Set([...(cur.aliases || []), name])].slice(0, 5);
-          members2[id] = { ...cur, aliases };
+          members2[id] = { ...cur, aliases, callName: name };
         } else {
-          members2[id] = { ...cur, name };
+          members2[id] = { ...cur, name, callName: name };
         }
       }
       g = store.setUser(key, { members: members2 });

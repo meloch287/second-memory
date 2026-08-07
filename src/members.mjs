@@ -5,6 +5,11 @@
 // псевдонимов, а саммари не получало его вовсе. Из-за этого «мама» и «Аня»
 // (один человек) уезжали в модель как двое разных, и итоги по чату выходили
 // про несуществующих людей.
+//
+// Главное правило: КАК НАУЧИЛИ - ТАК И ЗОВЁМ. Сказали «мама - @meloch287» -
+// значит она везде «Мама», даже если в Telegram её зовут Аня и её сообщения
+// подписаны «Аня:». Паспортное имя остаётся рядом - оно нужно, чтобы связывать
+// подписи сообщений с человеком, но обращение всегда выученное.
 
 // Имя, которое реально можно показать: невидимые символы и пустышки отсеиваем,
 // иначе в списке участников оседает «⁠» и человек теряется.
@@ -14,52 +19,66 @@ const readable = (m) => {
   return m?.username ? `@${m.username}` : null;
 };
 
-// Псевдонимы: «Мама», «Батя», второе имя - всё, чем человека зовут в чате.
-const aliasesOf = (m, name) => {
+const low = (s) => String(s).trim().toLowerCase().replace(/ё/g, 'е');
+
+// Псевдонимы: всё прочее, чем человека зовут в чате. Само обращение и @ник
+// сюда не попадают - иначе в списке дубли.
+const aliasesOf = (m, call, real) => {
   const list = Array.isArray(m?.aliases) ? m.aliases : [];
-  const skip = new Set([String(name).toLowerCase(), String(m?.username || '').toLowerCase()]);
+  const skip = new Set([low(call), low(real), low(m?.username || '')]);
   return [...new Set(list.map((a) => String(a).trim()).filter(Boolean))]
-    .filter((a) => !skip.has(a.toLowerCase()))
+    .filter((a) => !skip.has(low(a)))
     .slice(0, 5);
 };
 
-// [{ id, name, username, aliases }] - только те, кого есть как показать.
+// [{ id, call, real, username, aliases }]
+//   call - как звать (выученное обращение, иначе имя),
+//   real - паспортное имя, если оно отличается от обращения.
 export function membersList(user) {
   if (!user?.isGroup || !user.members) return [];
   return Object.entries(user.members)
     .map(([id, m]) => {
       const name = readable(m);
-      if (!name) return null;
-      return { id, name, username: m.username || null, aliases: aliasesOf(m, name) };
+      const call = String(m?.callName || '').trim() || name;
+      if (!call) return null;
+      const real = name && low(name) !== low(call) ? name : null;
+      return { id, call, real, name: call, username: m.username || null, aliases: aliasesOf(m, call, real || '') };
     })
     .filter(Boolean);
 }
 
-// «Аня (@meloch287, она же: Мама), Сергей (@Jjjoopes)» - одной строкой.
+// «Мама (@meloch287, по паспорту Аня), Сергей (@Jjjoopes)» - одной строкой.
 export function membersBlock(user) {
   const list = membersList(user);
   if (!list.length) return null;
   return list
     .map((m) => {
-      const tag = m.username && m.name !== `@${m.username}` ? `@${m.username}` : '';
+      const tag = m.username && m.call !== `@${m.username}` ? `@${m.username}` : '';
+      const real = m.real ? `по паспорту ${m.real}` : '';
       const alias = m.aliases.length ? `он же: ${m.aliases.join(', ')}` : '';
-      const inner = [tag, alias].filter(Boolean).join(', ');
-      return m.name + (inner ? ` (${inner})` : '');
+      const inner = [tag, real, alias].filter(Boolean).join(', ');
+      return m.call + (inner ? ` (${inner})` : '');
     })
     .join(', ');
 }
 
-// Правило для модели: имя, @ник и прозвище - один человек, а не трое.
+// Правило для модели: как звать людей и что имя, @ник и прозвище - один человек.
 export function membersRule(user) {
   const list = membersList(user);
   if (!list.length) return null;
-  const withAlias = list.filter((m) => m.aliases.length);
-  const same = withAlias
-    .map((m) => [m.name, ...m.aliases, ...(m.username ? [`@${m.username}`] : [])].join(' = '))
+  const renamed = list.filter((m) => m.real);
+  const same = list
+    .filter((m) => m.real || m.aliases.length)
+    .map((m) => [m.call, m.real, ...m.aliases, ...(m.username ? [`@${m.username}`] : [])].filter(Boolean).join(' = '))
     .join('; ');
   return (
     'Имя, @ник и прозвище одного участника - ЭТО ОДИН ЧЕЛОВЕК, не считай их разными людьми. ' +
     (same ? `Одно и то же лицо: ${same}. ` : '') +
+    (renamed.length
+      ? `ЗОВИ ЛЮДЕЙ ТАК, КАК УКАЗАНО ПЕРВЫМ В СПИСКЕ - так тебя попросили: ${renamed
+          .map((m) => `${m.real} -> ${m.call}`)
+          .join(', ')}. Даже если её сообщения подписаны паспортным именем, в своих ответах и итогах пиши выученное обращение. `
+      : '') +
     'Людей, которых нет в списке участников, в чате нет - не выдумывай их.'
   );
 }
@@ -68,7 +87,6 @@ export function membersRule(user) {
 // Сравнивать «по первым N буквам» нельзя: так «Аня» слипалась с «Антоном».
 // Одной основы мало: у «Сергей» окончание -ей отрезать нельзя, а у «мамой»
 // нужно. Поэтому держим ВСЕ правдоподобные основы и ищем пересечение.
-const low = (s) => String(s).trim().toLowerCase().replace(/ё/g, 'е');
 export function stemsOf(word) {
   const w = low(word).replace(/^@/, '');
   const out = new Set(w ? [w] : []);
@@ -80,17 +98,31 @@ export function stemsOf(word) {
   return out;
 }
 
-// Каноническое имя по любому из его обозначений («маму» -> «Аня»).
+// Как звать человека, о котором сказали любым его обозначением.
+// «Аню», «@meloch287», «маму» -> «Мама».
 export function canonicalName(user, word) {
   const w = low(word).replace(/^@/, '');
   if (!w) return null;
   const ws = stemsOf(w);
   for (const m of membersList(user)) {
-    const forms = [m.name, ...m.aliases, ...(m.username ? [m.username] : [])];
+    const forms = [m.call, m.real, ...m.aliases, ...(m.username ? [m.username] : [])].filter(Boolean);
     for (const f of forms) {
-      if (low(f) === w) return m.name;
-      for (const s of stemsOf(f)) if (ws.has(s)) return m.name;
+      if (low(f) === w) return m.call;
+      for (const s of stemsOf(f)) if (ws.has(s)) return m.call;
     }
   }
   return null;
+}
+
+// Подписи в записях («Аня: текст») переписываем на выученное обращение -
+// иначе модель читает паспортное имя и зовёт человека им, вопреки просьбе.
+export function renameAuthors(line, user) {
+  const list = membersList(user).filter((m) => m.real);
+  if (!list.length) return line;
+  let out = String(line);
+  for (const m of list) {
+    const esc = m.real.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(^|\\n)${esc}(?=:)`, 'gi'), `$1${m.call}`);
+  }
+  return out;
 }

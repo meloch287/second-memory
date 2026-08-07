@@ -3,7 +3,7 @@
 // Живой баг из «Банды»: /summary рассказывал про несуществующего человека.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { membersList, membersBlock, membersRule, canonicalName } from '../src/members.mjs';
+import { membersList, membersBlock, membersRule, canonicalName, renameAuthors } from '../src/members.mjs';
 
 const BANDA = {
   isGroup: true,
@@ -73,4 +73,54 @@ test('псевдоним, совпадающий с @ником, - не псев
   const u = { isGroup: true, members: { 1: { name: 'Сергей', username: 'Jjjoopes', aliases: ['Jjjoopes'] } } };
   assert.equal(membersBlock(u), 'Сергей (@Jjjoopes)');
   assert.ok(!membersRule(u).includes('Одно и то же лицо'));
+});
+
+/* --- Как научили - так и зовём --- */
+
+const CALLED = {
+  isGroup: true,
+  name: 'Банда',
+  members: {
+    750201677: { name: 'Аня', username: 'meloch287', callName: 'Мама', aliases: ['Мама'] },
+    1057399602: { name: 'Саня', username: 'qk1nlyNTG' },
+    5986736818: { name: 'Сергей', username: 'Jjjoopes' },
+  },
+};
+
+test('выученное обращение идёт первым, паспортное имя - справкой', () => {
+  assert.match(membersBlock(CALLED), /^Мама \(@meloch287, по паспорту Аня\)/);
+  assert.ok(!membersBlock(CALLED).includes('он же: Мама'), 'обращение не дублируется в псевдонимах');
+});
+
+test('правило прямо велит звать выученным именем', () => {
+  const r = membersRule(CALLED);
+  assert.match(r, /ЗОВИ ЛЮДЕЙ ТАК, КАК УКАЗАНО ПЕРВЫМ/);
+  assert.match(r, /Аня -> Мама/);
+  assert.match(r, /Мама = Аня = @meloch287/);
+});
+
+test('любое обозначение сводится к обращению, а не к паспортному имени', () => {
+  assert.equal(canonicalName(CALLED, 'Аня'), 'Мама');
+  assert.equal(canonicalName(CALLED, 'Аню'), 'Мама');
+  assert.equal(canonicalName(CALLED, '@meloch287'), 'Мама');
+  assert.equal(canonicalName(CALLED, 'маме'), 'Мама');
+  assert.equal(canonicalName(CALLED, 'Сергея'), 'Сергей');
+});
+
+test('подписи записей переписываются на выученное обращение', () => {
+  assert.equal(renameAuthors('Аня: Мальчики', CALLED), 'Мама: Мальчики');
+  assert.equal(renameAuthors('аня: как дела', CALLED), 'Мама: как дела');
+  assert.equal(renameAuthors('Сергей: Мама закажи Липтон', CALLED), 'Сергей: Мама закажи Липтон');
+});
+
+test('renameAuthors трогает только подпись, а не текст', () => {
+  // «Аня» внутри фразы - это уже речь людей, переписывать её нельзя
+  assert.equal(renameAuthors('Саня: спроси у Аня', CALLED), 'Саня: спроси у Аня');
+  assert.equal(renameAuthors('Аня', CALLED), 'Аня');
+  assert.equal(renameAuthors('Аня: раз\nСергей: два', CALLED), 'Мама: раз\nСергей: два');
+});
+
+test('без выученных обращений подписи не трогаются вовсе', () => {
+  const u = { isGroup: true, members: { 1: { name: 'Оля', username: 'olya' } } };
+  assert.equal(renameAuthors('Оля: привет', u), 'Оля: привет');
 });

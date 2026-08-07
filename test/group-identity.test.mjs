@@ -160,3 +160,34 @@ test('заглушка «u:ник» схлопывается, когда чел�
     assert.ok((ms['51'].aliases || []).includes('Сергей'), 'прежнее имя стало псевдонимом');
   } finally { h.restore(); }
 });
+
+/* --- Как научили - так и зовём: «мама - @meloch287» --- */
+
+test('«мама, маму - @ник»: обращение становится основным, паспортное имя цело', async () => {
+  const h = boot();
+  try {
+    h.msg({ id: 750201677, is_bot: false, first_name: 'Аня', username: 'meloch287' }, 'мальчики');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['750201677']);
+    h.msg({ id: 1057399602, is_bot: false, first_name: 'Саня', username: 'qk1nlyNTG' }, 'мама, маму - @meloch287');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['750201677']?.callName);
+    const m = h.store.getUser(String(GID)).members['750201677'];
+    assert.equal(m.callName, 'Мама', 'зовём так, как попросили');
+    assert.equal(m.name, 'Аня', 'паспортное имя нужно, чтобы связывать её сообщения');
+  } finally { h.restore(); }
+});
+
+test('выученное обращение переживает новые сообщения от человека', async () => {
+  const h = boot();
+  try {
+    h.msg({ id: 750201677, is_bot: false, first_name: 'Аня', username: 'meloch287' }, 'привет');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['750201677']);
+    h.msg({ id: 1057399602, is_bot: false, first_name: 'Саня', username: 'qk1nlyNTG' }, 'мама - @meloch287');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['750201677']?.callName);
+    // именно тут псевдоним терялся: следующее сообщение перезаписывало участника
+    h.msg({ id: 750201677, is_bot: false, first_name: 'Аня', username: 'meloch287' }, 'ну что там');
+    await sleep(120);
+    const m = h.store.getUser(String(GID)).members['750201677'];
+    assert.equal(m.callName, 'Мама');
+    assert.equal(m.name, 'Аня');
+  } finally { h.restore(); }
+});

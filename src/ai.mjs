@@ -52,7 +52,7 @@ const stripThink = (s) =>
 
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion, voiceStateLine, groupPersona } from './capabilities.mjs';
-import { membersBlock, membersRule } from './members.mjs';
+import { membersBlock, membersRule, renameAuthors } from './members.mjs';
 
 // Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
 // формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
@@ -401,7 +401,7 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
       : ['- пока пусто -']),
     '',
     ...(fresh.length
-      ? ['НЕДАВНЯЯ ПЕРЕПИСКА (сырьё, ещё не разложено в память):', ...fresh.map((r) => `- ${r.text.slice(0, 200)} (${fmtUser(r.ts, off, false)})`), '']
+      ? ['НЕДАВНЯЯ ПЕРЕПИСКА (сырьё, ещё не разложено в память):', ...fresh.map((r) => `- ${(memberLine ? renameAuthors(r.text, user) : r.text).slice(0, 200)} (${fmtUser(r.ts, off, false)})`), '']
       : []),
     'ДЕЛА И ДОЛГИ (структурированные записи):',
     ...(open.length ? open.map((e) => fmtEntry(e, off, now)) : ['- пока пусто -']),
@@ -412,7 +412,7 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
       if (user?.isGroup) {
         // user-строки уже с именем автора; свои ответы чистим от заражённого
         // «Имя:»-префикса, чтобы модель не перенимала этот формат
-        if (h.role === 'user') return h.text.slice(0, 250);
+        if (h.role === 'user') return renameAuthors(h.text, user).slice(0, 250);
         return `Ты: ${h.text.replace(/^[А-ЯЁA-Z][\wА-Яа-яЁё-]{1,19}:\s+/, '').slice(0, 250)}`;
       }
       return `${h.role === 'user' ? (user?.name || 'Друг') : 'Ты'}: ${h.text.slice(0, 250)}`;
@@ -547,7 +547,7 @@ export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = 
     '',
     ...(who ? [`УЧАСТНИКИ ЧАТА (других людей тут нет): ${who}`, membersRule(user), ''] : []),
     'ЗАПИСИ ЗА СЕГОДНЯ (с временем):',
-    ...(todayRaw.length ? todayRaw.map((r) => `${fmtUser(r.ts, off, true)}: ${r.text}`) : ['- сегодня записей не было -']),
+    ...(todayRaw.length ? todayRaw.map((r) => `${fmtUser(r.ts, off, true)}: ${who ? renameAuthors(r.text, user) : r.text}`) : ['- сегодня записей не было -']),
     '',
     'ФАКТЫ ЗА ПОСЛЕДНЕЕ ВРЕМЯ:',
     ...weekFacts.map((f) => `- ${f.text} (${fmtUser(f.ts, off, false)})`),
