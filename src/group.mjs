@@ -21,6 +21,51 @@ const RELATIONSHIP = new Set(
 );
 const isRelName = (w) => RELATIONSHIP.has(REL_STEM(w));
 
+// Основа -> каноническая форма родственного слова (именительный падеж).
+// Первый вариант в списке выигрывает: «дед» раньше «деда», иначе канон уехал бы
+// в косвенную форму.
+const REL_CANON = new Map();
+for (const w of ['мама', 'мать', 'мамка', 'папа', 'отец', 'папка', 'батя', 'сестра', 'сестрёнка', 'брат', 'братишка',
+  'жена', 'муж', 'супруг', 'супруга', 'бабушка', 'баба', 'дедушка', 'дед', 'тётя', 'дядя',
+  'сын', 'сынок', 'дочь', 'дочка', 'тёща', 'свекровь', 'свёкор', 'зять', 'невестка', 'сноха',
+  'внук', 'внучка', 'кум', 'кума', 'крёстный', 'крёстная', 'тесть', 'шурин', 'девушка', 'парень', 'друг', 'подруга']) {
+  const st = REL_STEM(w);
+  if (!REL_CANON.has(st)) REL_CANON.set(st, w);
+}
+
+// Падежи -> именительный. «маму»->«мама», «Серёгу»->«Серёга», «Аню»->«Аня».
+// Родственные слова берём из словаря (там чередования вроде «мать/матери»),
+// имена - по окончаниям. «-ей» НЕ трогаем: Сергей/Андрей/Алексей это уже
+// именительный, правило сломало бы их.
+export function toNominative(word) {
+  const w = String(word || '').trim();
+  if (!w) return w;
+  const low = w.toLowerCase();
+
+  const canon = REL_CANON.get(REL_STEM(w));
+  if (canon) return canon;
+  if (COMMON_NAMES.has(low.replace(/ё/g, 'е'))) return low; // уже именительный
+
+  const rules = [
+    [/^(.{2,})ой$/u, '$1а'], // Димой -> Дима
+    [/^(.{2,})у$/u, '$1а'],  // Сашу -> Саша, Марину -> Марина
+    [/^(.{2,})ю$/u, '$1я'],  // Аню -> Аня, Колю -> Коля
+    [/^(.{2,})ы$/u, '$1а'],  // Димы -> Дима
+    [/^(.{2,})и$/u, '$1я'],  // Ани -> Аня, Толи -> Толя
+  ];
+  for (const [re, to] of rules) {
+    if (re.test(low)) {
+      const cand = low.replace(re, to);
+      // если после правки получилось известное имя - точно оно
+      if (COMMON_NAMES.has(cand.replace(/ё/g, 'е')) || REL_CANON.has(REL_STEM(cand))) return cand;
+      return cand;
+    }
+  }
+  return low;
+}
+
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
 // Частые русские имена (+ уменьшительные) - чтобы отличить «@ник это сергей»
 // (имя) от «@ник это видео» (не имя) в строчном виде.
 const COMMON_NAMES = new Set(
@@ -60,7 +105,10 @@ export function extractIdentityPairs(text) {
     else if ((m = seg.match(_RE_NAME_UN))) { name = m[1]; un = m[2]; }
     if (un && name && okName(name) && !seen.has(un.toLowerCase())) {
       seen.add(un.toLowerCase());
-      pairs.push({ un, name: name[0].toUpperCase() + name.slice(1) });
+      // «маму - @ник» приходило и сохранялось как «Маму»: приводим к
+      // именительному, иначе в реестре оседает винительный падеж.
+      const nom = cap(toNominative(name));
+      pairs.push({ un, name: nom, isRel: isRelName(nom) });
     }
   }
   return pairs;
@@ -383,10 +431,21 @@ export function createGroupHandler(deps) {
     const pairs = extractIdentityPairs(text);
     if (pairs.length) {
       const members2 = { ...(g.members || {}) };
-      for (const { un, name } of pairs) {
+      for (const { un, name, isRel } of pairs) {
         const existing = Object.entries(members2).find(([, x]) => (x.username || '').toLowerCase() === un.toLowerCase());
-        if (existing) members2[existing[0]] = { ...existing[1], name };
-        else members2['u:' + un.toLowerCase()] = { name, username: un };
+        if (!existing) {
+          members2['u:' + un.toLowerCase()] = { name, username: un };
+          continue;
+        }
+        const [id, cur] = existing;
+        // «мама - @ник» для уже известной Ани раньше ПЕРЕТИРАЛО имя: человек
+        // становился «Мамой». Родственное слово - это псевдоним, а не имя.
+        if (isRel && cur.name && !isRelName(cur.name)) {
+          const aliases = [...new Set([...(cur.aliases || []), name])].slice(0, 5);
+          members2[id] = { ...cur, aliases };
+        } else {
+          members2[id] = { ...cur, name };
+        }
       }
       g = store.setUser(key, { members: members2 });
       store.addFacts(pairs.map(({ un, name }) => ({ chatId: key, text: `${name} - это @${un}`, people: [name] })));
@@ -455,7 +514,10 @@ export function createGroupHandler(deps) {
       }
       const hit = findMember(g.members, who);
       if (!hit) {
-        return send(chatId, `Не видел, чтобы ${esc(who)} тут писал. Пусть черкнёт разок, или скажи «${esc(who)} - это @ник», и я запомню.`);
+        // Фраза без согласования по роду и падежу: раньше выходило «чтобы маму
+        // тут писал». Имя приводим к именительному и строим нейтральный текст.
+        const nom = cap(toNominative(who));
+        return send(chatId, `Не знаю, кто тут ${esc(nom)}. Пусть напишет разок, или скажи «${esc(nom)} - это @ник», и запомню`);
       }
       const mention = mentionOf(hit, hit.id);
       const phrase = await relayText(hit.name || 'друг');

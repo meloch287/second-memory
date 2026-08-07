@@ -351,22 +351,23 @@ export function findMember(members, query) {
   }
   const qs = stem(q);
   if (qs.length < 2) return null;
+  // Имя И псевдонимы («мама», «батя»), которые навесили на человека фразой
+  // «мама - это @ник»: искать надо по всем, иначе «тегни маму» не находит Аню.
+  const namesOf = (m) => [m.name, ...(Array.isArray(m.aliases) ? m.aliases : [])].filter(Boolean);
   // сначала точное совпадение основы (иначе «Саша» может уехать в «Сашенька»
   // по порядку вставки), потом префиксы и транслит
   for (const [id, m] of Object.entries(members || {})) {
-    const n = stem(m.name || '');
-    if (n && (n === qs || toLat(n) === toLat(qs))) return { id, ...m };
+    if (namesOf(m).some((nm) => { const n = stem(nm); return n && (n === qs || toLat(n) === toLat(qs)); })) return { id, ...m };
   }
   const match = (n) => n && (n.startsWith(qs) || qs.startsWith(n) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
   for (const [id, m] of Object.entries(members || {})) {
-    if (match(stem(m.name || ''))) return { id, ...m };
+    if (namesOf(m).some((nm) => match(stem(nm)))) return { id, ...m };
   }
   // близкие формы: уменьшительные и падежи, которые не сходятся префиксом
   // («Серёгу»->«Сергей»), + опечатки. Правка-расстояние <=1 на основах >=4 букв.
   if (qs.length >= 4) {
     for (const [id, m] of Object.entries(members || {})) {
-      const n = stem(m.name || '');
-      if (n.length >= 4 && (editLE1(n, qs) || editLE1(toLat(n), toLat(qs)))) return { id, ...m };
+      if (namesOf(m).some((nm) => { const n = stem(nm); return n.length >= 4 && (editLE1(n, qs) || editLE1(toLat(n), toLat(qs))); })) return { id, ...m };
     }
   }
   return null;

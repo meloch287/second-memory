@@ -190,10 +190,11 @@ test('группа: «это мама» реплаем регистрирует,
 
 test('extractIdentityPairs: несколько пар за раз, защита от не-имён', async () => {
   const { extractIdentityPairs } = await import('../src/group.mjs');
+  const only = (arr) => arr.map(({ un, name }) => ({ un, name })); // без метаданных (isRel)
   const p = extractIdentityPairs('@meloch287 это мама запомни\n@Jjoopes это сергей');
-  assert.deepEqual(p, [{ un: 'meloch287', name: 'Мама' }, { un: 'Jjoopes', name: 'Сергей' }]);
-  assert.deepEqual(extractIdentityPairs('Никита это @pxpusk'), [{ un: 'pxpusk', name: 'Никита' }]);
-  assert.deepEqual(extractIdentityPairs('@serg - Сергей'), [{ un: 'serg', name: 'Сергей' }]);
+  assert.deepEqual(only(p), [{ un: 'meloch287', name: 'Мама' }, { un: 'Jjoopes', name: 'Сергей' }]);
+  assert.deepEqual(only(extractIdentityPairs('Никита это @pxpusk')), [{ un: 'pxpusk', name: 'Никита' }]);
+  assert.deepEqual(only(extractIdentityPairs('@serg - Сергей')), [{ un: 'serg', name: 'Сергей' }]);
   assert.deepEqual(extractIdentityPairs('@jjoopes это видео'), [], 'не-имя не связывается');
   assert.deepEqual(extractIdentityPairs('@jjoopes привет всем'), [], 'без связки не срабатывает');
   assert.deepEqual(extractIdentityPairs('глянь это @jjoopes'), [], 'глагол не имя');
@@ -215,7 +216,12 @@ test('группа: одно сообщение с двумя «@ник это �
   await groupFlow({ chat, from: { id: 50, first_name: 'Аня', username: 'meloch287' }, text: 'привет', message_id: 1 });
   await groupFlow({ chat, from: { id: 51, first_name: 'Серёга', username: 'Jjoopes' }, text: 'хай', message_id: 2 });
   await groupFlow({ chat, from: me, text: '@bot @meloch287 это мама запомни\n@Jjoopes это сергей', message_id: 3 });
-  assert.equal(store.getUser('-9').members['50'].name, 'Мама');
+  // «мама» - это ПСЕВДОНИМ, а не новое имя: живое имя Ани не перетирается
+  // (раньше человек в реестре превращался в «Маму»).
+  const m50 = store.getUser('-9').members['50'];
+  assert.equal(m50.name, 'Аня', 'имя участника сохранилось');
+  assert.ok((m50.aliases || []).includes('Мама'), 'родство ушло в псевдонимы: ' + JSON.stringify(m50));
+  // у Серёги имени-родства нет - обычное переименование работает как раньше
   assert.equal(store.getUser('-9').members['51'].name, 'Сергей');
   sent.length = 0;
   await groupFlow({ chat, from: me, text: '@bot тегни маму', message_id: 4 });
@@ -300,4 +306,47 @@ test('группа e2e: команды дёргают нужные методы 
   assert.ok((await run('переименуй топик в Новое', false, 55)).includes('editForumTopic'), 'topic rename');
   assert.ok((await run('закрой топик', false, 55)).includes('closeForumTopic'), 'topic close');
   assert.ok((await run('удали топик', false, 55)).includes('deleteForumTopic'), 'topic delete');
+});
+
+/* ---- Падежи: «маму - @ник» должно сохраняться как «Мама» ---- */
+
+test('toNominative: косвенные падежи -> именительный', async () => {
+  const { toNominative } = await import('../src/group.mjs');
+  // родственные слова (по словарю, с чередованиями)
+  for (const [from, to] of [['маму', 'мама'], ['мамы', 'мама'], ['маме', 'мама'], ['мамой', 'мама'],
+    ['батю', 'батя'], ['сестру', 'сестра'], ['брата', 'брат'], ['дедушку', 'дедушка'], ['дочь', 'дочь']]) {
+    assert.equal(toNominative(from), to, from);
+  }
+  // имена по окончаниям
+  for (const [from, to] of [['Серёгу', 'серёга'], ['Аню', 'аня'], ['Диму', 'дима'], ['Сашу', 'саша'],
+    ['Ани', 'аня'], ['Димы', 'дима'], ['Толи', 'толя']]) {
+    assert.equal(toNominative(from), to, from);
+  }
+  // уже именительный - не трогаем; «-ей» не ломаем (Сергей/Андрей это не падеж)
+  for (const w of ['мама', 'аня', 'дима', 'сергей', 'андрей', 'алексей']) {
+    assert.equal(toNominative(w), w, w);
+  }
+});
+
+test('extractIdentityPairs: «маму - @ник» -> имя «Мама», а не «Маму»', async () => {
+  const { extractIdentityPairs } = await import('../src/group.mjs');
+  assert.equal(extractIdentityPairs('мама, маму - @meloch287')[0].name, 'Мама');
+  assert.equal(extractIdentityPairs('@meloch287 это маму')[0].name, 'Мама');
+  assert.equal(extractIdentityPairs('@serg это Серёгу')[0].name, 'Серёга');
+  assert.equal(extractIdentityPairs('@anna_k это Аню')[0].name, 'Аня');
+  // родство помечается флагом - по нему решаем, псевдоним это или имя
+  assert.equal(extractIdentityPairs('@meloch287 это мама')[0].isRel, true);
+  assert.equal(extractIdentityPairs('@serg это Сергей')[0].isRel, false);
+});
+
+test('findMember: находит по псевдониму в любом падеже', async () => {
+  const { findMember } = await import('../src/parser.mjs');
+  const members = { 50: { name: 'Аня', username: 'meloch287', aliases: ['Мама'] } };
+  for (const q of ['мама', 'маму', 'мамы', 'маме', 'Мама']) {
+    assert.equal(findMember(members, q)?.username, 'meloch287', q);
+  }
+  // и по настоящему имени тоже
+  assert.equal(findMember(members, 'Аня')?.username, 'meloch287');
+  assert.equal(findMember(members, 'аню')?.username, 'meloch287');
+  assert.equal(findMember(members, 'петя'), null, 'чужого не находит');
 });
