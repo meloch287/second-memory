@@ -355,7 +355,7 @@ export function createMessageRouter(deps) {
         if (!(await callerIsAdmin(chatId, cb.from.id))) return send(chatId, 'Стереть память группы может только админ.');
         const title = prof.name;
         store.clearChatData(chatId);
-        store.setUser(chatId, { isGroup: true, name: title, botName: 'Помощник', tzOffset: DEFAULT_OFFSET, step: null });
+        store.setUser(chatId, { isGroup: true, name: title, botName: 'Толик', tzOffset: DEFAULT_OFFSET, step: null });
         return send(chatId, 'Всё, память группы чистая. Начинаем с нуля 👋');
       }
       store.clearChatData(chatId);
