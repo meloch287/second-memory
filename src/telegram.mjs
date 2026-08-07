@@ -30,7 +30,7 @@ import { parseProduct, titleFromSlug } from './wlparse.mjs';
 import { parseProductBrowser } from './wlparse-browser.mjs';
 import { createMessageRouter } from './telegram-router.mjs';
 import {
-  COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
+  COMMANDS, GROUP_COMMANDS, HELLO_AGAIN, esc, isConfusedReply,
   STEP_EXPLAIN, FALLBACKS, SLEEP_FIRST, SLEEP_AGAIN, WAKE_PREFIX, LOW_MOOD_RE,
 } from './telegram-helpers.mjs';
 
@@ -591,6 +591,8 @@ export function startTelegramBot(store, token, log = console) {
   (async () => {
     log.log('[telegram] бот запущен (long polling)');
     api('setMyCommands', { commands: COMMANDS }).catch(() => {});
+    // в группах меню другое: /summary вместо ЛК
+    api('setMyCommands', { commands: GROUP_COMMANDS, scope: { type: 'all_group_chats' } }).catch(() => {});
     // узнаём свой @username - нужен вебу для deep-link «Подключить Telegram»
     api('getMe', {}).then((me) => {
       if (me?.ok && me.result?.username && store.data.meta.botUsername !== me.result.username) {
