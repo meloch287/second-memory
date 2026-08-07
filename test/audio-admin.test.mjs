@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
 import { createAudioChoice, isAudioFile, audioInfo } from '../src/telegram-audio.mjs';
-import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage } from '../src/adminlog.mjs';
+import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel } from '../src/adminlog.mjs';
 
 delete process.env.SM_ENCRYPTION_KEY;
 const tmpFile = () => join(mkdtempSync(join(tmpdir(), 'sm-aa-')), 'm.json');
@@ -159,4 +159,78 @@ test('админ-журнал: текст обрезается, лишние з�
   const rec = logAdmin(s, { chatId: '1', kind: 'text', text: 'x'.repeat(5000) });
   assert.equal(rec.text.length, 2000, 'длинный текст обрезан');
   assert.equal(adminLogStats(s).total, 1);
+});
+
+/* --- Пересланные сообщения: в журнале должен остаться АВТОР оригинала --- */
+
+test('пересылка от пользователя: сохраняется кто автор, а не только кто переслал', () => {
+  const d = describeMessage({
+    text: 'вот, глянь',
+    forward_origin: { type: 'user', date: 1754500000, sender_user: { id: 750201677, first_name: 'Аня', username: 'meloch287' } },
+  });
+  assert.equal(d.kind, 'text');
+  assert.deepEqual(d.forward, { kind: 'user', id: '750201677', username: 'meloch287', name: 'Аня', date: new Date(1754500000000).toISOString() });
+  assert.equal(forwardLabel(d.forward), 'Аня (@meloch287)');
+});
+
+test('пересылка из канала: название канала и подпись автора', () => {
+  const d = describeMessage({
+    caption: 'важное',
+    photo: [{ file_id: 'f1', file_size: 100 }],
+    forward_origin: { type: 'channel', date: 1754500000, chat: { id: -1001, title: 'Новости', username: 'news' }, message_id: 42, author_signature: 'Редакция' },
+  });
+  assert.equal(d.kind, 'photo');
+  assert.equal(d.forward.kind, 'channel');
+  assert.equal(d.forward.messageId, 42);
+  assert.equal(forwardLabel(d.forward), 'канал «Новости», подпись: Редакция');
+});
+
+test('пересылка от скрытого профиля: остаётся хотя бы имя', () => {
+  const d = describeMessage({ text: 'секрет', forward_origin: { type: 'hidden_user', date: 1754500000, sender_user_name: 'Аня' } });
+  assert.equal(d.forward.kind, 'hidden');
+  assert.equal(forwardLabel(d.forward), 'Аня (скрытый профиль)');
+});
+
+test('старый формат forward_from тоже разбирается', () => {
+  const d = describeMessage({ text: 'ретро', forward_from: { id: 5986736818, first_name: 'Сергей' }, forward_date: 1754500000 });
+  assert.equal(d.forward.id, '5986736818');
+  assert.equal(d.forward.name, 'Сергей');
+});
+
+test('обычное сообщение: forward пустой, ничего не выдумываем', () => {
+  const d = describeMessage({ text: 'просто текст' });
+  assert.equal(d.forward, null);
+  assert.equal(forwardLabel(d.forward), '');
+});
+
+test('ответ на сообщение и альбом попадают в запись', () => {
+  const d = describeMessage({
+    photo: [{ file_id: 'p1' }],
+    media_group_id: '13579',
+    reply_to_message: { message_id: 7, from: { id: 1, first_name: 'Аня', username: 'meloch287' }, text: 'а покажи' },
+  });
+  assert.equal(d.albumId, '13579');
+  assert.deepEqual(d.replyTo, { messageId: 7, userId: '1', username: 'meloch287', name: 'Аня', text: 'а покажи' });
+});
+
+test('журнал сохраняет автора пересылки, ответ и альбом', () => {
+  const store = new Store(tmpFile());
+  const d = describeMessage({
+    text: 'смотри что скинули',
+    media_group_id: '99',
+    forward_origin: { type: 'user', date: 1754500000, sender_user: { id: 750201677, first_name: 'Аня', username: 'meloch287' } },
+    reply_to_message: { message_id: 3, from: { id: 2, first_name: 'Сергей' }, text: 'ну?' },
+  });
+  logAdmin(store, { ...d, chatId: '-100', userId: '1057399602', username: 'qk1nlyNTG', name: 'Саня' });
+  const [rec] = adminLogList(store, { chatId: '-100', limit: 5 });
+  assert.equal(rec.userId, '1057399602');       // переслал Саня
+  assert.equal(rec.forward.name, 'Аня');         // а написала Аня
+  assert.equal(rec.replyTo.name, 'Сергей');
+  assert.equal(rec.albumId, '99');
+});
+
+test('служебные события чата тоже видны в журнале', () => {
+  assert.equal(describeMessage({ new_chat_members: [{ first_name: 'Аня', username: 'meloch287' }] }).kind, 'join');
+  assert.equal(describeMessage({ left_chat_member: { first_name: 'Сергей' } }).kind, 'leave');
+  assert.equal(describeMessage({ pinned_message: { text: 'важное' } }).kind, 'pin');
 });

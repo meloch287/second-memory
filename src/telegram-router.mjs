@@ -9,7 +9,7 @@ import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { parseIcs } from './ics.mjs';
 import { ID_CMD } from './telegram-idpicker.mjs';
-import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage } from './adminlog.mjs';
+import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel } from './adminlog.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 
@@ -320,7 +320,10 @@ export function createMessageRouter(deps) {
           const t2 = new Date(r.ts).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
           const who = r.name || r.username || r.userId || '?';
           const what = r.kind === 'text' ? (r.text || '') : `[${r.kind}]${r.fileName ? ' ' + r.fileName : ''} ${r.text || ''}`;
-          return `${t2} · ${who}${r.username ? ' (@' + r.username + ')' : ''}: ${what}`.slice(0, 160);
+          // пересылку и ответ подписываем: иначе видно только того, кто нажал кнопку
+          const fwd = r.forward ? ` ⤴ от ${forwardLabel(r.forward)}` : '';
+          const rep = r.replyTo ? ` ↩ ${r.replyTo.name || r.replyTo.username || r.replyTo.userId || '?'}` : '';
+          return `${t2} · ${who}${r.username ? ' (@' + r.username + ')' : ''}${fwd}${rep}: ${what}`.slice(0, 200);
         }).join('\n');
         return send(chatId, `<b>Последние ${rows.length}</b>\n\n<code>${esc(body)}</code>`);
       }
