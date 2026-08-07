@@ -52,6 +52,7 @@ const stripThink = (s) =>
 
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion, voiceStateLine, groupPersona } from './capabilities.mjs';
+import { membersBlock, membersRule } from './members.mjs';
 
 // Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
 // формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
@@ -380,17 +381,8 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   // Список участников: имя + @username, чтобы бот связывал упоминания «@ник»
   // в тексте с конкретным человеком. Пустые/мусорные имена сюда не пускаем -
   // из-за них бот терял, кто есть кто.
-  const memberLine = user?.isGroup && user.members
-    ? Object.values(user.members)
-        .map((m) => {
-          const nm = String(m.name || '').trim();
-          const readable = /[\p{L}\p{N}]/u.test(nm) ? nm : m.username ? `@${m.username}` : null;
-          if (!readable) return null;
-          return readable + (m.username && readable !== `@${m.username}` ? ` (@${m.username})` : '');
-        })
-        .filter(Boolean)
-        .join(', ')
-    : null;
+  const memberLine = membersBlock(user);
+  const memberRule = memberLine ? membersRule(user) : null;
   // свежая переписка, которую воркер ещё не переварил в факты: без неё бот
   // «не видит» только что сказанное и свежеимпортированную историю
   const factTs = new Set(facts.map((f) => f.ts));
@@ -401,7 +393,7 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   return [
     nowLine(off, now),
     '',
-    ...(memberLine ? [`УЧАСТНИКИ ГРУППЫ (тут пишут): ${memberLine}`, ''] : []),
+    ...(memberLine ? [`УЧАСТНИКИ ГРУППЫ (тут пишут): ${memberLine}`, memberRule, ''] : []),
     ...(personaLines.length ? ['ЛЮДИ В ЕГО ЖИЗНИ (досье):', ...personaLines, ''] : []),
     'ПАМЯТЬ (факты из прошлых разговоров):',
     ...(facts.length
@@ -538,7 +530,7 @@ export async function aiSearch(store, chatId, query, now = new Date()) {
 const DIARY_TASK =
   '\n\nПодведи итоги дня как друг, не как секретарь. Структура: строка «🕒 Утро», строка «💼 День», строка «🌙 Вечер» - по паре живых фраз о том, что было (пропусти главу, если пусто). В конце «💡 Инсайт» - одна умная мысль или совет по итогам недели. Если сегодня записей не было, скажи об этом тепло и предложи рассказать, как прошёл день.';
 const GROUP_TASK =
-  '\n\nПодведи итоги по чату за сегодня. Структура: «💬 О чём базарили» - 2-4 пункта по темам, с именами кто что сказал; «✅ Что решили» - договорённости (пропусти, если не было); «⏳ Что висит» - открытые дела и долги (пропусти, если пусто). Имена бери из записей, не выдумывай. Если за сегодня тишина - так и скажи, коротко.';
+  '\n\nПодведи итоги по чату за сегодня. Структура: «💬 О чём базарили» - 2-4 пункта по темам, с именами кто что сказал; «✅ Что решили» - договорённости (пропусти, если не было); «⏳ Что висит» - открытые дела и долги (пропусти, если пусто). Имена бери ТОЛЬКО из списка участников выше: имя, @ник и прозвище одного человека - это один человек, не разводи его на двоих. Кого нет в списке - того нет в чате. Если за сегодня тишина - так и скажи, коротко.';
 
 export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = null) {
   const user = store.getUser(chatId);
@@ -547,9 +539,13 @@ export async function aiDiarySummary(store, chatId, now = new Date(), onDelta = 
   const todayRaw = store.rawForDay(chatId, start, end);
   const weekFacts = store.factsFor(chatId, '', 40);
   const open = store.list({ status: 'open', chatId }).slice(0, 30);
+  // В группе список участников с псевдонимами обязателен: без него модель
+  // считала «маму» и «Аню» разными людьми и сочиняла итоги про несуществующих.
+  const who = user?.isGroup ? membersBlock(user) : null;
   const context = [
     dateHeader(off, now),
     '',
+    ...(who ? [`УЧАСТНИКИ ЧАТА (других людей тут нет): ${who}`, membersRule(user), ''] : []),
     'ЗАПИСИ ЗА СЕГОДНЯ (с временем):',
     ...(todayRaw.length ? todayRaw.map((r) => `${fmtUser(r.ts, off, true)}: ${r.text}`) : ['- сегодня записей не было -']),
     '',

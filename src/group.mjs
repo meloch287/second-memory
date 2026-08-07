@@ -259,7 +259,11 @@ export function createGroupHandler(deps) {
       // Уже знаем человеческое имя (его назвали в чате или подтянули из профиля) -
       // не откатываем его обратно на @username при каждом новом сообщении.
       const known = cur?.name && cur.name !== cur.username ? cur.name : '';
-      const name = fromTg || known || cleanName(u.username) || 'Участник';
+      // Человек может прятать имя в Telegram, но при этом писать боту в личку -
+      // там имя есть (в Telegram id личного чата = id пользователя). Лучше
+      // «Саша», чем «@qk1nlyNTG» во всех итогах по чату.
+      const fromDm = cleanName(store.getUser(String(u.id))?.name);
+      const name = fromTg || known || fromDm || cleanName(u.username) || 'Участник';
       const username = u.username || null;
       if (!cur || cur.name !== name || cur.username !== username) {
         members[u.id] = { ...(cur || {}), name, username };
