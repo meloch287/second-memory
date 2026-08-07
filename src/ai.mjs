@@ -1,14 +1,13 @@
-// ИИ-слой. Два OpenAI-совместимых провайдера:
-//  - текстовый (по умолчанию GonkaGate, minimax-m2.7: рассуждения приходят в
-//    <think>-тегах и вырезаются; kimi-k2.6 льёт рассуждения без тегов, не брать) -
-//    ответы, саммари, факты;
-//  - аудио (по умолчанию polza.ai, gemini-2.5-flash-lite) - расшифровка голосовых,
-//    GonkaGate работает только с текстом.
+// ИИ-слой. Один OpenAI-совместимый провайдер - polza.ai:
+//  - текст (gemini-2.5-flash) - ответы, саммари, факты;
+//  - аудио (gemini-2.5-flash-lite) - расшифровка голосовых.
+// Рассуждения reasoning-моделей в <think>-тегах всё равно вырезаем: провайдера
+// можно сменить через AI_BASE_URL/AI_MODEL, не трогая код.
 
 const TEXT = () => ({
   key: process.env.AI_API_KEY,
-  url: process.env.AI_BASE_URL || 'https://api.gonkagate.com/v1',
-  model: process.env.AI_MODEL || 'minimaxai/minimax-m2.7',
+  url: process.env.AI_BASE_URL || 'https://api.polza.ai/v1',
+  model: process.env.AI_MODEL || 'google/gemini-2.5-flash',
 });
 
 export const AUDIO = () => ({
@@ -17,8 +16,9 @@ export const AUDIO = () => ({
   model: process.env.AI_AUDIO_MODEL || 'google/gemini-2.5-flash-lite',
 });
 
-// Фоновый worker фактов может работать на отдельном провайдере
-// (жёсткий поминутный лимит фону не мешает). По умолчанию - как текстовый.
+// Фоновый worker фактов по умолчанию идёт на тот же провайдер, что и текст.
+// Отдельный шлюз можно задать через AI_WORKER_*, но если он ляжет - askWorker
+// молча повторит запрос на основном (память бота вставала на этом часами).
 export const WORKER = () => ({
   key: process.env.AI_WORKER_API_KEY || TEXT().key,
   url: process.env.AI_WORKER_BASE_URL || TEXT().url,
@@ -195,6 +195,21 @@ export async function chatCompletion(cfg, messages, { maxTokens = 1600, timeoutM
 }
 
 export const ask = (messages, opts) => chatCompletion(TEXT(), messages, opts);
+
+// Фоновые задачи ходят на свой (часто более дешёвый) шлюз. Когда он лежит,
+// молча копится необработанное сырьё - память бота встаёт, а пользователь
+// этого не видит. Поэтому при отказе повторяем на основном провайдере.
+export async function askWorker(messages, opts) {
+  const w = WORKER();
+  const main = TEXT();
+  try {
+    return await chatCompletion(w, messages, opts);
+  } catch (e) {
+    const sameGate = w.url === main.url && w.model === main.model;
+    if (sameGate || !main.key) throw e;
+    return chatCompletion(main, messages, opts);
+  }
+}
 
 const pad = (n) => String(n).padStart(2, '0');
 

@@ -4,7 +4,7 @@
 // chatCompletion, AUDIO, WORKER, fmtLocal, friendSystem, STYLE_FMT).
 
 import { userOffset, fmtUser } from './tz.mjs';
-import { ask, chatCompletion, AUDIO, WORKER, fmtLocal, friendSystem, STYLE_FMT } from './ai.mjs';
+import { ask, askWorker, chatCompletion, AUDIO, fmtLocal, friendSystem, STYLE_FMT } from './ai.mjs';
 
 // Спецификация графика по памяти чата: ИИ выбирает данные и тип.
 // null - если по памяти нечего рисовать.
@@ -220,8 +220,7 @@ export async function aiExtractReceipt(base64, mime = 'image/jpeg') {
 export async function aiConsolidate(oldFacts, personasNow = {}) {
   const list = oldFacts.map((f, i) => `${i + 1}. ${f.text}${f.people?.length ? ` [${f.people.join(', ')}]` : ''} (${(f.ts || '').slice(0, 10)})`).join('\n');
   const personaList = Object.entries(personasNow).map(([n, t]) => `- ${n}: ${t}`).join('\n') || '- пока нет -';
-  const text = await chatCompletion(
-    WORKER(),
+  const text = await askWorker(
     [
       {
         role: 'user',
@@ -339,8 +338,7 @@ export async function aiSummarizeText(text, filename) {
 // записи (долги, задачи, встречи), которые мог упустить быстрый парсер.
 export async function aiExtractFacts(rawItems, now = new Date()) {
   const list = rawItems.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
-  const text = await chatCompletion(
-    WORKER(),
+  const text = await askWorker(
     [
       {
         role: 'user',

@@ -71,7 +71,9 @@ export function startFactWorker(store, log = console, intervalMs = 600000) {
         }
       }
     } catch (e) {
-      log.error('[worker]', e.message);
+      // сколько сырья скопилось - без этого числа отказ шлюза выглядит
+      // безобидной строчкой в логе, а память бота стоит часами
+      log.error('[worker]', e.message, `(необработанного: ${store.unprocessedRaw(9999).length})`);
     }
     busy = false;
   };
