@@ -81,7 +81,20 @@ export function createGroupHandler(deps) {
   }
 
   const isGroupChat = (msg) => ['group', 'supergroup'].includes(msg.chat?.type);
-  const authorName = (msg) => msg.from?.first_name || msg.from?.username || 'Кто-то';
+  // Имя участника из Telegram бывает мусорным: невидимые символы (U+2060 и
+  // компания), одни эмодзи или пробелы. Такое имя ПРОХОДИТ проверку `||`
+  // (строка непустая) и потом ломает подписи «Имя: текст» - бот перестаёт
+  // понимать, кто говорит. Поэтому чистим и падаем на username.
+  const cleanName = (raw) => {
+    const s = String(raw || '')
+      .replace(/[​-‏⁠-⁤﻿­]/g, '') // невидимые
+      .replace(/\s+/g, ' ')
+      .trim();
+    // осталось что-то читаемое (буква или цифра) - берём
+    return /[\p{L}\p{N}]/u.test(s) ? s.slice(0, 40) : '';
+  };
+  const authorName = (msg) =>
+    cleanName(msg.from?.first_name) || cleanName(msg.from?.username) || 'Кто-то';
 
   function mentionsBot(text) {
     return !!(botUsername && text && new RegExp(`@${botUsername}(?![\\w])`, 'i').test(text));
@@ -178,7 +191,11 @@ export function createGroupHandler(deps) {
     // профиль группы: общая память, без онбординга, пинги отключены флагом isGroup
     let g = store.getUser(key);
     if (!g || !g.isGroup) {
-      g = store.setUser(key, { isGroup: true, name: msg.chat.title || 'Группа', botName: g?.botName || 'Помощник', tzOffset: g?.tzOffset ?? DEFAULT_OFFSET, step: null });
+      g = store.setUser(key, { isGroup: true, name: msg.chat.title || 'Группа', botName: 'Толик', tzOffset: g?.tzOffset ?? DEFAULT_OFFSET, step: null });
+    } else if (g.botName === 'Помощник' || !g.botName) {
+      // Апгрейд уже заведённых групп: Толик - одно имя во всех чатах. Со старым
+      // дефолтом люди звали «Толик», а бот считал себя «Помощником» и путался.
+      g = store.setUser(key, { botName: 'Толик' });
     }
 
     // реестр участников: каждый, кто пишет (или кого добавили) - в справочник,
@@ -188,7 +205,9 @@ export function createGroupHandler(deps) {
     const remember = (u) => {
       if (!u || u.is_bot) return;
       const cur = members[u.id];
-      const name = u.first_name || u.username || '';
+      // та же чистка, что и в authorName: иначе в списке участников оседает
+      // невидимое имя и бот не может связать человека с его сообщениями
+      const name = cleanName(u.first_name) || cleanName(u.username) || 'Участник';
       const username = u.username || null;
       if (!cur || cur.name !== name || cur.username !== username) {
         members[u.id] = { name, username };

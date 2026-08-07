@@ -377,8 +377,19 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   const history = store.recentHistory(12, chatId);
   const personas = store.getPersonas(chatId);
   const personaLines = Object.entries(personas).map(([name, note]) => `- ${name}: ${note}`);
+  // Список участников: имя + @username, чтобы бот связывал упоминания «@ник»
+  // в тексте с конкретным человеком. Пустые/мусорные имена сюда не пускаем -
+  // из-за них бот терял, кто есть кто.
   const memberLine = user?.isGroup && user.members
-    ? Object.values(user.members).map((m) => m.name + (m.username ? ` (@${m.username})` : '')).join(', ')
+    ? Object.values(user.members)
+        .map((m) => {
+          const nm = String(m.name || '').trim();
+          const readable = /[\p{L}\p{N}]/u.test(nm) ? nm : m.username ? `@${m.username}` : null;
+          if (!readable) return null;
+          return readable + (m.username && readable !== `@${m.username}` ? ` (@${m.username})` : '');
+        })
+        .filter(Boolean)
+        .join(', ')
     : null;
   // свежая переписка, которую воркер ещё не переварил в факты: без неё бот
   // «не видит» только что сказанное и свежеимпортированную историю
