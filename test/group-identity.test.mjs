@@ -191,3 +191,28 @@ test('выученное обращение переживает новые со
     assert.equal(m.name, 'Аня');
   } finally { h.restore(); }
 });
+
+test('Telegram-имя, равное @нику, не затирает имя из лички', async () => {
+  const h = boot();
+  try {
+    // в личке бот знает человека как «Саня», в Telegram у него display name = ник
+    h.store.setUser('1057399602', { name: 'Саня' });
+    h.msg({ id: 1057399602, is_bot: false, first_name: 'qk1nlyNTG', username: 'qk1nlyNTG' }, 'здарова');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['1057399602']);
+    assert.equal(h.store.getUser(String(GID)).members['1057399602'].name, 'Саня');
+  } finally { h.restore(); }
+});
+
+test('выученное имя переживает следующие сообщения (не откатывается на ник)', async () => {
+  const h = boot();
+  try {
+    h.msg({ id: 42, is_bot: false, first_name: 'nickname_only', username: 'nickname_only' }, 'привет');
+    await waitFor(() => h.store.getUser(String(GID))?.members?.['42']);
+    const members = { ...h.store.getUser(String(GID)).members };
+    members['42'] = { ...members['42'], name: 'Пётр' }; // как будто научили или мигрировали
+    h.store.setUser(String(GID), { members });
+    h.msg({ id: 42, is_bot: false, first_name: 'nickname_only', username: 'nickname_only' }, 'ещё сообщение');
+    await sleep(120);
+    assert.equal(h.store.getUser(String(GID)).members['42'].name, 'Пётр');
+  } finally { h.restore(); }
+});

@@ -263,7 +263,11 @@ export function createGroupHandler(deps) {
       // там имя есть (в Telegram id личного чата = id пользователя). Лучше
       // «Саша», чем «@qk1nlyNTG» во всех итогах по чату.
       const fromDm = cleanName(store.getUser(String(u.id))?.name);
-      const name = fromTg || known || fromDm || cleanName(u.username) || 'Участник';
+      // Telegram-имя, равное собственному @нику, - это не имя, а заглушка:
+      // иначе оно бьёт и выученное имя, и имя из лички при КАЖДОМ сообщении
+      // (человек навсегда оставался «qk1nlyNTG» вместо «Саня»).
+      const tgName = fromTg && fromTg.toLowerCase() !== String(u.username || '').toLowerCase() ? fromTg : '';
+      const name = tgName || known || fromDm || cleanName(u.username) || 'Участник';
       const username = u.username || null;
       if (!cur || cur.name !== name || cur.username !== username) {
         members[u.id] = { ...(cur || {}), name, username };
