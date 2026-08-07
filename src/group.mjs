@@ -255,11 +255,27 @@ export function createGroupHandler(deps) {
       const cur = members[u.id];
       // та же чистка, что и в authorName: иначе в списке участников оседает
       // невидимое имя и бот не может связать человека с его сообщениями
-      const name = cleanName(u.first_name) || cleanName(u.username) || 'Участник';
+      const fromTg = cleanName(u.first_name);
+      // Уже знаем человеческое имя (его назвали в чате или подтянули из профиля) -
+      // не откатываем его обратно на @username при каждом новом сообщении.
+      const known = cur?.name && cur.name !== cur.username ? cur.name : '';
+      const name = fromTg || known || cleanName(u.username) || 'Участник';
       const username = u.username || null;
       if (!cur || cur.name !== name || cur.username !== username) {
-        members[u.id] = { name, username };
+        members[u.id] = { ...(cur || {}), name, username };
         membersChanged = true;
+      }
+      // Схлопываем заглушку «u:ник», заведённую фразой «@ник это Имя» до того,
+      // как человек написал сам: иначе один участник висит в реестре дважды.
+      if (username) {
+        const stubKey = 'u:' + username.toLowerCase();
+        const stub = members[stubKey];
+        if (stub) {
+          const aliases = [...new Set([...(members[u.id].aliases || []), ...(stub.aliases || []), ...(stub.name && stub.name !== members[u.id].name ? [stub.name] : [])])].slice(0, 5);
+          members[u.id] = { ...members[u.id], ...(aliases.length ? { aliases } : {}) };
+          delete members[stubKey];
+          membersChanged = true;
+        }
       }
     };
     remember(msg.from);

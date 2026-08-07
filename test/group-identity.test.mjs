@@ -129,3 +129,34 @@ test('групповая персона: список участников и з
   assert.match(g, /спрашивают про УЧАСТНИКА с этим именем, а НЕ про тебя/);
   assert.match(g, /ЗАПРЕЩЕНО называть себя ботом/);
 });
+
+test('человеческое имя не откатывается на @username при новом сообщении', async () => {
+  const h = boot();
+  try {
+    // в реестре уже есть нормальное имя (подтянули из профиля/назвали в чате)
+    h.store.setUser(String(GID), {
+      isGroup: true, name: 'Банда', botName: 'Толик', tzOffset: 180, step: null,
+      members: { 1057399602: { name: 'Саня', username: 'qk1nlyNTG' } },
+    });
+    // приходит сообщение, где first_name по-прежнему невидимый символ
+    h.msg({ id: 1057399602, is_bot: false, first_name: '⁠', username: 'qk1nlyNTG' }, 'ку');
+    await sleep(200);
+    assert.equal(h.store.getUser(String(GID)).members['1057399602'].name, 'Саня', 'имя сохранилось');
+  } finally { h.restore(); }
+});
+
+test('заглушка «u:ник» схлопывается, когда человек написал сам', async () => {
+  const h = boot();
+  try {
+    h.store.setUser(String(GID), {
+      isGroup: true, name: 'Банда', botName: 'Толик', tzOffset: 180, step: null,
+      members: { 'u:jjjoopes': { name: 'Сергей', username: 'Jjjoopes' } },
+    });
+    h.msg({ id: 51, is_bot: false, first_name: 'Серёга', username: 'Jjjoopes' }, 'хай');
+    await sleep(200);
+    const ms = h.store.getUser(String(GID)).members;
+    assert.ok(!ms['u:jjjoopes'], 'заглушка убрана');
+    assert.equal(ms['51'].name, 'Серёга');
+    assert.ok((ms['51'].aliases || []).includes('Сергей'), 'прежнее имя стало псевдонимом');
+  } finally { h.restore(); }
+});
