@@ -8,6 +8,7 @@ import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { captureEntry, handleMessage } from './brain.mjs';
 import { userOffset, DEFAULT_OFFSET } from './tz.mjs';
 import { aiEnabled, audioEnabled, aiFriendReply, aiRelay, aiTranscribe } from './ai.mjs';
+import { canonStem, nickStem } from './nicknames.mjs';
 
 // Родственные/ролевые слова - валидные «имена» в строчном виде («это мама»,
 // «это батя»). Основа = слово без хвостовых гласных/ь/й, как в findMember,
@@ -65,6 +66,24 @@ export function toNominative(word) {
 }
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+// Слова, которые в «позови X» именем быть не могут.
+const NOT_A_NAME = /^(?:ты|вы|я|мы|он|она|они|нас|вас|их|кто|кого|кого[- ]нибудь|кого[- ]то|сюда|туда|тут|там|сам|сама|уже|быстро|давай|плиз|пожалуйста)$/i;
+
+// Похоже ли слово на имя человека. Глаголы («починил», «устал», «пришёл»)
+// отсекаем по окончаниям - иначе «Я починил» переименовывало человека.
+const VERBISH = /(?:л|ла|ло|ли|ся|сь|ю|у|ешь|ет|ем|ете|ут|ют|ат|ят|ил|ал|ел|ну|ть)$/i;
+export function looksLikeName(word) {
+  const w = String(word || '').trim();
+  if (w.length < 2) return false;
+  const low = w.toLowerCase().replace(/ё/g, 'е');
+  if (COMMON_NAMES.has(low) || isRelName(w)) return true;
+  if (canonStem(low) !== nickStem(low)) return true; // уменьшительное из словаря
+  if (VERBISH.test(low)) return false;
+  // регистр в группе захвата исходный (флаг i влияет только на поиск):
+  // «Я Саша» - имя, «Я починил» - нет
+  return /^[А-ЯЁA-Z]/.test(w);
+}
 
 // Частые русские имена (+ уменьшительные) - чтобы отличить «@ник это сергей»
 // (имя) от «@ник это видео» (не имя) в строчном виде.
@@ -423,7 +442,10 @@ export function createGroupHandler(deps) {
     // «я Никита» - работает и БЕЗ обращения к боту: человек просто
     // представился в чате; имя в реестр + факт (RAG знает сразу)
     const iam = text.match(/^(?:я|меня зовут)\s+([А-Яа-яЁёA-Za-z]{2,20})[!.]*$/i);
-    if (iam && msg.from) {
+    // «Я починил», «я устал», «я приду» - это НЕ представление. Имя должно
+    // выглядеть именем: известное (словарь/уменьшительные), родственное слово,
+    // с заглавной буквы - и точно не глагол.
+    if (iam && msg.from && looksLikeName(iam[1], text)) {
       const newName = iam[1][0].toUpperCase() + iam[1].slice(1);
       const members2 = { ...(g.members || {}) };
       members2[msg.from.id] = { ...(members2[msg.from.id] || {}), name: newName, username: msg.from.username || members2[msg.from.id]?.username || null };
@@ -492,7 +514,7 @@ export function createGroupHandler(deps) {
     if (!addressed) return; // без обращения молчим, только запоминаем
 
     // «Тегни всех» (№3): пинг всех из реестра, кулдаун 10 минут от спама
-    if (/(?:^|[\s,!])(?:тегни|позови|собери|подними)\s+всех|^@?все сюда/i.test(text)) {
+    if (/(?:^|[\s,!])(?:т[еэ]гни|позови|зови|собери|подними|созови|свистни)\s+(?:всех|всем|народ|пацанов|ребят)|^@?все сюда/i.test(text)) {
       if (Date.now() - (g.lastAllPing || 0) < 10 * 60000) {
         return send(chatId, 'Всех уже недавно звал - не буду спамить, подожди пару минут 🙂');
       }
@@ -508,7 +530,7 @@ export function createGroupHandler(deps) {
     }
 
     // «тегни его/её» ответом на чьё-то сообщение - тегаем автора того сообщения
-    if (/^(?:тегни|тэгни|пингани|позови|призови)\s+(?:его|её|ее)[!?.\s]*$/i.test(text)) {
+    if (/^(?:т[еэ]гни|пингани|позови|призови|зови|дерни|дёрни)\s+(?:его|её|ее)[!?.\s]*$/i.test(text)) {
       const t = msg.reply_to_message?.from;
       if (t && !t.is_bot) {
         return send(chatId, `${mentionOf({ username: t.username, name: t.first_name }, t.id)}, тебя ${esc(fromName)} зовёт 🙂`);
@@ -518,7 +540,7 @@ export function createGroupHandler(deps) {
 
     // Тегнуть участника: «тегни Никиту», «серег, тегни никиту и скажи что...».
     // «скажи/передай что X» - ИИ формулирует реплику адресату сам.
-    const tag = text.match(/(?:^|[\s,!])(?:т[еэ]гни+|пингани|позови|призови)\s+@?(.+)$/i);
+    const tag = text.match(/(?:^|[\s,!])(?:т[еэ]гни+|т[еэ]гай|пингани|пингуй|позови|призови|зови|дерни|дёрни|свистни|крикни|кликни|разбуди)\s+@?(.+)$/i);
     if (tag) {
       let who = tag[1].trim();
       let relay = null;
@@ -545,6 +567,9 @@ export function createGroupHandler(deps) {
         }
         return send(chatId, 'Ответь командой на сообщение самого человека - пойму, кого звать.');
       }
+      // «Позови ты», «позови сюда», «позови кого-нибудь» - тут нет имени.
+      // Раньше бот отвечал «Не знаю, кто тут Ты» и выглядел дураком.
+      if (NOT_A_NAME.test(who)) return send(chatId, 'Кого позвать-то? Напиши имя или @ник');
       const hit = findMember(g.members, who);
       if (!hit) {
         // Фраза без согласования по роду и падежу: раньше выходило «чтобы маму

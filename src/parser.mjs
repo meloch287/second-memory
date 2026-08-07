@@ -2,6 +2,7 @@
 // запрос («покажи…», «сколько…»), команда («готово 3», «удали 5») или помощь.
 
 import { extractDate, extractAmount, normText, monthIndex } from './dates.mjs';
+import { sameName } from './nicknames.mjs';
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
@@ -362,6 +363,12 @@ export function findMember(members, query) {
   const match = (n) => n && (n.startsWith(qs) || qs.startsWith(n) || toLat(n).startsWith(toLat(qs)) || toLat(qs).startsWith(toLat(n)));
   for (const [id, m] of Object.entries(members || {})) {
     if (namesOf(m).some((nm) => match(stem(nm)))) return { id, ...m };
+  }
+  // уменьшительные по словарю: «Серёжу»->«Сергей», «Саню»->«Александр».
+  // По буквам они не сходятся вовсе (серёж / серге - две замены), поэтому
+  // словарь идёт ДО правки-расстояния.
+  for (const [id, m] of Object.entries(members || {})) {
+    if (namesOf(m).some((nm) => sameName(nm, q))) return { id, ...m };
   }
   // близкие формы: уменьшительные и падежи, которые не сходятся префиксом
   // («Серёгу»->«Сергей»), + опечатки. Правка-расстояние <=1 на основах >=4 букв.
