@@ -94,8 +94,11 @@ export function parseWater(text) {
   if (glasses) return clamp((parseInt(glasses[1] || '1', 10) || 1) * 250, 50, 5000);
   const bottle = s.match(/(\d+)?\s*бутыл/);
   if (bottle) return clamp((parseInt(bottle[1] || '1', 10) || 1) * 500, 50, 5000);
-  const liters = s.match(/(\d+(?:[.,]\d+)?)\s*л(?![а-я])/);
+  if (/пол\s*-?\s*литр/.test(s)) return 500;
+  // «1 литр» раньше не ловилось: после «л» шла буква, а lookahead её запрещал
+  const liters = s.match(/(\d+(?:[.,]\d+)?)\s*л(?:итр\w*)?(?![а-яa-z])/);
   if (liters) return clamp(Math.round(parseFloat(liters[1].replace(',', '.')) * 1000), 50, 5000);
+  if (/(?:^|[\s,])литр\w*(?![а-яё])/.test(s)) return 1000; // «выпил литр воды»
   const ml = s.match(/(\d{2,4})/);
   if (ml) return clamp(parseInt(ml[1], 10), 50, 5000);
   return null;

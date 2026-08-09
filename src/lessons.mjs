@@ -196,3 +196,35 @@ export async function runRetro({ store, log, aiRetro, chatId, now = Date.now(), 
     return [];
   }
 }
+
+// Ответ подряд открывается именем собеседника - в живых диалогах так было
+// 47 раз из ~110. Промпту одному верить нельзя, поэтому режем детерминированно:
+// если ПРЕДЫДУЩИЙ ответ уже начинался с имени, у текущего вокатив снимаем.
+export function stripRepeatVocative(reply, name, history) {
+  const nm = String(name || '').trim();
+  if (!reply || nm.length < 3) return reply;
+  // В речи имя усечено до звательной формы: «Аня» -> «Ань», «Саша» -> «Саш».
+  // Поэтому сравниваем по основе с коротким хвостом.
+  const base = nm.replace(/[аеёиоуыэюя]$/i, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const esc = `${base}[а-яё]{0,2}`;
+  const opensWithName = (s) => new RegExp(`^(?:ну\\s+|о+,?\\s+|эй,?\\s+|слушай,?\\s+|ага,?\\s+)?${esc}[,!.:\\s-]+`, 'i').test(String(s || '').trim());
+  const prev = [...history].reverse().find((h) => h.role === 'assistant');
+  if (!prev || !opensWithName(prev.text) || !opensWithName(reply)) return reply;
+  return String(reply)
+    .replace(new RegExp(`^(?:ну\\s+|о+,?\\s+|эй,?\\s+|слушай,?\\s+|ага,?\\s+)?${esc}[,!.:\\s-]+`, 'i'), '')
+    .replace(/^[\s,;:.!-]+/, '')
+    .replace(/^(\p{Ll})/u, (c) => c.toUpperCase())
+    .trim() || reply;
+}
+
+// Два вопроса-хвоста подряд - допрос, а не разговор. Второй срезаем.
+export function stripSerialQuestion(reply, history) {
+  const s = String(reply || '').trim();
+  if (!s || !/[?]\s*$/.test(s)) return reply;
+  const prev = [...history].reverse().find((h) => h.role === 'assistant');
+  if (!prev || !/[?]\s*$/.test(String(prev.text || '').trim())) return reply;
+  // режем последнее вопросительное предложение, если что-то содержательное остаётся
+  const cut = s.replace(/(?:^|[.!?…]\s+)[^.!?…]*\?\s*$/, (m) => (m.startsWith('.') || m.startsWith('!') || m.startsWith('?') || m.startsWith('…') ? m[0] : ''));
+  const left = cut.trim();
+  return left.length >= 12 ? left : reply;
+}

@@ -401,5 +401,23 @@ export function createFitnessHandler(deps) {
     return true;
   }
 
-  return { onCallback, consumeInput, pendingInput, clearPending };
+  // Запись еды и воды СЛОВАМИ, без кнопок. Живой баг: Лизе бот писал «записал
+  // тебе рафаэлки в калории», а дневник оставался пустым - записи из разговора
+  // не существовало вовсе. Теперь фраза реально попадает в трекер.
+  function logFoodText(chatId, user, text) {
+    const f = store.getFitness(chatId);
+    const off = userOffset(user);
+    const norm = dailyNorm(f, isTrainingToday(f, off));
+    if (!norm) return { kind: 'no_profile' }; // без веса и роста норму не посчитать
+    if (/вод|литр|стакан|попил|выпил|бутыл/i.test(text)) {
+      const water = parseWater(text);
+      if (!water) return { kind: 'need_amount' };
+      return { kind: 'water', added: water, log: bumpLog(chatId, user, { water }), norm };
+    }
+    const meal = parseMeal(text);
+    if (!meal) return { kind: 'need_kcal' }; // еда названа, но без цифр
+    return { kind: 'meal', added: meal, log: bumpLog(chatId, user, { kcal: meal.kcal, item: meal }), norm };
+  }
+
+  return { onCallback, consumeInput, pendingInput, clearPending, logFoodText };
 }

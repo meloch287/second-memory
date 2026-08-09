@@ -145,6 +145,14 @@ export function createGroupHandler(deps) {
     } catch { /* подхватим на следующем сообщении */ }
   }
 
+  // Модель любит написать «@Nikita» - выглядит как тег, но никого не пингует
+  // (ник у человека другой) и создаёт ощущение выполненного действия.
+  // Оставляем только @ники, которые реально есть в реестре участников.
+  const stripFakeMentions = (reply, members) => {
+    const known = new Set(Object.values(members || {}).map((m) => String(m.username || '').toLowerCase()).filter(Boolean));
+    return String(reply || '').replace(/@([A-Za-z][A-Za-z0-9_]{3,31})/g, (s, un) => (known.has(un.toLowerCase()) ? s : un));
+  };
+
   const isGroupChat = (msg) => ['group', 'supergroup'].includes(msg.chat?.type);
   // Имя участника из Telegram бывает мусорным: невидимые символы (U+2060 и
   // компания), одни эмодзи или пробелы. Такое имя ПРОХОДИТ проверку `||`
@@ -676,6 +684,9 @@ export function createGroupHandler(deps) {
     // осиротевшая ведущая пунктуация («, ну я понял...») - после срезки имени
     // или косяка модели ответ иногда начинался с запятой/двоеточия
     reply = reply.replace(/^[\s,;:.]+/, '').trim();
+    // Выдуманные теги: «@Nikita» никого не пингует, если ник другой, но
+    // выглядит как выполненное действие. Разжалуем в обычный текст.
+    reply = stripFakeMentions(reply, g.members);
     if (!reply) return send(chatId, esc(sleepyText(key)));
     store.pushHistory('user', `${fromName}: ${text}`, key);
     store.pushHistory('assistant', reply, key);

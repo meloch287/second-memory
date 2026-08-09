@@ -219,7 +219,15 @@ export function startScheduler(store, bot, log = console, intervalMs = 60000) {
         const lowToday = user.lastLowMoodDay === `${w.getUTCFullYear()}-${w.getUTCMonth()}-${w.getUTCDate()}`;
         let phrase;
         if (lowToday) phrase = await aiCheckin(store, chatId, now).catch(() => null);
-        if (!phrase) phrase = EVENING_PHRASES[Math.floor(Math.random() * EVENING_PHRASES.length)].replaceAll('{name}', user.name || 'дружище');
+        if (!phrase) {
+          // Раньше вечерний вопрос дословно повторялся день за днём: случайный
+          // выбор без памяти иногда даёт ту же фразу. Последнюю исключаем.
+          const last = Number.isInteger(user.lastEveningIdx) ? user.lastEveningIdx : -1;
+          const pool = EVENING_PHRASES.map((_, i) => i).filter((i) => i !== last);
+          const idx = pool[Math.floor(Math.random() * pool.length)];
+          store.setUser(chatId, { lastEveningIdx: idx });
+          phrase = EVENING_PHRASES[idx].replaceAll('{name}', user.name || 'дружище');
+        }
         await bot.sendText(chatId, phrase);
         store.pushHistory('assistant', phrase, chatId);
       }

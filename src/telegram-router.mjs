@@ -15,6 +15,10 @@ import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.
 import { parseRemember, rememberEcho } from './remember.mjs';
 import { getLessons, forgetLesson } from './lessons.mjs';
 
+// «запиши/добавь ... ккал», «съел омлет 350», «выпил литр воды» - явная просьба
+// занести в дневник питания, а не поболтать про еду.
+const FOOD_LOG_RE = /(?:запиши|запишите|запиши-ка|добавь|занеси|внеси|закинь|плюсани)[^]{0,40}(?:ккал|калори|вод|литр|стакан)|(?:съел|съела|поел|поела|выпил|выпила|попил|попила)(?![а-яё])/i;
+
 export function createMessageRouter(deps) {
   const {
     api, send, store, log, activeThread, withTyping, withWake, sleepyText,
@@ -55,6 +59,21 @@ export function createMessageRouter(deps) {
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
     // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)
     if (await lk.consumeInput(id, user, text)) return;
+    // Еда и вода СЛОВАМИ - в дневник по-настоящему. Раньше это уходило в
+    // болтовню, и бот врал «записал», хотя трекер оставался пустым.
+    if (FOOD_LOG_RE.test(text) && lk.logFood) {
+      const r = lk.logFood(id, user, text);
+      if (r && r.kind === 'water') {
+        return send(id, `💦 Записал: +${r.added} мл\nСегодня: <b>${(r.log.water / 1000).toFixed(1)}</b> из ${(r.norm.water / 1000).toFixed(1)} л`);
+      }
+      if (r && r.kind === 'meal') {
+        return send(id, `🍽 Записал: ${esc(r.added.title)} - ${r.added.kcal} ккал\nСегодня: <b>${r.log.kcal}</b> из ${r.norm.kcal} ккал`);
+      }
+      if (r && r.kind === 'need_kcal') return send(id, 'Сколько это примерно ккал? Напиши числом - запишу');
+      if (r && r.kind === 'need_amount') return send(id, 'Сколько выпил? Стакан, пол-литра, 300 мл - как удобно');
+      if (r && r.kind === 'no_profile') return send(id, 'Чтобы считать, нужен профиль: вес и рост. Загляни в ЛК → Фитнес');
+    }
+
     // «запомни ...» - пишем сразу и дословно, не дожидаясь фонового worker'а
     const note = parseRemember(text);
     if (note) {

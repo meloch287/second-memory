@@ -595,5 +595,5 @@ export function createLkHandler(deps) {
     return false;
   }
 
-  return { openSettings, onCallback, pendingInput, consumeInput, clearPending, tryCalendar, importCalendar };
+  return { openSettings, onCallback, pendingInput, consumeInput, clearPending, tryCalendar, importCalendar, logFood: fitness.logFoodText };
 }
