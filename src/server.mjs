@@ -12,6 +12,7 @@ import { handleMessage } from './brain.mjs';
 import { memoryStats } from './ragmeter.mjs';
 import { startTelegramBot } from './telegram.mjs';
 import { startFactWorker } from './worker.mjs';
+import { migrateAdminLog } from './adminlog.mjs';
 import { startScheduler } from './scheduler.mjs';
 import { aiTts, aiTranscribe, audioFormatFromMime, audioEnabled } from './ai.mjs';
 import { buildIcs } from './ics.mjs';
@@ -295,6 +296,10 @@ if (isMain) {
   } catch {}
 
   const store = new Store(process.env.SM_DATA || join(ROOT, 'data', 'memory.json'));
+
+  // Админ-журнал переехал в свою базу (data/admin-log.jsonl) - переносим старое
+  const moved = migrateAdminLog(store);
+  if (moved) console.log(`[admin] журнал перенесён в отдельную базу: ${moved} записей`);
 
   // Пароль веб-панели: из env при первом старте. Если env пуст — генерируем
   // случайный и печатаем один раз (статического дефолта больше нет).

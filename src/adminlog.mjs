@@ -1,82 +1,40 @@
-// Админ-журнал: полная запись всего, что прилетает в чат, — включается
-// командой /admin (только владелец бота).
+// Разбор входящего сообщения для админ-журнала. Само хранение - в отдельной
+// базе (src/admindb.mjs): журнал не должен ни раздувать память бота, ни попадать
+// в контекст ИИ.
 //
-// Зачем: чтобы потом можно было поднять историю «кто что прислал и когда» и
-// скормить её ИИ. Пишем КТО (id, @ник, имя), КОГДА, ГДЕ (чат) и ЧТО (тип,
-// текст, файл: file_id/имя/mime/размер).
-//
-// Функции работают НАД store (а не методами Store): store.mjs держим в пределах
-// 700 строк по конвенции проекта.
+// Пишем КТО (id, @ник, имя), КОГДА, ГДЕ (чат) и ЧТО (тип, текст, файл), плюс
+// автора пересылки, адресата ответа и id альбома.
 
-const LIMIT = 20000; // потолок записей, чтобы файл памяти не рос бесконечно
+import { AdminDb } from './admindb.mjs';
 
-const ensure = (store) => {
-  if (!Array.isArray(store.data.adminLog)) store.data.adminLog = [];
-  return store.data.adminLog;
-};
-
-// Включён ли режим для конкретного чата.
-export function adminLogOn(store, chatId) {
-  return Boolean((store.data.meta.adminLogChats || {})[String(chatId)]);
+let _db = null;
+export function adminDb() {
+  if (!_db) _db = new AdminDb(process.env.SM_ADMIN_DB || null);
+  return _db;
 }
 
-export function setAdminLog(store, chatId, on) {
-  const map = { ...(store.data.meta.adminLogChats || {}) };
-  if (on) map[String(chatId)] = true;
-  else delete map[String(chatId)];
-  store.data.meta.adminLogChats = map;
-  store.save();
-  return on;
+// Тесты и разовые скрипты подменяют базу на временную, чтобы не писать в боевую.
+export function useAdminDb(fileOrDb) {
+  _db = typeof fileOrDb === 'string' ? new AdminDb(fileOrDb) : fileOrDb;
+  return _db;
 }
 
-// Одна запись журнала.
-export function logAdmin(store, entry) {
-  const log = ensure(store);
-  const rec = {
-    id: ++store.data.seq,
-    ts: new Date().toISOString(),
-    chatId: String(entry.chatId || ''),
-    chatTitle: entry.chatTitle || null,
-    userId: entry.userId != null ? String(entry.userId) : null,
-    username: entry.username || null,
-    name: entry.name || null,
-    kind: entry.kind || 'text', // text | photo | video | audio | voice | document | sticker | ...
-    text: entry.text ? String(entry.text).slice(0, 2000) : null,
-    fileId: entry.fileId || null,
-    fileName: entry.fileName || null,
-    mime: entry.mime || null,
-    size: Number.isFinite(entry.size) ? entry.size : null,
-    // Пересланное: кто АВТОР оригинала (в userId выше - только тот, кто переслал)
-    forward: entry.forward || null,
-    // Ответ на сообщение: без этого переписка в выгрузке теряет нитку
-    replyTo: entry.replyTo || null,
-    // Альбом (несколько фото одним отправлением) приходит пачкой отдельных
-    // сообщений с общим id - по нему их потом можно склеить обратно
-    albumId: entry.albumId || null,
-  };
-  log.push(rec);
-  if (log.length > LIMIT) log.splice(0, log.length - LIMIT);
-  store.save();
-  return rec;
-}
+export const adminLogOn = (_store, chatId) => adminDb().isOn(chatId);
+export const setAdminLog = (_store, chatId, on) => adminDb().setOn(chatId, on);
+export const logAdmin = (_store, entry) => adminDb().append(entry);
+export const adminLogList = (_store, opts) => adminDb().list(opts);
+export const adminLogStats = (_store, chatId) => adminDb().stats(chatId);
 
-export function adminLogList(store, { chatId = null, limit = 100 } = {}) {
-  const log = ensure(store);
-  const all = chatId ? log.filter((r) => r.chatId === String(chatId)) : log;
-  return all.slice(-limit);
-}
-
-export function adminLogStats(store, chatId = null) {
-  const log = ensure(store);
-  const all = chatId ? log.filter((r) => r.chatId === String(chatId)) : log;
-  const byKind = {};
-  const byUser = {};
-  for (const r of all) {
-    byKind[r.kind] = (byKind[r.kind] || 0) + 1;
-    const who = r.name || r.username || r.userId || '?';
-    byUser[who] = (byUser[who] || 0) + 1;
-  }
-  return { total: all.length, byKind, byUser, first: all[0]?.ts || null, last: all.at(-1)?.ts || null };
+// Разовый перенос старых записей из memory.json в отдельную базу.
+export function migrateAdminLog(store) {
+  const old = Array.isArray(store?.data?.adminLog) ? store.data.adminLog : [];
+  const flags = store?.data?.meta?.adminLogChats || {};
+  let moved = 0;
+  for (const rec of old) { adminDb().append(rec); moved++; }
+  for (const chatId of Object.keys(flags)) adminDb().setOn(chatId, true);
+  if (old.length) { store.data.adminLog = []; store.save(); }
+  if (Object.keys(flags).length) { delete store.data.meta.adminLogChats; store.save(); }
+  return moved;
 }
 
 // Откуда переслано. Bot API 7.0+ отдаёт forward_origin, старые клиенты и

@@ -7,7 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
 import { createAudioChoice, isAudioFile, audioInfo } from '../src/telegram-audio.mjs';
-import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel } from '../src/adminlog.mjs';
+import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel, useAdminDb } from '../src/adminlog.mjs';
+
+// Журнал живёт в СВОЕЙ базе - в тестах подменяем её на временный файл,
+// иначе прогон тестов пишет в боевой журнал.
+const freshAdminDb = () => useAdminDb(join(mkdtempSync(join(tmpdir(), 'sm-admdb-')), 'admin-log.jsonl'));
 
 delete process.env.SM_ENCRYPTION_KEY;
 const tmpFile = () => join(mkdtempSync(join(tmpdir(), 'sm-aa-')), 'm.json');
@@ -114,6 +118,7 @@ test('describeMessage: разбирает все типы вложений', () 
 
 test('админ-журнал: включение по чату, запись и статистика', () => {
   const s = new Store(tmpFile());
+  freshAdminDb();
   assert.equal(adminLogOn(s, '-100'), false, 'по умолчанию выключен');
   setAdminLog(s, '-100', true);
   assert.equal(adminLogOn(s, '-100'), true);
@@ -142,6 +147,7 @@ test('админ-журнал: включение по чату, запись и
 test('админ-журнал: выключение и персистентность', () => {
   const f = tmpFile();
   const s = new Store(f);
+  freshAdminDb();
   setAdminLog(s, '-100', true);
   logAdmin(s, { chatId: '-100', userId: 1, kind: 'text', text: 'запись' });
   s.flush();
@@ -156,8 +162,9 @@ test('админ-журнал: выключение и персистентно�
 
 test('админ-журнал: текст обрезается, лишние записи вытесняются', () => {
   const s = new Store(tmpFile());
+  freshAdminDb();
   const rec = logAdmin(s, { chatId: '1', kind: 'text', text: 'x'.repeat(5000) });
-  assert.equal(rec.text.length, 2000, 'длинный текст обрезан');
+  assert.equal(rec.text.length, 4000, 'длинный текст обрезан по лимиту записи');
   assert.equal(adminLogStats(s).total, 1);
 });
 
@@ -215,6 +222,7 @@ test('ответ на сообщение и альбом попадают в з�
 
 test('журнал сохраняет автора пересылки, ответ и альбом', () => {
   const store = new Store(tmpFile());
+  freshAdminDb();
   const d = describeMessage({
     text: 'смотри что скинули',
     media_group_id: '99',

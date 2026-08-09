@@ -64,7 +64,9 @@ export function createMessageRouter(deps) {
     return [
       `🛡 <b>Админ-режим</b>${title ? ' · ' + esc(title) : ''}`,
       '',
-      on ? '🟢 Запись ВКЛЮЧЕНА - пишу в базу всё: текст, фото, видео, файлы, кто и когда' : '🔴 Запись выключена',
+      on
+        ? '🟢 Запись ВКЛЮЧЕНА\n\nПишу в отдельную базу всё: текст, фото, видео, файлы, пересылки - кто, когда и от кого.\n<b>Пока включено, я молчу</b> - ни на что не отвечаю, только записываю. Кроме /admin.'
+        : '🔴 Запись выключена - веду себя как обычно',
       '',
       `Записей в этом чате: <b>${s.total}</b>`,
       `Типы: ${esc(kinds)}`,
@@ -96,8 +98,15 @@ export function createMessageRouter(deps) {
       }
     } catch (e) { log.error('[admin] log', e.message); }
 
+    // Режим записи: бот НЕ отвечает вообще, только пишет в журнал. Иначе на
+    // пачку из 20 пересланных сообщений прилетает 20 ответов - ровно то, что
+    // делать в этом режиме не надо. Исключение - сама команда /admin, иначе
+    // режим было бы не выключить.
+    const isAdminCmd = typeof msg.text === 'string' && /^\/admin(?:@\w+)?(?![а-яёa-z])/i.test(msg.text.trim());
+    if (!isAdminCmd && msg?.chat?.id != null && adminLogOn(store, msg.chat.id)) return;
+
     // /admin - панель владельца. Работает и в личке, и в группе.
-    if (typeof msg.text === 'string' && /^\/admin(?:@\w+)?\b/i.test(msg.text.trim())) {
+    if (isAdminCmd) {
       if (!isOwner(msg)) return; // чужим молчим, команды как будто нет
       return send(msg.chat.id, adminPanelText(msg.chat.id, msg.chat.title), {
         reply_markup: { inline_keyboard: adminPanelKb(msg.chat.id) },
@@ -326,6 +335,9 @@ export function createMessageRouter(deps) {
     const chatId = String(cb.message?.chat?.id || '');
     api('answerCallbackQuery', { callback_query_id: cb.id }).catch(() => {});
     if (!chatId) return;
+
+    // в режиме записи бот молчит и на кнопки - кроме своей же админ-панели
+    if (!String(cb.data || '').startsWith('adm:') && adminLogOn(store, chatId)) return;
 
     if (audioChoice && (await audioChoice.onCallback(chatId, cb.data))) return;
 
