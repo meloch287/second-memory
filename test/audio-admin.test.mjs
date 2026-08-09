@@ -291,3 +291,21 @@ test('опасное имя файла не вылезает из папки ж�
   assert.ok(!rel.includes('..'), `путь не должен подниматься вверх: ${rel}`);
   assert.equal(db.mediaSize().count, 1);
 });
+
+test('архив собирается и когда база задана относительным путём', async () => {
+  // Живой баг: после первого -C рабочий каталог tar меняется, и относительный
+  // путь к папке медиа во втором -C уже не находится.
+  const dir = mkdtempSync(join(tmpdir(), 'sm-rel-'));
+  const cwd = process.cwd();
+  try {
+    process.chdir(dir);
+    const db = useAdminDb('data/admin-log.jsonl');
+    const rec = db.append({ chatId: '-1', kind: 'photo', fileId: 'p' });
+    db.attachMedia(rec.id, db.saveMedia('-1', rec.id, 'x.jpg', Buffer.from('img')));
+    const buf = await db.archive();
+    assert.ok(buf.length > 0);
+    assert.equal(buf[0], 0x1f);
+  } finally {
+    process.chdir(cwd);
+  }
+});

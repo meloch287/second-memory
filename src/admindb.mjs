@@ -9,7 +9,7 @@
 // но построчно: иначе append превратился бы в перезапись всего файла.
 
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, rmSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -208,7 +208,9 @@ export class AdminDb {
     return new Promise((resolve, reject) => {
       execFile(
         'tar',
-        ['czf', out, '-C', work, 'admin-log.json', '-C', dirname(this.mediaDir), basename(this.mediaDir)],
+        // Пути ТОЛЬКО абсолютные: после первого -C рабочий каталог tar меняется,
+        // и относительный «data» из второго -C уже не находится.
+        ['czf', out, '-C', work, 'admin-log.json', '-C', resolve(dirname(this.mediaDir)), basename(this.mediaDir)],
         (err) => {
           if (err) return reject(err);
           try {
