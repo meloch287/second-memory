@@ -1,0 +1,102 @@
+// Самообучение: бот копит уроки из реакций людей и подмешивает их в промпт.
+// Дообучить веса нельзя (модель у провайдера), поэтому «обучение» - это база
+// коротких правил, которая растёт от реального общения.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store } from '../src/store.mjs';
+import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson, lessonsBlock, recentOpeners, openersRule } from '../src/lessons.mjs';
+
+const fresh = () => new Store(join(mkdtempSync(join(tmpdir(), 'sm-les-')), 'm.json'));
+
+test('недовольство ловится по реальным фразам из чатов', () => {
+  for (const s of ['Плохо', 'ой даун', 'не то', 'я же просил', 'в общем сколько', 'опять двадцать пять', 'хватит', 'ты тупой', 'исправь']) {
+    assert.equal(isDispleased(s), true, s);
+  }
+});
+
+test('обычная речь недовольством не считается', () => {
+  for (const s of ['привет как дела', 'спасибо большое', 'плохое настроение у Ани', 'запиши 105 грамм сливы', '']) {
+    assert.equal(isDispleased(s), false, s);
+  }
+});
+
+test('прямое правило от человека распознаётся отдельно', () => {
+  assert.equal(isDirectRule('учти на будущее: не спрашивай дважды'), true);
+  assert.equal(isDirectRule('больше не начинай с моего имени'), true);
+  assert.equal(isDirectRule('как дела'), false);
+});
+
+test('урок сохраняется и попадает в блок для промпта', () => {
+  const s = fresh();
+  addLesson(s, '1', 'Не переспрашивай, если человек просит посчитать - считай сразу');
+  const block = lessonsBlock(s, '1');
+  assert.match(block, /ЧЕМУ ТЕБЯ УЖЕ НАУЧИЛИ/);
+  assert.match(block, /Не переспрашивай/);
+  assert.equal(lessonsBlock(s, '2'), null, 'уроки не текут между чатами');
+});
+
+test('повтор похожего урока поднимает вес, а не плодит дубли', () => {
+  const s = fresh();
+  addLesson(s, '1', 'Не начинай ответ с имени собеседника');
+  addLesson(s, '1', 'Не начинай ответ с имени человека');
+  const list = getLessons(s, '1');
+  assert.equal(list.length, 1, 'похожие схлопнулись');
+  assert.equal(list[0].hits, 2);
+  assert.match(lessonsBlock(s, '1'), /говорили 2 раза/);
+});
+
+test('частые уроки идут первыми, лишние вытесняются', () => {
+  const s = fresh();
+  for (let i = 0; i < 20; i++) addLesson(s, '1', `Правило номер ${i} про совершенно разные вещи ${i}`);
+  const list = getLessons(s, '1');
+  assert.ok(list.length <= 12, `в базе ${list.length}, должно быть не больше 12`);
+});
+
+test('урок можно стереть словами', () => {
+  const s = fresh();
+  addLesson(s, '1', 'Не сюсюкай с Лизой про калории');
+  assert.equal(forgetLesson(s, '1', 'сюсюкай'), 1);
+  assert.equal(getLessons(s, '1').length, 0);
+});
+
+test('мусор не записывается', () => {
+  const s = fresh();
+  assert.equal(addLesson(s, '1', 'ок'), null);
+  assert.equal(addLesson(s, '1', ''), null);
+  assert.equal(getLessons(s, '1').length, 0);
+});
+
+test('уроки переживают перезапуск', () => {
+  const f = join(mkdtempSync(join(tmpdir(), 'sm-les-')), 'm.json');
+  const a = new Store(f);
+  addLesson(a, '1', 'Отвечай короче - две фразы максимум');
+  a.flush();
+  const b = new Store(f);
+  assert.equal(getLessons(b, '1')[0].text, 'Отвечай короче - две фразы максимум');
+});
+
+test('однообразные открывашки замечаются и запрещаются', () => {
+  const history = [
+    { role: 'assistant', text: 'Ну что, Саня, поехали' },
+    { role: 'user', text: 'ага' },
+    { role: 'assistant', text: 'Ну что, дальше' },
+    { role: 'user', text: 'ок' },
+    { role: 'assistant', text: 'Ну что, погнали' },
+  ];
+  assert.deepEqual(recentOpeners(history), ['Ну что', 'Ну что', 'Ну что']);
+  const rule = openersRule(history);
+  assert.match(rule, /Ну что/);
+  assert.match(rule, /заевшая пластинка/);
+});
+
+test('разные открывашки претензий не вызывают', () => {
+  const history = [
+    { role: 'assistant', text: 'Сделал, держи' },
+    { role: 'assistant', text: 'Погоди секунду' },
+    { role: 'assistant', text: 'Готово' },
+  ];
+  assert.equal(openersRule(history), null);
+});

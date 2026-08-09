@@ -13,6 +13,7 @@ import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describ
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 import { parseRemember, rememberEcho } from './remember.mjs';
+import { getLessons, forgetLesson } from './lessons.mjs';
 
 export function createMessageRouter(deps) {
   const {
@@ -33,6 +34,23 @@ export function createMessageRouter(deps) {
     const id = String(chatId);
     if (!user) return startOnboarding(id); // первое сообщение - знакомимся
     if (user.step) return onboardingStep(id, user, text);
+    // Что бот выучил в этом чате - человек должен это видеть и уметь стереть.
+    if (/^(?:чему\s+(?:ты\s+)?(?:научился|научилась|тебя\s+научили)|какие\s+уроки|что\s+ты\s+выучил)[?!.]*$/i.test(text.trim())) {
+      const list = getLessons(store, id);
+      if (!list.length) return send(id, 'Пока ничему специально не учился - просто общаемся');
+      const body = list
+        .slice()
+        .sort((a, b) => (b.hits || 1) - (a.hits || 1))
+        .map((l, i) => `${i + 1}. ${esc(l.text)}${(l.hits || 1) > 1 ? ` <i>(${l.hits} раза)</i>` : ''}`)
+        .join('\n');
+      return send(id, `<b>Чему научился в этом чате</b>\n\n${body}\n\n<i>«забудь урок &lt;слово&gt;» - сотру</i>`);
+    }
+    const forget = text.trim().match(/^забудь\s+урок\s+(.{3,80})$/i);
+    if (forget) {
+      const n = forgetLesson(store, id, forget[1].trim());
+      return send(id, n ? `Стёр ${n === 1 ? 'урок' : 'уроков: ' + n}` : 'Такого урока не нашёл');
+    }
+
     // Личный кабинет (U3a-ui): «настройки»/«лк»/«кабинет» - до разговора
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
     // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)

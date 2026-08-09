@@ -53,6 +53,7 @@ const stripThink = (s) =>
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion, voiceStateLine, groupPersona } from './capabilities.mjs';
 import { membersBlock, membersRule, renameAuthors } from './members.mjs';
+import { lessonsBlock, openersRule } from './lessons.mjs';
 
 // Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
 // формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
@@ -465,7 +466,10 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
   const who = author ? `от ${author}` : 'от него';
   const addressee = author ? ` Обратись к ${author} по имени, но НЕ начинай ответ с «${author}:».` : '';
   const baseCtx = friendContext(store, chatId, text, now, smartFacts);
-  const sys = friendSystem(user);
+  // Самообучение: выученные в этом чате уроки и запрет повторять открывашки
+  // идут в СИСТЕМНЫЙ промпт - там модель слушает их лучше, чем в контексте.
+  const learned = [lessonsBlock(store, chatId), openersRule(store.recentHistory(12, String(chatId)))].filter(Boolean).join('\n\n');
+  const sys = friendSystem(user) + (learned ? '\n\n' + learned : '');
   let reply = await ask(
     [
       { role: 'system', content: sys },
@@ -674,6 +678,7 @@ import {
   aiSummarizeDoc as _aiSummarizeDoc,
   aiSummarizeText as _aiSummarizeText,
   aiExtractFacts as _aiExtractFacts,
+  aiLesson as _aiLesson,
   audioFormatFromMime as _audioFormatFromMime,
   aiDescribeImage as _aiDescribeImage,
   aiTranscribe as _aiTranscribe,
@@ -689,7 +694,7 @@ export const aiConsolidate = _aiConsolidate;
 export const aiTts = _aiTts;
 export const aiSummarizeDoc = _aiSummarizeDoc;
 export const aiSummarizeText = _aiSummarizeText;
-export const aiExtractFacts = _aiExtractFacts;
+export const aiExtractFacts = _aiExtractFacts, aiLesson = _aiLesson;
 export const audioFormatFromMime = _audioFormatFromMime;
 export const aiDescribeImage = _aiDescribeImage;
 export const aiTranscribe = _aiTranscribe;
