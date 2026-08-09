@@ -2,7 +2,8 @@
 // эмбеддингами (БД №2) + структурные записи (долги/задачи/встречи),
 // которые мог упустить быстрый парсер. Факты читает RAG бота-друга.
 
-import { aiEnabled, aiExtractFacts, aiEmbed } from './ai.mjs';
+import { aiEnabled, aiExtractFacts, aiEmbed, aiRetro } from './ai.mjs';
+import { runRetro } from './lessons.mjs';
 
 const norm = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е');
 
@@ -26,6 +27,13 @@ export function isDuplicateEntry(candidate, existing) {
   return false;
 }
 
+// Чаты, где недавно шёл разговор: только их и разбираем.
+function activeChats(store) {
+  const seen = new Set();
+  for (const h of store.recentHistory(200)) if (h.chatId) seen.add(String(h.chatId));
+  return [...seen];
+}
+
 export function startFactWorker(store, log = console, intervalMs = 600000) {
   if (!aiEnabled()) return null;
 
@@ -35,6 +43,9 @@ export function startFactWorker(store, log = console, intervalMs = 600000) {
     if (busy) return;
     busy = true;
     try {
+      // Раз в сутки на чат - ретроспектива: бот учится на своём же диалоге
+      for (const chatId of activeChats(store)) await runRetro({ store, log, aiRetro, chatId });
+
       const batch = store.unprocessedRaw(30);
       if (batch.length) {
         // Группируем по чату: факты наследуют chatId своей группы

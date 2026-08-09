@@ -678,7 +678,7 @@ import {
   aiSummarizeDoc as _aiSummarizeDoc,
   aiSummarizeText as _aiSummarizeText,
   aiExtractFacts as _aiExtractFacts,
-  aiLesson as _aiLesson,
+  aiLesson as _aiLesson, aiRetro as _aiRetro,
   audioFormatFromMime as _audioFormatFromMime,
   aiDescribeImage as _aiDescribeImage,
   aiTranscribe as _aiTranscribe,
@@ -694,7 +694,7 @@ export const aiConsolidate = _aiConsolidate;
 export const aiTts = _aiTts;
 export const aiSummarizeDoc = _aiSummarizeDoc;
 export const aiSummarizeText = _aiSummarizeText;
-export const aiExtractFacts = _aiExtractFacts, aiLesson = _aiLesson;
+export const aiExtractFacts = _aiExtractFacts, aiLesson = _aiLesson, aiRetro = _aiRetro;
 export const audioFormatFromMime = _audioFormatFromMime;
 export const aiDescribeImage = _aiDescribeImage;
 export const aiTranscribe = _aiTranscribe;

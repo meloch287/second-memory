@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
-import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson, lessonsBlock, recentOpeners, openersRule, learnFromReaction } from '../src/lessons.mjs';
+import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson, lessonsBlock, recentOpeners, openersRule, learnFromReaction, runRetro, lessonChats } from '../src/lessons.mjs';
 
 const fresh = () => new Store(join(mkdtempSync(join(tmpdir(), 'sm-les-')), 'm.json'));
 
@@ -150,4 +150,60 @@ test('без истории бота учить не на чем', async () => {
   const s = fresh();
   const rec = await learnFromReaction({ store: s, aiLesson: async () => 'урок', chatId: '1', text: 'плохо' });
   assert.equal(rec, null);
+});
+
+/* --- Ретроспектива: учимся без явных жалоб --- */
+
+test('ретро разбирает диалог и заводит уроки', async () => {
+  const s = fresh();
+  for (let i = 0; i < 5; i++) {
+    s.pushHistory('user', 'вопрос ' + i, '1');
+    s.pushHistory('assistant', 'Ну что, ответ ' + i, '1');
+  }
+  const seen = [];
+  const aiRetro = async (lines, known) => { seen.push({ lines, known }); return ['Не начинай каждый ответ одинаково', 'Отвечай по делу с первой фразы']; };
+  const added = await runRetro({ store: s, aiRetro, chatId: '1' });
+  assert.equal(added.length, 2);
+  assert.ok(seen[0].lines.length >= 8, 'в модель ушёл кусок диалога');
+  assert.match(lessonsBlock(s, '1'), /Не начинай каждый ответ одинаково/);
+});
+
+test('ретро не повторяется чаще раза в сутки', async () => {
+  const s = fresh();
+  for (let i = 0; i < 5; i++) { s.pushHistory('user', 'a', '1'); s.pushHistory('assistant', 'b', '1'); }
+  let calls = 0;
+  const aiRetro = async () => { calls++; return ['Правило про краткость ответов']; };
+  await runRetro({ store: s, aiRetro, chatId: '1' });
+  await runRetro({ store: s, aiRetro, chatId: '1' });
+  assert.equal(calls, 1, 'второй запуск в тот же день модель не зовёт');
+  // через сутки - можно снова
+  await runRetro({ store: s, aiRetro, chatId: '1', now: Date.now() + 25 * 3600 * 1000 });
+  assert.equal(calls, 2);
+});
+
+test('короткий диалог не разбираем', async () => {
+  const s = fresh();
+  s.pushHistory('user', 'привет', '1');
+  s.pushHistory('assistant', 'ку', '1');
+  let calls = 0;
+  const added = await runRetro({ store: s, aiRetro: async () => { calls++; return ['x']; }, chatId: '1' });
+  assert.equal(calls, 0);
+  assert.deepEqual(added, []);
+});
+
+test('уже известные правила уезжают в модель, чтобы она их не дублировала', async () => {
+  const s = fresh();
+  addLesson(s, '1', 'Не поддакивай пустыми фразами');
+  for (let i = 0; i < 5; i++) { s.pushHistory('user', 'a', '1'); s.pushHistory('assistant', 'b', '1'); }
+  let known = null;
+  await runRetro({ store: s, aiRetro: async (_l, k) => { known = k; return []; }, chatId: '1' });
+  assert.deepEqual(known, ['Не поддакивай пустыми фразами']);
+});
+
+test('служебные ключи ретро не считаются чатами с уроками', () => {
+  const s = fresh();
+  addLesson(s, '1', 'Какое-то полезное правило');
+  s.data.lessons[':retro:1'] = new Date().toISOString();
+  assert.deepEqual(lessonChats(s), ['1']);
+  assert.equal(getLessons(s, ':retro:1').length, 0);
 });

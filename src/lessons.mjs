@@ -67,6 +67,11 @@ export function getLessons(store, chatId) {
   return Array.isArray(list) ? list : [];
 }
 
+// Чаты, где есть чему учиться (служебные ключи вида «:retro:» пропускаем).
+export function lessonChats(store) {
+  return Object.keys(bag(store)).filter((k) => !k.startsWith(':'));
+}
+
 // Добавить урок. Повтор существующего поднимает его вес, а не плодит дубль.
 export function addLesson(store, chatId, text, source = 'auto') {
   const clean = String(text || '').trim().replace(/^[-•*]\s*/, '').slice(0, MAX_LEN);
@@ -157,5 +162,37 @@ export async function learnFromReaction({ store, log, aiLesson, chatId, text, en
   } catch (e) {
     log?.error?.('[lessons]', e.message);
     return null;
+  }
+}
+
+// Ретроспектива раз в сутки: бот сам перечитывает свежий диалог и находит, что
+// делал не так. Ловит то, на что человек поленился жаловаться вслух.
+const RETRO_EVERY_MS = 24 * 60 * 60 * 1000;
+
+export function retroDue(store, chatId, now = Date.now()) {
+  const last = Date.parse(bag(store)[':retro:' + chatId] || 0) || 0;
+  return now - last >= RETRO_EVERY_MS;
+}
+
+export async function runRetro({ store, log, aiRetro, chatId, now = Date.now(), minMessages = 8 }) {
+  try {
+    if (!aiRetro || !retroDue(store, chatId, now)) return [];
+    const history = store.recentHistory(24, chatId);
+    if (history.length < minMessages) return [];
+    const lines = history.map((h) => `${h.role === 'user' ? 'Человек' : 'Бот'}: ${String(h.text).slice(0, 250)}`);
+    const known = getLessons(store, chatId).map((l) => l.text);
+    const found = await aiRetro(lines, known);
+    bag(store)[':retro:' + chatId] = new Date(now).toISOString();
+    store.save();
+    const added = [];
+    for (const l of found) {
+      const rec = addLesson(store, chatId, l, 'ретроспектива');
+      if (rec) added.push(rec);
+    }
+    if (added.length) log?.log?.(`[lessons] ретро ${chatId}: +${added.length}`);
+    return added;
+  } catch (e) {
+    log?.error?.('[lessons] ретро', e.message);
+    return [];
   }
 }
