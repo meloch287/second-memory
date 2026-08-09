@@ -460,9 +460,7 @@ export function isContentDeferral(text, reply) {
 export async function aiFriendReply(store, chatId, text, now = new Date(), onDelta = null, author = null) {
   const user = store.getUser(chatId);
   const smartFacts = await smartRecall(store, chatId, text);
-  const langHint = nonRussian(text)
-    ? '\n\n[Reply in the SAME language as the message above, not in Russian.]'
-    : '';
+  const langHint = nonRussian(text) ? '\n\n[Reply in the SAME language as the message above, not in Russian.]' : '';
   const who = author ? `от ${author}` : 'от него';
   const addressee = author ? ` Обратись к ${author} по имени, но НЕ начинай ответ с «${author}:».` : '';
   const baseCtx = friendContext(store, chatId, text, now, smartFacts);
@@ -494,9 +492,8 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
     );
     if (forced && (hasSubstance(forced) || !isContentDeferral(text, forced))) reply = forced;
   }
-  // Имя бота не обращение; вопрос-хвост режем при запрете. Плюс манера: два
-  // ответа подряд с именем и два вопроса подряд - частые претензии по живым
-  // диалогам (47 и 22 случая), промпт гасит их не всегда.
+  // Манера: имя бота не обращение, два ответа подряд с именем собеседника и два
+  // вопроса-хвоста подряд - частые претензии по живым диалогам (47 и 22 случая).
   const hist = store.recentHistory(8, String(chatId));
   const out = stripRepeatVocative(stripTrailingQuestion(stripBotVocative(reply, user?.botName), user), author || user?.addressAs || user?.name, hist);
   return stripSerialQuestion(out, hist);
