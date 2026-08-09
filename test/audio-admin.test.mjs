@@ -242,3 +242,52 @@ test('служебные события чата тоже видны в журн
   assert.equal(describeMessage({ left_chat_member: { first_name: 'Сергей' } }).kind, 'leave');
   assert.equal(describeMessage({ pinned_message: { text: 'важное' } }).kind, 'pin');
 });
+
+/* --- Медиа в журнале и выгрузка архивом --- */
+
+test('файл сохраняется рядом с журналом, путь попадает в запись', () => {
+  const db = freshAdminDb();
+  const rec = db.append({ chatId: '-100', kind: 'photo', fileId: 'f1', fileName: 'отчёт.jpg' });
+  const rel = db.saveMedia('-100', rec.id, 'отчёт.jpg', Buffer.from('картинка'));
+  assert.ok(db.attachMedia(rec.id, rel), 'путь дописан в уже записанную строку');
+  const [row] = db.list({ chatId: '-100' });
+  assert.equal(row.media, rel);
+  assert.equal(row.fileName, 'отчёт.jpg', 'остальные поля не потерялись');
+  const m = db.mediaSize();
+  assert.equal(m.count, 1);
+  assert.ok(m.bytes > 0);
+});
+
+test('нумерация записей переживает рестарт (иначе файл прилипнет к чужой строке)', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'sm-admdb-')), 'admin-log.jsonl');
+  const a = useAdminDb(file);
+  a.append({ chatId: '1', kind: 'text', text: 'первое' });
+  a.append({ chatId: '1', kind: 'text', text: 'второе' });
+  const b = useAdminDb(file); // «рестарт»
+  const next = b.append({ chatId: '1', kind: 'text', text: 'третье' });
+  assert.equal(next.id, 3);
+});
+
+test('архив содержит и журнал, и файлы', async () => {
+  const db = freshAdminDb();
+  const rec = db.append({ chatId: '-100', kind: 'document', fileId: 'd1', fileName: 'смета.pdf' });
+  db.attachMedia(rec.id, db.saveMedia('-100', rec.id, 'смета.pdf', Buffer.alloc(1024, 3)));
+  const buf = await db.archive();
+  assert.ok(buf.length > 0);
+  assert.equal(buf[0], 0x1f, 'gzip-сигнатура');
+  assert.equal(buf[1], 0x8b);
+});
+
+test('медиа-папка изолирована по чатам', () => {
+  const db = freshAdminDb();
+  db.saveMedia('-100', 1, 'a.jpg', Buffer.from('a'));
+  db.saveMedia('-200', 2, 'b.jpg', Buffer.from('b'));
+  assert.equal(db.mediaSize().count, 2);
+});
+
+test('опасное имя файла не вылезает из папки журнала', () => {
+  const db = freshAdminDb();
+  const rel = db.saveMedia('-100', 5, '../../../etc/passwd', Buffer.from('x'));
+  assert.ok(!rel.includes('..'), `путь не должен подниматься вверх: ${rel}`);
+  assert.equal(db.mediaSize().count, 1);
+});

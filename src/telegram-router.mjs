@@ -9,7 +9,7 @@ import { consumeTgLink } from './webauth.mjs';
 import { parseTgExport, importIntoStore } from './importchat.mjs';
 import { parseIcs } from './ics.mjs';
 import { ID_CMD } from './telegram-idpicker.mjs';
-import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel } from './adminlog.mjs';
+import { adminLogOn, setAdminLog, logAdmin, adminLogList, adminLogStats, describeMessage, forwardLabel, adminDb } from './adminlog.mjs';
 import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 import { parseRemember, rememberEcho } from './remember.mjs';
@@ -56,6 +56,24 @@ export function createMessageRouter(deps) {
   const OWNER = String(process.env.OWNER_CHAT_ID || '');
   const isOwner = (msg) => OWNER && String(msg?.from?.id || '') === OWNER;
 
+  // Скачать вложение в базу журнала и дописать путь в запись.
+  const MEDIA_LIMIT = 45 * 1024 * 1024; // больше Telegram боту всё равно не отдаст
+  async function saveAdminMedia(rec) {
+    if (!downloadBase64 || !rec.fileId) return;
+    if (rec.size && rec.size > MEDIA_LIMIT) return; // слишком тяжёлый - только метаданные
+    const b64 = await downloadBase64(rec.fileId);
+    const buf = Buffer.from(b64, 'base64');
+    const ext = rec.fileName?.includes('.')
+      ? ''
+      : { photo: '.jpg', video: '.mp4', video_note: '.mp4', voice: '.ogg', audio: '.mp3', animation: '.mp4', sticker: '.webp' }[rec.kind] || '';
+    const name = (rec.fileName || `${rec.kind}`) + ext;
+    const db = adminDb();
+    const rel = db.saveMedia(rec.chatId, rec.id, name, buf);
+    db.attachMedia(rec.id, rel);
+  }
+
+  const mb = (bytes) => (bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + ' МБ' : Math.round(bytes / 1024) + ' КБ');
+
   function adminPanelText(chatId, title) {
     const on = adminLogOn(store, chatId);
     const s = adminLogStats(store, chatId);
@@ -69,6 +87,7 @@ export function createMessageRouter(deps) {
         : '🔴 Запись выключена - веду себя как обычно',
       '',
       `Записей в этом чате: <b>${s.total}</b>`,
+      (() => { const m = adminDb().mediaSize(); return m.count ? `Файлов сохранено: <b>${m.count}</b> (${mb(m.bytes)})` : 'Файлов пока нет'; })(),
       `Типы: ${esc(kinds)}`,
       '',
       'Кто писал:',
@@ -77,7 +96,8 @@ export function createMessageRouter(deps) {
   }
   const adminPanelKb = (chatId) => [
     [{ text: adminLogOn(store, chatId) ? '🔴 Выключить запись' : '🟢 Включить запись', callback_data: 'adm:toggle' }],
-    [{ text: '📊 Последние 20', callback_data: 'adm:last' }, { text: '📥 Выгрузить JSON', callback_data: 'adm:dump' }],
+    [{ text: '📊 Последние 20', callback_data: 'adm:last' }],
+    [{ text: '📄 Журнал JSON', callback_data: 'adm:dump' }, { text: '📦 Архив с медиа', callback_data: 'adm:zip' }],
   ];
 
   async function onMessage(msg) {
@@ -87,14 +107,19 @@ export function createMessageRouter(deps) {
       const cid = msg?.chat?.id;
       if (cid != null && adminLogOn(store, cid)) {
         const d = describeMessage(msg);
-        if (d) logAdmin(store, {
-          ...d,
-          chatId: cid,
-          chatTitle: msg.chat.title || null,
-          userId: msg.from?.id,
-          username: msg.from?.username || null,
-          name: msg.from?.first_name || null,
-        });
+        if (d) {
+          const rec = logAdmin(store, {
+            ...d,
+            chatId: cid,
+            chatTitle: msg.chat.title || null,
+            userId: msg.from?.id,
+            username: msg.from?.username || null,
+            name: msg.from?.first_name || null,
+          });
+          // Сам файл тоже забираем - в журнале иначе только file_id, а он
+          // без бота бесполезен. Качаем в фоне, чтобы не задерживать приём.
+          if (rec.fileId) saveAdminMedia(rec).catch((e) => log.error('[admin] media', e.message));
+        }
       }
     } catch (e) { log.error('[admin] log', e.message); }
 
@@ -365,6 +390,18 @@ export function createMessageRouter(deps) {
           return `${t2} · ${who}${r.username ? ' (@' + r.username + ')' : ''}${fwd}${rep}: ${what}`.slice(0, 200);
         }).join('\n');
         return send(chatId, `<b>Последние ${rows.length}</b>\n\n<code>${esc(body)}</code>`);
+      }
+      if (cb.data === 'adm:zip') {
+        const db = adminDb();
+        const { bytes, count } = db.mediaSize();
+        if (!count) return send(chatId, 'Файлов пока нет - в журнале только текст');
+        if (bytes > 45 * 1024 * 1024) {
+          return send(chatId, `Медиа накопилось на ${mb(bytes)} - в Telegram столько не влезет (лимит 50 МБ).\nЗабирай с сервера: <code>${esc(db.mediaDir)}</code>`);
+        }
+        const archive = await db.archive().catch((e) => { log.error('[admin] archive', e.message); return null; });
+        if (!archive) return send(chatId, 'Не смог собрать архив, глянь логи');
+        return sendDocumentText(chatId, archive, 'admin-log.tar.gz', 'application/gzip',
+          `Журнал целиком: ${count} файлов + admin-log.json на ${mb(bytes)}`);
       }
       if (cb.data === 'adm:dump') {
         const rows = adminLogList(store, { chatId, limit: 5000 });

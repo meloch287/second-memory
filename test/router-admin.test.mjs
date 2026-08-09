@@ -48,7 +48,8 @@ test('/admin: владелец получает панель с кнопками
   assert.match(sent[0].text, /Запись выключена/);
   const kb = sent[0].extra.reply_markup.inline_keyboard;
   assert.equal(kb[0][0].callback_data, 'adm:toggle');
-  assert.deepEqual(kb[1].map((b) => b.callback_data), ['adm:last', 'adm:dump']);
+  assert.deepEqual(kb[1].map((b) => b.callback_data), ['adm:last']);
+  assert.deepEqual(kb[2].map((b) => b.callback_data), ['adm:dump', 'adm:zip'], 'JSON и архив с медиа');
 });
 
 test('/admin: чужому - тишина, ни ответа, ни падения', async () => {

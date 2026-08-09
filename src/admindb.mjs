@@ -8,9 +8,11 @@
 // Шифрование - как у основной базы (AES-256-GCM с ключом из SM_ENCRYPTION_KEY),
 // но построчно: иначе append превратился бы в перезапись всего файла.
 
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, rmSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 const LIMIT = 50000; // строк; выше - обрезаем старое при следующей записи
 const SALT = Buffer.from('second-memory-admin-log-v1');
@@ -50,9 +52,48 @@ export class AdminDb {
   constructor(file) {
     this.file = file || join(process.env.SM_DATA ? dirname(process.env.SM_DATA) : 'data', 'admin-log.jsonl');
     this.flagsFile = this.file.replace(/\.jsonl$/, '') + '-flags.json';
+    // Сами файлы (фото, видео, документы, голосовые) кладём рядом с журналом:
+    // в записи остаётся только путь, а не гигантская base64-строка.
+    this.mediaDir = this.file.replace(/\.jsonl$/, '') + '-media';
     mkdirSync(dirname(this.file), { recursive: true });
+    mkdirSync(this.mediaDir, { recursive: true });
     this.flags = this._readFlags();
-    this._seq = 0;
+    // id продолжаем с последнего в файле: после рестарта нумерация не должна
+    // начинаться заново, иначе attachMedia припишет файл к чужой записи
+    this._seq = this.all().at(-1)?.id || 0;
+  }
+
+  // Сохранить скачанный файл. Возвращает путь относительно папки медиа.
+  saveMedia(chatId, recId, name, buffer) {
+    const dir = join(this.mediaDir, String(chatId).replace(/[^0-9-]/g, ''));
+    mkdirSync(dir, { recursive: true });
+    // Имя приходит от пользователя: режем разделители пути и «..», иначе файл
+    // мог бы уехать за пределы папки журнала.
+    const safe = String(name || 'file')
+      .replace(/[/\\:*?"<>|]+/g, '_')
+      .replace(/\.{2,}/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(-80) || 'file';
+    const rel = join(String(chatId).replace(/[^0-9-]/g, ''), `${recId}-${safe}`);
+    writeFileSync(join(this.mediaDir, rel), buffer);
+    return rel;
+  }
+
+  // Сколько весят сохранённые файлы - показываем в панели и перед выгрузкой.
+  mediaSize() {
+    let bytes = 0;
+    let count = 0;
+    const walk = (dir) => {
+      let items = [];
+      try { items = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const it of items) {
+        const full = join(dir, it.name);
+        if (it.isDirectory()) walk(full);
+        else { try { bytes += statSync(full).size; count++; } catch {} }
+      }
+    };
+    walk(this.mediaDir);
+    return { bytes, count };
   }
 
   _readFlags() {
@@ -104,9 +145,21 @@ export class AdminDb {
       forward: entry.forward || null,
       replyTo: entry.replyTo || null,
       albumId: entry.albumId || null,
+      media: entry.media || null, // путь к самому файлу внутри admin-log-media/
     };
     appendFileSync(this.file, encodeLine(rec) + '\n');
     return rec;
+  }
+
+  // Файл скачивается уже ПОСЛЕ записи строки (чтобы не задерживать приём),
+  // поэтому путь дописываем задним числом - переписываем одну строку.
+  attachMedia(recId, rel) {
+    const rows = this.all();
+    const row = rows.find((r) => r.id === recId);
+    if (!row) return false;
+    row.media = rel;
+    writeFileSync(this.file, rows.map((r) => encodeLine(r) + '\n').join(''));
+    return true;
   }
 
   all() {
@@ -141,6 +194,34 @@ export class AdminDb {
     writeFileSync(tmp, keep.map((r) => encodeLine(r) + '\n').join(''));
     renameSync(tmp, this.file);
     return rows.length - keep.length;
+  }
+
+  // Архив «журнал + все файлы» одним куском: расшифрованный JSON рядом с медиа.
+  // Системный tar вместо npm-зависимости - проект держим zero-dep.
+  archive() {
+    const stamp = this.all().at(-1)?.ts?.slice(0, 10) || 'log';
+    const work = join(tmpdir(), `sm-admin-${process.pid}-${stamp}`);
+    mkdirSync(work, { recursive: true });
+    // JSON кладём расшифрованным: архив и так забирает владелец себе
+    writeFileSync(join(work, 'admin-log.json'), JSON.stringify(this.all(), null, 2));
+    const out = join(tmpdir(), `admin-log-${process.pid}.tar.gz`);
+    return new Promise((resolve, reject) => {
+      execFile(
+        'tar',
+        ['czf', out, '-C', work, 'admin-log.json', '-C', dirname(this.mediaDir), basename(this.mediaDir)],
+        (err) => {
+          if (err) return reject(err);
+          try {
+            const buf = readFileSync(out);
+            rmSync(out, { force: true });
+            rmSync(work, { recursive: true, force: true });
+            resolve(buf);
+          } catch (e) {
+            reject(e);
+          }
+        }
+      );
+    });
   }
 
   clear(chatId = null) {
