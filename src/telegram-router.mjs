@@ -14,6 +14,13 @@ import { toCsv, toJson, toMarkdown } from './export.mjs';
 import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.mjs';
 import { parseRemember, rememberEcho } from './remember.mjs';
 import { getLessons, forgetLesson } from './lessons.mjs';
+import { todayWeather, weatherLine } from './weather.mjs';
+
+// «какая погода», «что там с погодой», «дождь будет?» - вопрос к сервису,
+// а не к фантазии модели.
+// NB: окончания перечисляем явно - «погоди секунду» и «погодные условия»
+// не должны уводить в прогноз.
+const WEATHER_RE = /погод(?:а|ы|у|е|ой|ке|ку)(?![а-яё])|(?:дожд[ьяи]|снег|гроза)\s+(?:будет|сегодня|завтра)/i;
 
 // «запиши/добавь ... ккал», «съел омлет 350», «выпил литр воды» - явная просьба
 // занести в дневник питания, а не поболтать про еду.
@@ -59,6 +66,14 @@ export function createMessageRouter(deps) {
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
     // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)
     if (await lk.consumeInput(id, user, text)) return;
+    // Погода: бот её НЕ знает, но охотно сочинял («завтра +25, солнечно»).
+    // Спрашивают - идём в реальный сервис, нет города - честно просим город.
+    if (WEATHER_RE.test(text)) {
+      if (!user?.city) return send(id, 'Скажи город - тогда посмотрю погоду. Просто напиши, например «я в Москве»');
+      const w = await withTyping(id, () => todayWeather(user.city)).catch(() => null);
+      return send(id, w ? esc(weatherLine(w)) : 'Сервис погоды сейчас не отвечает, попробуй попозже');
+    }
+
     // Еда и вода СЛОВАМИ - в дневник по-настоящему. Раньше это уходило в
     // болтовню, и бот врал «записал», хотя трекер оставался пустым.
     if (FOOD_LOG_RE.test(text) && lk.logFood) {
