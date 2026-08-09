@@ -25,16 +25,18 @@ export function createFoodPhoto({ store, send, esc, log, logFoodEntry }) {
       `🍽 Похоже на: <b>${esc(food.title)}</b>${food.portion ? ` (${esc(food.portion)})` : ''}\n\n` +
         `<b>${food.kcal}</b> ккал · Б ${food.protein} г · Ж ${food.fat} г · У ${food.carbs} г${SURE[food.sure] || ''}\n\n` +
         'Записать в дневник?',
-      { reply_markup: { inline_keyboard: [[
-        { text: '✅ Записать', callback_data: 'food:yes' },
-        { text: '✖️ Не надо', callback_data: 'food:no' },
-      ]] } },
+      // Модель считает ВСЮ видимую порцию: у целой пиццы выходит 2500 ккал,
+      // хотя человек съел кусок. Половина - самый частый случай, даём кнопкой.
+      { reply_markup: { inline_keyboard: [
+        [{ text: '✅ Записать', callback_data: 'food:yes' }, { text: '½ порции', callback_data: 'food:half' }],
+        [{ text: '✖️ Не надо', callback_data: 'food:no' }],
+      ] } },
     );
     return true;
   }
 
   async function onCallback(chatId, data) {
-    if (data !== 'food:yes' && data !== 'food:no') return false;
+    if (!['food:yes', 'food:half', 'food:no'].includes(data)) return false;
     const food = pending.get(String(chatId));
     pending.delete(String(chatId));
     if (data === 'food:no') {
@@ -45,8 +47,12 @@ export function createFoodPhoto({ store, send, esc, log, logFoodEntry }) {
       await send(chatId, 'Карточка потерялась, пришли фото ещё раз');
       return true;
     }
+    const half = data === 'food:half';
+    const entry = half
+      ? { ...food, title: `${food.title} (половина)`, kcal: Math.round(food.kcal / 2), protein: Math.round(food.protein / 2), fat: Math.round(food.fat / 2), carbs: Math.round(food.carbs / 2) }
+      : food;
     try {
-      const r = logFoodEntry(String(chatId), store.getUser(String(chatId)), food);
+      const r = logFoodEntry(String(chatId), store.getUser(String(chatId)), entry);
       if (!r || r.kind === 'no_profile') {
         await send(chatId, 'Чтобы считать, нужен профиль: вес и рост. Загляни в ЛК → Фитнес');
         return true;

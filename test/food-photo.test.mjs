@@ -40,7 +40,7 @@ test('карточка показывает блюдо, калории и БЖУ
   assert.match(h.sent[0].text, /420<\/b> ккал/);
   assert.match(h.sent[0].text, /Б 22 г · Ж 30 г · У 8 г/);
   assert.match(h.sent[0].text, /оценка примерная/);
-  assert.deepEqual(h.sent[0].extra.reply_markup.inline_keyboard[0].map((b) => b.callback_data), ['food:yes', 'food:no']);
+  assert.deepEqual(h.sent[0].extra.reply_markup.inline_keyboard[0].map((b) => b.callback_data), ['food:yes', 'food:half']);
   assert.equal(todayLog(h.store.getFitness('1'), 180).kcal, 0, 'до подтверждения дневник пуст');
 });
 
@@ -120,4 +120,25 @@ test('текстовая запись еды тоже получает БЖУ', 
   assert.equal(r.kind, 'meal');
   assert.ok(r.added.protein > 0 && r.added.fat > 0 && r.added.carbs > 0);
   assert.equal(todayLog(h.store.getFitness('1'), 180).protein, r.added.protein);
+});
+
+test('«½ порции» пишет половину калорий и БЖУ', async () => {
+  // целая пицца распознаётся как 2500 ккал, а человек съел кусок
+  const h = harness();
+  await h.food.card('1', { ...DISH, title: 'пицца', kcal: 2500, protein: 100, fat: 120, carbs: 250 });
+  assert.equal(await h.food.onCallback('1', 'food:half'), true);
+  const log = todayLog(h.store.getFitness('1'), 180);
+  assert.equal(log.kcal, 1250);
+  assert.equal(log.protein, 50);
+  assert.equal(log.fat, 60);
+  assert.equal(log.carbs, 125);
+  assert.match(h.sent.at(-1).text, /пицца \(половина\)/);
+});
+
+test('на карточке три кнопки: записать, половина, отмена', async () => {
+  const h = harness();
+  await h.food.card('1', DISH);
+  const kb = h.sent[0].extra.reply_markup.inline_keyboard;
+  assert.deepEqual(kb[0].map((b) => b.callback_data), ['food:yes', 'food:half']);
+  assert.deepEqual(kb[1].map((b) => b.callback_data), ['food:no']);
 });
