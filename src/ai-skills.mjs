@@ -491,6 +491,58 @@ export function audioFormatFromMime(mime = '') {
   return 'ogg';
 }
 
+// Еда на фото -> блюдо, порция, калории и БЖУ. Модель просят оценивать
+// консервативно и честно помечать, если это не еда: врать про цифры хуже,
+// чем сказать «не понял, что это».
+export async function aiFoodPhoto(base64, mime = 'image/jpeg', hint = '') {
+  const text = await chatCompletion(
+    AUDIO(),
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'На фото еда? Если да - оцени блюдо и его пищевую ценность для ВИДИМОЙ порции.' +
+              (hint ? ` Подпись отправителя: «${hint}».` : '') +
+              '\nВерни ТОЛЬКО JSON без пояснений и без markdown:\n' +
+              '{"food":true,"title":"название блюда по-русски, 1-4 слова","portion":"на глаз, напр. 250 г или 1 тарелка",' +
+              '"kcal":число,"protein":число,"fat":число,"carbs":число,"sure":"high|medium|low"}\n' +
+              'Если на фото НЕ еда - верни {"food":false}. ' +
+              'Цифры - на всю видимую порцию, в граммах и ккал, целые числа. ' +
+              'Не завышай: при сомнении бери среднюю оценку и ставь sure: low.',
+          },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 300, timeoutMs: 30000, retryDelays: [0, 5000] }
+  );
+  try {
+    const raw = String(text || '').replace(/```json|```/g, '').trim();
+    const json = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+    if (!json?.food) return null;
+    const num = (v, max) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : 0;
+    };
+    const kcal = num(json.kcal, 5000);
+    if (!kcal) return null;
+    return {
+      title: String(json.title || 'блюдо').slice(0, 40),
+      portion: String(json.portion || '').slice(0, 40),
+      kcal,
+      protein: num(json.protein, 500),
+      fat: num(json.fat, 500),
+      carbs: num(json.carbs, 800),
+      sure: ['high', 'medium', 'low'].includes(json.sure) ? json.sure : 'medium',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function aiDescribeImage(base64, mime = 'image/jpeg', hint = '') {
   return chatCompletion(
     AUDIO(),

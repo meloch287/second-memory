@@ -19,6 +19,7 @@ import { captureStylePref } from './capabilities.mjs';
 import { createIdPicker } from './telegram-idpicker.mjs';
 import { createAudioChoice, isAudioFile, audioInfo } from './telegram-audio.mjs';
 import { learnFromReaction } from './lessons.mjs';
+import { createFoodPhoto } from './foodphoto.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
@@ -450,12 +451,10 @@ export function startTelegramBot(store, token, log = console) {
       return;
     }
 
-    // Просьбы про стиль общения («называй меня братан», «давай официально»,
-    // «можешь материться», «не делай X») сохраняем ДО генерации ответа - тогда
-    // бот сразу отвечает уже в новом стиле, а не со следующего сообщения.
+    // Стиль («называй братаном», «официально», «не делай X») ловим ДО генерации:
+    // иначе новый стиль включался бы только со следующего сообщения.
     captureStylePref(store, String(chatId), text);
-    // Самообучение: человек недоволен или диктует правило - вытаскиваем урок из
-    // предыдущей пары «ответ бота -> реакция» и запоминаем ЭТОМУ чату.
+    // Самообучение: недовольство или прямое правило -> урок из предыдущей пары
     void learnFromReaction({ store, log, aiLesson, chatId: String(chatId), text, enabled: aiEnabled() });
 
     // С ИИ живой ответ даёт модель, а долги/встречи/задачи тихо ложатся в базу
@@ -513,9 +512,11 @@ export function startTelegramBot(store, token, log = console) {
    * обёртка лишь пробрасывает аргументы. */
   let routeText = null;
 
+  const foodPhoto = createFoodPhoto({ store, send, esc, log, logFoodEntry: (c, u, f) => lk.logFoodEntry(c, u, f) }); // фото еды -> КБЖУ
   const media = createMediaHandlers({
     token, api, activeThread, store, send, log, withTyping, friendFlow,
     routeText: (chatId, user, text) => routeText(chatId, user, text),
+    onFoodPhoto: (chatId, food) => foodPhoto.card(String(chatId), food),
   });
   const downloadBase64 = media.downloadBase64;
   const sendPhoto = media.sendPhoto;
@@ -532,10 +533,10 @@ export function startTelegramBot(store, token, log = console) {
   });
   const handleIntent = intents.handleIntent;
 
-// Аудиофайл (mp3/m4a/wav, не голосовое) - спрашиваем: расшифровка или саммари.
+  // Аудиофайл (mp3/m4a/wav, не голосовое): расшифровка или саммари на выбор
   const audioChoice = createAudioChoice({
     send, withTyping, log,
-    transcribe: async (card) => {
+    transcribe: async (card) => { // расшифровка аудиофайла по кнопке
       const b64 = await downloadBase64(card.fileId);
       const fmt = audioFormatFromMime(card.mime || '') || 'mp3';
       return (card.duration || 0) > 170 ? transcribeLong(b64, fmt) : aiTranscribe(b64, fmt);
@@ -589,6 +590,7 @@ export function startTelegramBot(store, token, log = console) {
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
     upcomingEvents, sendIcs, sendDocumentText, lk, idPicker, audioChoice, isAudioFile, audioInfo,
+    onFoodCallback: (c, d) => foodPhoto.onCallback(String(c), d),
   });
   const onMessage = router.onMessage;
   const onCallback = router.onCallback;

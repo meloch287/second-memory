@@ -71,8 +71,55 @@ export function dayKey(off = 180, now = new Date()) {
 export function todayLog(fitness, off = 180, now = new Date()) {
   const key = dayKey(off, now);
   const log = fitness?.log;
-  if (!log || log.date !== key) return { date: key, water: 0, kcal: 0, items: [] };
-  return { date: key, water: log.water || 0, kcal: log.kcal || 0, items: Array.isArray(log.items) ? log.items : [] };
+  const empty = { date: key, water: 0, kcal: 0, protein: 0, fat: 0, carbs: 0, items: [] };
+  if (!log || log.date !== key) return empty;
+  return {
+    date: key,
+    water: log.water || 0,
+    kcal: log.kcal || 0,
+    protein: log.protein || 0,
+    fat: log.fat || 0,
+    carbs: log.carbs || 0,
+    items: Array.isArray(log.items) ? log.items : [],
+  };
+}
+
+// Сколько ещё можно и чего не хватает. Человеку нужны не проценты, а ответ на
+// «что доесть»: белка добери, жиров уже хватит.
+export function macroAdvice(log, norm) {
+  if (!norm) return [];
+  const out = [];
+  const say = (name, got, need, unit = 'г') => {
+    const left = need - got;
+    if (left > need * 0.15) out.push(`${name}: добери ${Math.round(left)} ${unit}`);
+    else if (left >= 0) out.push(`${name}: почти норма, осталось ${Math.round(left)} ${unit}`);
+    else out.push(`${name}: перебор на ${Math.round(-left)} ${unit}`);
+  };
+  say('Белок', log.protein || 0, norm.protein);
+  say('Жиры', log.fat || 0, norm.fat);
+  say('Углеводы', log.carbs || 0, norm.carbs);
+  return out;
+}
+
+// Оценка БЖУ, когда известны только калории и название блюда: раскладываем по
+// типичному профилю блюда. Грубо, но честнее нулей - и помечается как оценка.
+const MACRO_MIX = [
+  [/куриц|индейк|говядин|рыб|творог|яйц|омлет|стейк|котлет|протеин|тунец|креветк/i, [0.35, 0.35, 0.3]],
+  [/салат|овощ|огурц|помидор|капуст|зелен|яблок|груш|слив|ягод|фрукт/i, [0.15, 0.15, 0.7]],
+  [/каш|рис|греч|макарон|паст|хлеб|булк|картош|пюре|блин|овсян/i, [0.13, 0.15, 0.72]],
+  [/торт|шоколад|конфет|печень|пирож|мороженое|рафаэл|десерт|сахар/i, [0.06, 0.45, 0.49]],
+  [/сыр|масло|орех|авокадо|сало|бекон|майонез/i, [0.15, 0.7, 0.15]],
+  [/суп|борщ|бульон|солянк/i, [0.25, 0.3, 0.45]],
+];
+export function guessMacros(title, kcal) {
+  const mix = MACRO_MIX.find(([re]) => re.test(String(title || '')))?.[1] || [0.2, 0.3, 0.5];
+  const [pShare, fShare, cShare] = mix;
+  return {
+    protein: Math.round((kcal * pShare) / 4),
+    fat: Math.round((kcal * fShare) / 9),
+    carbs: Math.round((kcal * cShare) / 4),
+    guessed: true,
+  };
 }
 
 // «250», «поел 600 ккал», «омлет 350» -> { kcal, title }. null - не разобрали.

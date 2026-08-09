@@ -7,13 +7,13 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { audioEnabled, aiTranscribe, aiDescribeImage, aiSummarizeDoc, aiSummarizeText, aiExtractReceipt } from './ai.mjs';
+import { audioEnabled, aiTranscribe, aiDescribeImage, aiSummarizeDoc, aiSummarizeText, aiExtractReceipt , aiFoodPhoto } from './ai.mjs';
 import { extractDocxText } from './docx.mjs';
 import { RUB } from './format.mjs';
 import { esc, hasFfmpeg } from './telegram-helpers.mjs';
 
 export function createMediaHandlers(deps) {
-  const { token, api, activeThread, store, send, log, withTyping, friendFlow, routeText } = deps;
+  const { token, api, activeThread, store, send, log, withTyping, friendFlow, routeText , onFoodPhoto } = deps;
 
   async function downloadBase64(file_id) {
     const info = await api('getFile', { file_id });
@@ -168,6 +168,13 @@ export function createMediaHandlers(deps) {
         store.addRaw(String(chatId), `Потратил ${rec.amount} на ${rec.category}${rec.merchant ? ` (${rec.merchant})` : ''}`);
         return send(chatId, `Чек распознал: ${esc(rec.category)}${rec.merchant ? ` (${esc(rec.merchant)})` : ''} - ${RUB.format(rec.amount)} ₽. Записал в траты 💸`);
       }
+    }
+
+    // Фото еды: узнаём блюдо и КБЖУ и предлагаем записать в дневник. Раньше
+    // бот просто болтал про картинку, а калории «записывал» только на словах.
+    if (onFoodPhoto) {
+      const food = await withTyping(chatId, () => aiFoodPhoto(b64, mime, caption || '')).catch(() => null);
+      if (food && (await onFoodPhoto(chatId, food, caption))) return;
     }
 
     let description;

@@ -464,8 +464,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
   const who = author ? `от ${author}` : 'от него';
   const addressee = author ? ` Обратись к ${author} по имени, но НЕ начинай ответ с «${author}:».` : '';
   const baseCtx = friendContext(store, chatId, text, now, smartFacts);
-  // Самообучение: выученные в этом чате уроки и запрет повторять открывашки
-  // идут в СИСТЕМНЫЙ промпт - там модель слушает их лучше, чем в контексте.
+  // Самообучение: уроки чата и запрет повторять открывашки - в СИСТЕМНЫЙ промпт
   const learned = [lessonsBlock(store, chatId), openersRule(store.recentHistory(12, String(chatId)))].filter(Boolean).join('\n\n');
   const sys = friendSystem(user) + (learned ? '\n\n' + learned : '');
   let reply = await ask(
@@ -681,7 +680,7 @@ import {
   aiExtractFacts as _aiExtractFacts,
   aiLesson as _aiLesson, aiRetro as _aiRetro,
   audioFormatFromMime as _audioFormatFromMime,
-  aiDescribeImage as _aiDescribeImage,
+  aiDescribeImage as _aiDescribeImage, aiFoodPhoto as _aiFoodPhoto,
   aiTranscribe as _aiTranscribe,
 } from './ai-skills.mjs';
 
@@ -697,5 +696,5 @@ export const aiSummarizeDoc = _aiSummarizeDoc;
 export const aiSummarizeText = _aiSummarizeText;
 export const aiExtractFacts = _aiExtractFacts, aiLesson = _aiLesson, aiRetro = _aiRetro;
 export const audioFormatFromMime = _audioFormatFromMime;
-export const aiDescribeImage = _aiDescribeImage;
+export const aiDescribeImage = _aiDescribeImage, aiFoodPhoto = _aiFoodPhoto;
 export const aiTranscribe = _aiTranscribe;

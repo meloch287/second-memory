@@ -6,7 +6,7 @@
 
 import { esc } from './telegram-helpers.mjs';
 import { pe, peButton } from './premium-emoji.mjs';
-import { dailyNorm, todayLog, dayKey, parseMeal, parseWater, bar } from './nutrition.mjs';
+import { dailyNorm, todayLog, dayKey, parseMeal, parseWater, bar, macroAdvice, guessMacros } from './nutrition.mjs';
 import { userOffset } from './tz.mjs';
 import { persistentPending } from './pending.mjs';
 
@@ -221,9 +221,19 @@ export function createFitnessHandler(deps) {
       '',
       `💦 Вода: <b>${(log.water / 1000).toFixed(1)}</b> / ${(norm.water / 1000).toFixed(1)} л`,
       `${bar(log.water, norm.water)} ${waterLeft ? `осталось ${waterLeft} мл` : 'норма закрыта 👍'}`,
+      '',
+      // Человеку важны не проценты, а что доесть: белка добери, жиров хватит
+      `🥩 Белок: <b>${log.protein}</b> / ${norm.protein} г  ${bar(log.protein, norm.protein)}`,
+      `🧈 Жиры: <b>${log.fat}</b> / ${norm.fat} г  ${bar(log.fat, norm.fat)}`,
+      `🍚 Углеводы: <b>${log.carbs}</b> / ${norm.carbs} г  ${bar(log.carbs, norm.carbs)}`,
+      ...(log.kcal ? ['', esc(macroAdvice(log, norm).join(' · '))] : []),
     ];
     if (log.items.length) {
-      lines.push('', 'Сегодня ел:', ...log.items.slice(-6).map((i) => `• ${esc(i.title)} — ${i.kcal} ккал`));
+      lines.push(
+        '',
+        'Сегодня ел:',
+        ...log.items.slice(-6).map((i) => `• ${esc(i.title)} — ${i.kcal} ккал${i.protein != null ? ` (Б${i.protein}/Ж${i.fat}/У${i.carbs})` : ''}`),
+      );
     }
     lines.push('', `<i>Ориентир по формуле Миффлина-Сан Жеора: обмен ${norm.bmr}, расход ${norm.tdee} ккал.</i>`);
     return lines.join('\n');
@@ -246,6 +256,9 @@ export function createFitnessHandler(deps) {
       date: dayKey(off),
       water: log.water + (patch.water || 0),
       kcal: log.kcal + (patch.kcal || 0),
+      protein: (log.protein || 0) + (patch.protein || 0),
+      fat: (log.fat || 0) + (patch.fat || 0),
+      carbs: (log.carbs || 0) + (patch.carbs || 0),
       items: patch.item ? [...log.items, patch.item].slice(-20) : log.items,
     };
     store.setFitness(chatId, { log: next });
@@ -416,8 +429,28 @@ export function createFitnessHandler(deps) {
     }
     const meal = parseMeal(text);
     if (!meal) return { kind: 'need_kcal' }; // еда названа, но без цифр
-    return { kind: 'meal', added: meal, log: bumpLog(chatId, user, { kcal: meal.kcal, item: meal }), norm };
+    // БЖУ человек почти никогда не диктует - прикидываем по типу блюда,
+    // иначе в дневнике вечно нули и совет «добери белка» бесполезен.
+    const macros = guessMacros(meal.title, meal.kcal);
+    const item = { ...meal, ...macros };
+    return { kind: 'meal', added: item, log: bumpLog(chatId, user, { kcal: meal.kcal, ...macros, item }), norm };
   }
 
-  return { onCallback, consumeInput, pendingInput, clearPending, logFoodText };
+  // Запись готовой карточки (например, распознанной с фото).
+  function logFoodEntry(chatId, user, entry) {
+    const f = store.getFitness(chatId);
+    const off = userOffset(user);
+    const norm = dailyNorm(f, isTrainingToday(f, off));
+    if (!norm) return { kind: 'no_profile' };
+    const item = {
+      title: String(entry.title || 'блюдо').slice(0, 40),
+      kcal: Math.max(1, Math.round(entry.kcal || 0)),
+      protein: Math.max(0, Math.round(entry.protein || 0)),
+      fat: Math.max(0, Math.round(entry.fat || 0)),
+      carbs: Math.max(0, Math.round(entry.carbs || 0)),
+    };
+    return { kind: 'meal', added: item, log: bumpLog(chatId, user, { kcal: item.kcal, protein: item.protein, fat: item.fat, carbs: item.carbs, item }), norm };
+  }
+
+  return { onCallback, consumeInput, pendingInput, clearPending, logFoodText, logFoodEntry };
 }

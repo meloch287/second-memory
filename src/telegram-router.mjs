@@ -33,7 +33,7 @@ export function createMessageRouter(deps) {
     locationFlow, audioFlow, imageFlow, videoTranscript, downloadBase64, readDoc,
     onboardingStep, handleIntent, friendFlow, learnSticker, maybeReact,
     helpText, sendSummary, askReset, startOnboarding, helloAgain,
-    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker, audioChoice, isAudioFile, audioInfo,
+    upcomingEvents, sendIcs, sendDocumentText, lk, idPicker, audioChoice, isAudioFile, audioInfo, onFoodCallback,
   } = deps;
 
   // ЕДИНАЯ маршрутизация готового текста - и набранного руками (onMessage),
@@ -416,6 +416,7 @@ export function createMessageRouter(deps) {
     // в режиме записи бот молчит и на кнопки - кроме своей же админ-панели
     if (!String(cb.data || '').startsWith('adm:') && adminLogOn(store, chatId)) return;
 
+    if (onFoodCallback && (await onFoodCallback(chatId, cb.data))) return;
     if (audioChoice && (await audioChoice.onCallback(chatId, cb.data))) return;
 
     // Панель админ-журнала (только владелец)
