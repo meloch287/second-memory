@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
-import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson, lessonsBlock, recentOpeners, openersRule } from '../src/lessons.mjs';
+import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson, lessonsBlock, recentOpeners, openersRule, learnFromReaction } from '../src/lessons.mjs';
 
 const fresh = () => new Store(join(mkdtempSync(join(tmpdir(), 'sm-les-')), 'm.json'));
 
@@ -99,4 +99,55 @@ test('разные открывашки претензий не вызывают
     { role: 'assistant', text: 'Готово' },
   ];
   assert.equal(openersRule(history), null);
+});
+
+test('урок заводится только по сигналу, и берётся предыдущий ответ бота', async () => {
+  const s = fresh();
+  s.pushHistory('user', 'сколько там калорий', '1');
+  s.pushHistory('assistant', 'Лиза, ну ты прям замучила меня с этими калориями!', '1');
+  const calls = [];
+  const aiLesson = async (bot, user) => { calls.push({ bot, user }); return 'Считай сразу, без нытья и переспрашивания'; };
+
+  // обычная реплика - модель не зовём вовсе
+  await learnFromReaction({ store: s, aiLesson, chatId: '1', text: 'спасибо' });
+  assert.equal(calls.length, 0);
+
+  // недовольство - зовём и запоминаем
+  const rec = await learnFromReaction({ store: s, aiLesson, chatId: '1', text: 'в общем сколько' });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].bot, /замучила/, 'в модель ушёл именно предыдущий ответ бота');
+  assert.equal(rec.source, 'из недовольства');
+  assert.match(lessonsBlock(s, '1'), /Считай сразу/);
+});
+
+test('прямое правило помечается своим источником', async () => {
+  const s = fresh();
+  s.pushHistory('assistant', 'Саня, понял', '1');
+  const rec = await learnFromReaction({
+    store: s, aiLesson: async () => 'Не отвечай пустыми поддакиваниями', chatId: '1', text: 'учти на будущее: не поддакивай',
+  });
+  assert.equal(rec.source, 'сказано прямо');
+});
+
+test('модель вернула НЕТ - урок не заводится', async () => {
+  const s = fresh();
+  s.pushHistory('assistant', 'что-то', '1');
+  const rec = await learnFromReaction({ store: s, aiLesson: async () => null, chatId: '1', text: 'ты тупой' });
+  assert.equal(rec, null);
+  assert.equal(getLessons(s, '1').length, 0);
+});
+
+test('падение модели не роняет разговор', async () => {
+  const s = fresh();
+  s.pushHistory('assistant', 'что-то', '1');
+  const rec = await learnFromReaction({
+    store: s, log: { error() {} }, aiLesson: async () => { throw new Error('AI HTTP 503'); }, chatId: '1', text: 'плохо',
+  });
+  assert.equal(rec, null);
+});
+
+test('без истории бота учить не на чем', async () => {
+  const s = fresh();
+  const rec = await learnFromReaction({ store: s, aiLesson: async () => 'урок', chatId: '1', text: 'плохо' });
+  assert.equal(rec, null);
 });

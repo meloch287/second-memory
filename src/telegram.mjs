@@ -18,7 +18,7 @@ import { handleMessage, captureEntry, entryConfirmation } from './brain.mjs';
 import { captureStylePref } from './capabilities.mjs';
 import { createIdPicker } from './telegram-idpicker.mjs';
 import { createAudioChoice, isAudioFile, audioInfo } from './telegram-audio.mjs';
-import { isDispleased, isDirectRule, addLesson, getLessons, forgetLesson } from './lessons.mjs';
+import { learnFromReaction } from './lessons.mjs';
 import { buildIcs } from './ics.mjs';
 import { parseTz, DEFAULT_OFFSET, userOffset, wall, fmtUser } from './tz.mjs';
 import { tzFromCoords, cityFromCoords } from './weather.mjs';
@@ -456,7 +456,7 @@ export function startTelegramBot(store, token, log = console) {
     captureStylePref(store, String(chatId), text);
     // Самообучение: человек недоволен или диктует правило - вытаскиваем урок из
     // предыдущей пары «ответ бота -> реакция» и запоминаем ЭТОМУ чату.
-    void learnFromReaction(String(chatId), text);
+    void learnFromReaction({ store, log, aiLesson, chatId: String(chatId), text, enabled: aiEnabled() });
 
     // С ИИ живой ответ даёт модель, а долги/встречи/задачи тихо ложатся в базу
     // здесь (route не вызываем) — с учётом часового пояса пользователя.
@@ -479,23 +479,6 @@ export function startTelegramBot(store, token, log = console) {
     await deliver(chatId, reply, store.getUser(String(chatId)));
     await maybeSticker(chatId, text); // иногда - выученный стикер под настроение
     await maybeOfferCalendar(String(chatId), store.getUser(String(chatId)), captured);
-  }
-
-  // Урок формулирует модель, но зовём её ТОЛЬКО когда есть сигнал - иначе
-  // сожгли бы токены на каждом сообщении. Фоном: ответ человека не ждёт.
-  async function learnFromReaction(chatId, text) {
-    try {
-      if (!aiEnabled()) return;
-      if (!isDispleased(text) && !isDirectRule(text)) return;
-      const prev = store.recentHistory(6, chatId).filter((h) => h.role === 'assistant').at(-1);
-      if (!prev) return;
-      const lesson = await aiLesson(prev.text, text, store.recentHistory(4, chatId).map((h) => `${h.role === 'user' ? 'Человек' : 'Ты'}: ${String(h.text).slice(0, 200)}`));
-      if (!lesson) return;
-      addLesson(store, chatId, lesson, isDirectRule(text) ? 'сказано прямо' : 'из недовольства');
-      log.log(`[lessons] чат ${chatId}: «${lesson}»`);
-    } catch (e) {
-      log.error('[lessons]', e.message);
-    }
   }
 
   /* ---- Геолокация ---- */

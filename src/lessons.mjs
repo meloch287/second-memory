@@ -136,3 +136,26 @@ export function openersRule(history) {
   if (uniq.length > list.length * 0.7) return null; // разнообразие в норме
   return `Последние ответы ты начинал так: ${[...new Set(list)].map((s) => `«${s}»`).join(', ')}. НЕ начинай так снова - звучит как заевшая пластинка.`;
 }
+
+// Реакция человека -> урок. Модель зовём ТОЛЬКО когда сработал маркер, иначе
+// сожгли бы токены на каждом сообщении. Работает фоном: ответ человека не ждёт.
+export async function learnFromReaction({ store, log, aiLesson, chatId, text, enabled = true }) {
+  try {
+    if (!enabled || !aiLesson) return null;
+    const direct = isDirectRule(text);
+    if (!isDispleased(text) && !direct) return null;
+    const prev = store.recentHistory(6, chatId).filter((h) => h.role === 'assistant').at(-1);
+    if (!prev) return null;
+    const ctx = store
+      .recentHistory(4, chatId)
+      .map((h) => `${h.role === 'user' ? 'Человек' : 'Ты'}: ${String(h.text).slice(0, 200)}`);
+    const lesson = await aiLesson(prev.text, text, ctx);
+    if (!lesson) return null;
+    const rec = addLesson(store, chatId, lesson, direct ? 'сказано прямо' : 'из недовольства');
+    log?.log?.(`[lessons] чат ${chatId}: «${lesson}»`);
+    return rec;
+  } catch (e) {
+    log?.error?.('[lessons]', e.message);
+    return null;
+  }
+}
