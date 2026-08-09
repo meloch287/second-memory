@@ -9,7 +9,9 @@
 // но построчно: иначе append превратился бы в перезапись всего файла.
 
 import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, readdirSync, rmSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+// NB: path.resolve импортируем под другим именем - внутри промиса имя
+// resolve занято его собственным колбэком (уже ловили эту граблю с URL).
+import { basename, dirname, join, resolve as absPath } from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -210,7 +212,7 @@ export class AdminDb {
         'tar',
         // Пути ТОЛЬКО абсолютные: после первого -C рабочий каталог tar меняется,
         // и относительный «data» из второго -C уже не находится.
-        ['czf', out, '-C', work, 'admin-log.json', '-C', resolve(dirname(this.mediaDir)), basename(this.mediaDir)],
+        ['czf', out, '-C', work, 'admin-log.json', '-C', absPath(dirname(this.mediaDir)), basename(this.mediaDir)],
         (err) => {
           if (err) return reject(err);
           try {
