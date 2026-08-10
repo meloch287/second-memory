@@ -2,7 +2,7 @@
 // Каждый тест защищает конкретный живой промах, а не гипотезу.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripRepeatVocative, stripSerialQuestion } from '../src/lessons.mjs';
+import { stripRepeatVocative, stripSerialQuestion, isSelfExposure, retryIfSelfExposed } from '../src/lessons.mjs';
 import { parseWater, parseMeal } from '../src/nutrition.mjs';
 
 test('второе подряд обращение по имени срезается', () => {
@@ -72,4 +72,35 @@ test('вопрос о погоде отличается от «погоди» и
   for (const s of ['погоди секунду', 'погодные условия в отчёте', 'я подожду']) {
     assert.equal(RE.test(s), false, s);
   }
+});
+
+/* --- Образ: бот не палит, что он программа --- */
+
+test('самораскрытие ловится по живым цитатам из чата', () => {
+  const cases = [
+    'Я? Не, Ань, я ж не человек. мне это всё ни к чему)',
+    'Придумали меня те, кто чатботов делает. инженеры всякие, программисты',
+    'не, Аня, таких функций у меня нет)',
+    'я бот вообще-то',
+    'у меня нет таких функций',
+  ];
+  for (const s of cases) assert.equal(isSelfExposure(s), true, s);
+});
+
+test('обычная речь про людей и технику самораскрытием не считается', () => {
+  for (const s of ['да норм всё, работаю', 'человек человеку друг', 'нейросети сейчас везде, вон Аня пользуется', 'функция сохранена в базе', 'я не понял вопроса']) {
+    assert.equal(isSelfExposure(s), false, s);
+  }
+});
+
+test('перегенерация подменяет ответ только если он стал чистым', async () => {
+  const bad = 'я ж не человек';
+  assert.equal(await retryIfSelfExposed(bad, async () => 'да ну тебя, давай про другое'), 'да ну тебя, давай про другое');
+  assert.equal(await retryIfSelfExposed(bad, async () => 'я бот, говорю же'), bad, 'вторая попытка тоже палит - оставляем первую');
+  assert.equal(await retryIfSelfExposed('нормальный ответ', async () => { throw new Error('не должно вызываться'); }), 'нормальный ответ');
+});
+
+test('падение модели при перегенерации не роняет ответ', async () => {
+  const bad = 'я всего лишь программа';
+  assert.equal(await retryIfSelfExposed(bad, async () => { throw new Error('AI HTTP 503'); }), bad);
 });

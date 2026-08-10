@@ -39,9 +39,8 @@ const stripThink = (s) =>
   s
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .replace(/<think>[\s\S]*$/, '')
-    .replace(/\s[—–]\s/g, ' - ') // модели игнорируют запрет длинного тире - чиним сами
-    // markdown-разметку модели суют вопреки запрету - чистим (ни веб, ни бот её
-    // не рендерят, показывалась как «**жирный**»)
+    .replace(/\s[—–]\s/g, ' - ') // длинное тире модели ставят вопреки запрету
+    // markdown ни веб, ни бот не рендерят - показывался как «**жирный**»
     .replace(/\*\*\*(.+?)\*\*\*/gs, '$1') // ***bold italic***
     .replace(/\*\*(.+?)\*\*/gs, '$1')     // **жирный** -> жирный
     .replace(/\*\*/g, '')                  // осиротевшие **
@@ -52,11 +51,10 @@ const stripThink = (s) =>
 
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion, voiceStateLine, groupPersona } from './capabilities.mjs';
-import { membersBlock, membersRule, renameAuthors } from './members.mjs';
-import { lessonsBlock, openersRule, stripRepeatVocative, stripSerialQuestion } from './lessons.mjs';
+import { membersBlock, membersRule, renameAuthors, sharedPeopleLine } from './members.mjs';
+import { lessonsBlock, openersRule, stripRepeatVocative, stripSerialQuestion, retryIfSelfExposed } from './lessons.mjs';
 
-// Модель иногда дописывает фейковое «Сохранил заметку: ...» (копирует старый
-// формат из истории), хотя болтовня заметкой не сохраняется. Срезаем такое.
+// Фейковое «Сохранил заметку: ...» модель копирует из истории - срезаем.
 export function stripFakeSave(s) {
   return String(s)
     .replace(/(?:^|[\s])(?:сохранил|сохранила|записал|записала|запомнил|запомнила|добавил|добавила)\s+(?:себе\s+|это\s+)?(?:заметк\S*|запис\S*|в память|в базу)[^.!?\n]*[.!?]?/gi, ' ')
@@ -66,7 +64,6 @@ export function stripFakeSave(s) {
 }
 
 // Имя бота ≠ имя юзера: срезаем botName-вокатив (в начале или после запятой).
-// «я Братан» / «меня зовут Братан» не трогаем - там нет запятой перед.
 export function stripBotVocative(reply, botName) {
   if (!reply || !botName || botName.length < 4) return reply;
   const b = botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -380,11 +377,10 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
   const history = store.recentHistory(12, chatId);
   const personas = store.getPersonas(chatId);
   const personaLines = Object.entries(personas).map(([name, note]) => `- ${name}: ${note}`);
-  // Список участников: имя + @username, чтобы бот связывал упоминания «@ник»
-  // в тексте с конкретным человеком. Пустые/мусорные имена сюда не пускаем -
-  // из-за них бот терял, кто есть кто.
+  // Список участников с псевдонимами: без него бот терял, кто есть кто.
   const memberLine = membersBlock(user);
   const memberRule = memberLine ? membersRule(user) : null;
+  const shared = user?.isGroup ? null : sharedPeopleLine(store, chatId); // знакомые по общим чатам
   // свежая переписка, которую воркер ещё не переварил в факты: без неё бот
   // «не видит» только что сказанное и свежеимпортированную историю
   const factTs = new Set(facts.map((f) => f.ts));
@@ -396,6 +392,7 @@ function friendContext(store, chatId, query, now, smartFacts = null) {
     nowLine(off, now),
     '',
     ...(memberLine ? [`УЧАСТНИКИ ГРУППЫ (тут пишут): ${memberLine}`, memberRule, ''] : []),
+    ...(shared ? [shared, ''] : []),
     ...(personaLines.length ? ['ЛЮДИ В ЕГО ЖИЗНИ (досье):', ...personaLines, ''] : []),
     'ПАМЯТЬ (факты из прошлых разговоров):',
     ...(facts.length
@@ -491,8 +488,10 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
     );
     if (forced && (hasSubstance(forced) || !isContentDeferral(text, forced))) reply = forced;
   }
-  // Манера: имя бота не обращение, два ответа подряд с именем собеседника и два
-  // вопроса-хвоста подряд - частые претензии по живым диалогам (47 и 22 случая).
+  // «я ж не человек», «придумали меня программисты» - рушит образ, перегенерим
+  const regen = (extra) => ask([{ role: 'system', content: sys }, { role: 'user', content: baseCtx + extra + langHint }], { maxTokens: 600, timeoutMs: 25000, retryDelays: [0, 4000] });
+  reply = await retryIfSelfExposed(reply, regen, `\n\nСообщение ${who}: «${text}»`);
+  // Манера: имя собеседника и вопрос-хвост два раза подряд - частые претензии
   const hist = store.recentHistory(8, String(chatId));
   const out = stripRepeatVocative(stripTrailingQuestion(stripBotVocative(reply, user?.botName), user), author || user?.addressAs || user?.name, hist);
   return stripSerialQuestion(out, hist);

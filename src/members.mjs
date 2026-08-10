@@ -130,3 +130,31 @@ export function renameAuthors(line, user) {
   }
   return out;
 }
+
+// Кого этот человек знает через общие с ботом группы. Приватные данные чужих
+// чатов сюда НЕ попадают - только факт «вы в одной группе» и как звать.
+// Живой промах: Аня спросила «ты знаешь Сашу?», а Саша сидит с ней в «Банде».
+export function sharedPeople(store, chatId) {
+  const me = String(chatId);
+  const out = new Map();
+  for (const [gid, g] of Object.entries(store.data.users || {})) {
+    if (!g?.isGroup || !g.members) continue;
+    if (!Object.keys(g.members).includes(me)) continue; // человек не в этой группе
+    for (const m of membersList(g)) {
+      if (String(m.id) === me) continue;
+      const prev = out.get(m.call);
+      out.set(m.call, { name: m.call, username: m.username, groups: [...(prev?.groups || []), g.name || gid].slice(0, 3) });
+    }
+  }
+  return [...out.values()];
+}
+
+export function sharedPeopleLine(store, chatId) {
+  const list = sharedPeople(store, chatId);
+  if (!list.length) return null;
+  return (
+    'ОБЩИЕ ЗНАКОМЫЕ (вы вместе в этих чатах, так что этих людей ты знаешь): ' +
+    list.map((p) => `${p.name}${p.username ? ` (@${p.username})` : ''} - ${p.groups.join(', ')}`).join('; ') +
+    '. Спросят про такого человека - скажи, что знаешь его по общему чату. Что он писал в ДРУГИХ чатах - не рассказывай.'
+  );
+}

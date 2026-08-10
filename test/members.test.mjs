@@ -137,3 +137,47 @@ test('однозначные падежи по-прежнему узнаются
   assert.equal(canonicalName(u, 'Сергея'), 'Сергей');
   assert.equal(canonicalName(u, 'Антона'), 'Антон');
 });
+
+/* --- Знакомые по общим чатам --- */
+
+test('человек знает соседей по общей группе, но не их переписку', async () => {
+  const { Store } = await import('../src/store.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { sharedPeople, sharedPeopleLine } = await import('../src/members.mjs');
+
+  const s = new Store(join(mkdtempSync(join(tmpdir(), 'sm-shared-')), 'm.json'));
+  s.setUser('-100', { isGroup: true, name: 'Банда', members: { 1: { name: 'Аня', username: 'anya' }, 2: { name: 'Саня', username: 'sanya' } } });
+  s.setUser('1', { name: 'Аня' });
+
+  const list = sharedPeople(s, '1');
+  assert.deepEqual(list.map((p) => p.name), ['Саня'], 'себя в знакомые не пишем');
+  const line = sharedPeopleLine(s, '1');
+  assert.match(line, /Саня \(@sanya\) - Банда/);
+  assert.match(line, /В ДРУГИХ чатах - не рассказывай|в ДРУГИХ чатах - не рассказывай/);
+});
+
+test('кто не состоит в группе - знакомых не получает', async () => {
+  const { Store } = await import('../src/store.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { sharedPeopleLine } = await import('../src/members.mjs');
+
+  const s = new Store(join(mkdtempSync(join(tmpdir(), 'sm-shared2-')), 'm.json'));
+  s.setUser('-100', { isGroup: true, name: 'Банда', members: { 1: { name: 'Аня' } } });
+  assert.equal(sharedPeopleLine(s, '999'), null);
+});
+
+test('выученное обращение работает и в списке знакомых', async () => {
+  const { Store } = await import('../src/store.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { sharedPeople } = await import('../src/members.mjs');
+
+  const s = new Store(join(mkdtempSync(join(tmpdir(), 'sm-shared3-')), 'm.json'));
+  s.setUser('-100', { isGroup: true, name: 'Банда', members: { 1: { name: 'Саня' }, 2: { name: 'Аня', callName: 'Мама' } } });
+  assert.deepEqual(sharedPeople(s, '1').map((p) => p.name), ['Мама']);
+});
