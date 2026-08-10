@@ -11,6 +11,8 @@
 // подписаны «Аня:». Паспортное имя остаётся рядом - оно нужно, чтобы связывать
 // подписи сообщений с человеком, но обращение всегда выученное.
 
+import { canonStem, NAME_GROUPS } from './nicknames.mjs';
+
 // Имя, которое реально можно показать: невидимые символы и пустышки отсеиваем,
 // иначе в списке участников оседает «⁠» и человек теряется.
 const readable = (m) => {
@@ -20,6 +22,18 @@ const readable = (m) => {
 };
 
 const low = (s) => String(s).trim().toLowerCase().replace(/ё/g, 'е');
+
+// Ходовые формы имени: «Саня» -> Саша, Александр. Нужно, чтобы на «знаешь Сашу?»
+// бот узнал Саню из общей группы.
+function nameForms(name) {
+  const canon = canonStem(name);
+  const out = new Set([name]);
+  for (const group of NAME_GROUPS) {
+    if (!group.some((v) => canonStem(v) === canon)) continue;
+    for (const v of group.slice(0, 3)) out.add(v[0].toUpperCase() + v.slice(1));
+  }
+  return [...out].slice(0, 4);
+}
 
 // Псевдонимы: всё прочее, чем человека зовут в чате. Само обращение и @ник
 // сюда не попадают - иначе в списке дубли.
@@ -154,7 +168,12 @@ export function sharedPeopleLine(store, chatId) {
   if (!list.length) return null;
   return (
     'ОБЩИЕ ЗНАКОМЫЕ (вы вместе в этих чатах, так что этих людей ты знаешь): ' +
-    list.map((p) => `${p.name}${p.username ? ` (@${p.username})` : ''} - ${p.groups.join(', ')}`).join('; ') +
-    '. Спросят про такого человека - скажи, что знаешь его по общему чату. Что он писал в ДРУГИХ чатах - не рассказывай.'
+    list
+      .map((p) => {
+        const forms = nameForms(p.name).filter((f) => f.toLowerCase() !== p.name.toLowerCase());
+        return `${p.name}${forms.length ? ` (он же ${forms.join(', ')})` : ''}${p.username ? ` @${p.username}` : ''} - ${p.groups.join(', ')}`;
+      })
+      .join('; ') +
+    '. Спросят про такого человека ЛЮБЫМ из этих имён - ты его знаешь по общему чату, так и скажи. Что он писал в ДРУГИХ чатах - не рассказывай.'
   );
 }

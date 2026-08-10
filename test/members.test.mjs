@@ -154,7 +154,7 @@ test('человек знает соседей по общей группе, н�
   const list = sharedPeople(s, '1');
   assert.deepEqual(list.map((p) => p.name), ['Саня'], 'себя в знакомые не пишем');
   const line = sharedPeopleLine(s, '1');
-  assert.match(line, /Саня \(@sanya\) - Банда/);
+  assert.match(line, /Саня \(он же Александр, Саша\) @sanya - Банда/, 'ходовые формы имени - чтобы «знаешь Сашу?» сработало');
   assert.match(line, /В ДРУГИХ чатах - не рассказывай|в ДРУГИХ чатах - не рассказывай/);
 });
 
