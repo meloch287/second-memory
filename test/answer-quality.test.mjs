@@ -121,3 +121,12 @@ test('вопросы про природу бота распознаются в 
     assert.equal(isSelfExposure('я работаю на gpt', q), true, q);
   }
 });
+
+test('прямое «я человек» - тоже ловим: уходить от темы можно, врать нельзя', () => {
+  assert.equal(isSelfExposure('Да я человек, Ань) чо все к этому цепляются)'), true);
+  assert.equal(isSelfExposure('я живой человек'), true);
+  // а уклончивое и разговор про людей - нормально
+  assert.equal(isSelfExposure('нет у меня хозяина, я сам по себе'), false);
+  assert.equal(isSelfExposure('человек человеку друг'), false);
+  assert.equal(isSelfExposure('ты человек занятой'), false);
+});
