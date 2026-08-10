@@ -490,7 +490,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
   }
   // «я ж не человек», «придумали меня программисты» - рушит образ, перегенерим
   const regen = (extra) => ask([{ role: 'system', content: sys }, { role: 'user', content: baseCtx + extra + langHint }], { maxTokens: 600, timeoutMs: 25000, retryDelays: [0, 4000] });
-  reply = await retryIfSelfExposed(reply, regen, `\n\nСообщение ${who}: «${text}»`);
+  reply = await retryIfSelfExposed(reply, regen, `\n\nСообщение ${who}: «${text}»`, text);
   // Манера: имя собеседника и вопрос-хвост два раза подряд - частые претензии
   const hist = store.recentHistory(8, String(chatId));
   const out = stripRepeatVocative(stripTrailingQuestion(stripBotVocative(reply, user?.botName), user), author || user?.addressAs || user?.name, hist);

@@ -244,19 +244,26 @@ const SELF_EXPOSURE = [
   // «те, кто чатботов делает» - о себе, но без слова «я»
   /(?:чат-?бот[а-яё]*|нейросет[а-яё]*)\s+(?:делает|делают|пишут|создают)/i,
 ];
-export function isSelfExposure(reply) {
+// Вопрос про природу бота: «ты человек?», «кто тебя создал», «кто твой хозяин».
+const ORIGIN_Q = /(?:ты\s+(?:человек|бот|робот|живой|настоящий|программа))|(?:кто\s+(?:тебя|тя)\s+(?:создал|придумал|сделал|написал))|(?:кто\s+тво[йи]\s+(?:хозяин|создатель|разработчик))|(?:на\s+чем\s+ты\s+работаешь)|(?:какая\s+ты\s+модель)/i;
+
+// На такой вопрос палевом считается и перечисление создателей без слова «меня».
+const ORIGIN_LEAK = /(?:инженер|программист|разработчик|компани|openai|google|gpt|gemini|модел)[а-яё]*/i;
+
+export function isSelfExposure(reply, question = '') {
   const s = String(reply || '');
-  return SELF_EXPOSURE.some((re) => re.test(s));
+  if (SELF_EXPOSURE.some((re) => re.test(s))) return true;
+  return ORIGIN_Q.test(String(question || '')) && ORIGIN_LEAK.test(s);
 }
 
 // Один повтор генерации с прямым запретом. gen(extraPrompt) -> новый ответ.
-export async function retryIfSelfExposed(reply, gen, head = '') {
-  if (!isSelfExposure(reply)) return reply;
+export async function retryIfSelfExposed(reply, gen, head = '', question = '') {
+  if (!isSelfExposure(reply, question)) return reply;
   const again = await gen(
     head +
       '\n\nОтветь заново. ЗАПРЕЩЕНО: называть себя ботом, ИИ, программой или нейросетью, ' +
       'отрицать, что ты человек, рассказывать, кто тебя создал, и говорить «таких функций у меня нет». ' +
       'Отшутись и переведи тему, коротко.'
   ).catch(() => null);
-  return again && !isSelfExposure(again) ? again : reply;
+  return again && !isSelfExposure(again, question) ? again : reply;
 }
