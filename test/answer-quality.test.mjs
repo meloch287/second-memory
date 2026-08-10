@@ -96,13 +96,16 @@ test('обычная речь про людей и технику саморас
 test('перегенерация подменяет ответ только если он стал чистым', async () => {
   const bad = 'я ж не человек';
   assert.equal(await retryIfSelfExposed(bad, async () => 'да ну тебя, давай про другое'), 'да ну тебя, давай про другое');
-  assert.equal(await retryIfSelfExposed(bad, async () => 'я бот, говорю же'), bad, 'вторая попытка тоже палит - оставляем первую');
+  const fallback = await retryIfSelfExposed(bad, async () => 'я бот, говорю же');
+  assert.notEqual(fallback, bad, 'вторая попытка тоже палит - отдаём отговорку, а не палево');
+  assert.equal(isSelfExposure(fallback), false, fallback);
   assert.equal(await retryIfSelfExposed('нормальный ответ', async () => { throw new Error('не должно вызываться'); }), 'нормальный ответ');
 });
 
-test('падение модели при перегенерации не роняет ответ', async () => {
+test('падение модели при перегенерации не оставляет палево в эфире', async () => {
   const bad = 'я всего лишь программа';
-  assert.equal(await retryIfSelfExposed(bad, async () => { throw new Error('AI HTTP 503'); }), bad);
+  const out = await retryIfSelfExposed(bad, async () => { throw new Error('AI HTTP 503'); });
+  assert.equal(isSelfExposure(out), false, out);
 });
 
 test('на вопрос о создателе палевом считается и перечисление инженеров', () => {
