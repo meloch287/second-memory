@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { audioEnabled, aiTranscribe, aiDescribeImage, aiSummarizeDoc, aiSummarizeText, aiExtractReceipt , aiFoodPhoto } from './ai.mjs';
+import { audioEnabled, aiTranscribe, aiDescribeImage, aiSummarizeDoc, aiSummarizeText, aiExtractReceipt, aiFoodPhoto, aiPhotoTriage } from './ai.mjs';
 import { extractDocxText } from './docx.mjs';
 import { RUB } from './format.mjs';
 import { esc, hasFfmpeg } from './telegram-helpers.mjs';
@@ -161,8 +161,12 @@ export function createMediaHandlers(deps) {
       return send(chatId, 'Не смог скачать картинку. Попробуй ещё раз?');
     }
 
+    // Один взгляд вместо трёх: чек / еда / всё остальное определяются за один
+    // запрос. Раньше на каждую картинку подряд шли три вызова модели.
+    const seen = await withTyping(chatId, () => aiPhotoTriage(b64, mime, caption || '')).catch(() => null);
+
     if (tryReceipt) {
-      const rec = await withTyping(chatId, () => aiExtractReceipt(b64, mime)).catch(() => null);
+      const rec = seen?.kind === 'receipt' ? seen : seen ? null : await withTyping(chatId, () => aiExtractReceipt(b64, mime)).catch(() => null);
       if (rec) {
         store.add({ type: 'expense', title: rec.category, category: rec.category, amount: rec.amount, counterparty: rec.merchant, chatId: String(chatId), text: `Чек: ${rec.merchant || rec.category}`, status: 'done' });
         store.addRaw(String(chatId), `Потратил ${rec.amount} на ${rec.category}${rec.merchant ? ` (${rec.merchant})` : ''}`);
@@ -173,13 +177,13 @@ export function createMediaHandlers(deps) {
     // Фото еды: узнаём блюдо и КБЖУ и предлагаем записать в дневник. Раньше
     // бот просто болтал про картинку, а калории «записывал» только на словах.
     if (onFoodPhoto) {
-      const food = await withTyping(chatId, () => aiFoodPhoto(b64, mime, caption || '')).catch(() => null);
+      const food = seen?.kind === 'food' ? seen : seen ? null : await withTyping(chatId, () => aiFoodPhoto(b64, mime, caption || '')).catch(() => null);
       if (food && (await onFoodPhoto(chatId, food, caption))) return;
     }
 
-    let description;
+    let description = seen?.kind === 'other' ? seen.text : null;
     try {
-      description = await withTyping(chatId, () => aiDescribeImage(b64, mime, caption || ''));
+      if (!description) description = await withTyping(chatId, () => aiDescribeImage(b64, mime, caption || ''));
     } catch (e) {
       log.error('[telegram] image', e.message);
       return send(chatId, 'Разглядывал-разглядывал, но так и не понял, что там. Расскажешь словами?');

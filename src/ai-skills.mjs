@@ -494,6 +494,64 @@ export function audioFormatFromMime(mime = '') {
 // Еда на фото -> блюдо, порция, калории и БЖУ. Модель просят оценивать
 // консервативно и честно помечать, если это не еда: врать про цифры хуже,
 // чем сказать «не понял, что это».
+// Один взгляд на картинку вместо трёх. Раньше на каждое фото подряд шли
+// aiExtractReceipt -> aiFoodPhoto -> aiDescribeImage: три запроса к модели,
+// три ожидания. Мультимодалка отвечает на все вопросы за один заход.
+export async function aiPhotoTriage(base64, mime = 'image/jpeg', hint = '') {
+  const text = await chatCompletion(
+    AUDIO(),
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'Определи, что на изображении, и верни ТОЛЬКО JSON без markdown.' +
+              (hint ? ` Подпись отправителя: «${hint}».` : '') +
+              '\n\nЧЕК, счёт или ценник:\n' +
+              '{"kind":"receipt","amount":число_рублей,"merchant":"магазин","category":"еда|транспорт|...","date":"YYYY-MM-DD или null"}\n' +
+              'ЕДА (блюдо, тарелка, продукты - оценка на видимую порцию):\n' +
+              '{"kind":"food","title":"название 1-4 слова","portion":"на глаз","kcal":ч,"protein":ч,"fat":ч,"carbs":ч,"sure":"high|medium|low"}\n' +
+              'ВСЁ ОСТАЛЬНОЕ:\n' +
+              '{"kind":"other","title":"одна короткая строка - что это","text":"если есть читаемый текст - перепиши ДОСЛОВНО, сохраняя строки; для переписки указывай кто что написал; нечитаемое - [неразборчиво]. Текста нет - опиши картинку одним-двумя предложениями"}\n\n' +
+              'Еду с ценником считай чеком только если видно сумму к оплате. Не завышай калории, при сомнении sure: low.',
+          },
+          { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
+        ],
+      },
+    ],
+    { maxTokens: 1500, timeoutMs: 45000, retryDelays: [0, 5000] }
+  );
+  try {
+    const raw = String(text || '').replace(/```json|```/g, '').trim();
+    const j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+    const num = (v, max) => {
+      const n = Math.round(Number(v));
+      return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : 0;
+    };
+    if (j?.kind === 'receipt' && num(j.amount, 1e7) > 0) {
+      return { kind: 'receipt', amount: num(j.amount, 1e7), merchant: j.merchant || null, category: String(j.category || 'разное').slice(0, 30), date: j.date || null };
+    }
+    if (j?.kind === 'food' && num(j.kcal, 5000) > 0) {
+      return {
+        kind: 'food',
+        title: String(j.title || 'блюдо').slice(0, 40),
+        portion: String(j.portion || '').slice(0, 40),
+        kcal: num(j.kcal, 5000),
+        protein: num(j.protein, 500),
+        fat: num(j.fat, 500),
+        carbs: num(j.carbs, 800),
+        sure: ['high', 'medium', 'low'].includes(j.sure) ? j.sure : 'medium',
+      };
+    }
+    const body = [j?.title, j?.text].filter(Boolean).join('\n').trim();
+    return body ? { kind: 'other', text: body } : null;
+  } catch {
+    return null; // не разобрали - вызывающий код откатится на отдельные вызовы
+  }
+}
+
 export async function aiFoodPhoto(base64, mime = 'image/jpeg', hint = '') {
   const text = await chatCompletion(
     AUDIO(),

@@ -679,7 +679,7 @@ import {
   aiExtractFacts as _aiExtractFacts,
   aiLesson as _aiLesson, aiRetro as _aiRetro,
   audioFormatFromMime as _audioFormatFromMime,
-  aiDescribeImage as _aiDescribeImage, aiFoodPhoto as _aiFoodPhoto,
+  aiDescribeImage as _aiDescribeImage, aiFoodPhoto as _aiFoodPhoto, aiPhotoTriage as _aiPhotoTriage,
   aiTranscribe as _aiTranscribe,
 } from './ai-skills.mjs';
 
@@ -695,5 +695,5 @@ export const aiSummarizeDoc = _aiSummarizeDoc;
 export const aiSummarizeText = _aiSummarizeText;
 export const aiExtractFacts = _aiExtractFacts, aiLesson = _aiLesson, aiRetro = _aiRetro;
 export const audioFormatFromMime = _audioFormatFromMime;
-export const aiDescribeImage = _aiDescribeImage, aiFoodPhoto = _aiFoodPhoto;
+export const aiDescribeImage = _aiDescribeImage, aiFoodPhoto = _aiFoodPhoto, aiPhotoTriage = _aiPhotoTriage;
 export const aiTranscribe = _aiTranscribe;
