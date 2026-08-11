@@ -525,6 +525,11 @@ export async function aiPhotoTriage(base64, mime = 'image/jpeg', hint = '') {
     ],
     { maxTokens: 1500, timeoutMs: 45000, retryDelays: [0, 5000] }
   );
+  return parseTriageAnswer(text);
+}
+
+// Разбор ответа триажа отдельно от похода в сеть - так его видно тестам.
+export function parseTriageAnswer(text) {
   const raw = String(text || '').replace(/```json|```/g, '').trim();
   // Ответ про чек и еду приходит JSON'ом, всё остальное - обычным текстом.
   if (!raw.startsWith('{')) return raw ? { kind: 'other', text: raw } : null;
