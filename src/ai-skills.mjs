@@ -513,8 +513,10 @@ export async function aiPhotoTriage(base64, mime = 'image/jpeg', hint = '') {
               '{"kind":"receipt","amount":число_рублей,"merchant":"магазин","category":"еда|транспорт|...","date":"YYYY-MM-DD или null"}\n' +
               'ЕДА (блюдо, тарелка, продукты - оценка на видимую порцию):\n' +
               '{"kind":"food","title":"название 1-4 слова","portion":"на глаз","kcal":ч,"protein":ч,"fat":ч,"carbs":ч,"sure":"high|medium|low"}\n' +
-              'ВСЁ ОСТАЛЬНОЕ:\n' +
-              '{"kind":"other","title":"одна короткая строка - что это","text":"если есть читаемый текст - перепиши ДОСЛОВНО, сохраняя строки; для переписки указывай кто что написал; нечитаемое - [неразборчиво]. Текста нет - опиши картинку одним-двумя предложениями"}\n\n' +
+              'ВСЁ ОСТАЛЬНОЕ - НЕ JSON, а обычный текст (длинный текст в JSON ломает разбор):\n' +
+              'первая строка - что это за картинка, дальше с новой строки ДОСЛОВНЫЙ текст с неё, ' +
+              'сохраняя строки; для переписки указывай, кто что написал; нечитаемое - [неразборчиво]. ' +
+              'Текста на картинке нет - просто опиши её одним-двумя предложениями.\n\n' +
               'Еду с ценником считай чеком только если видно сумму к оплате. Не завышай калории, при сомнении sure: low.',
           },
           { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
@@ -523,8 +525,10 @@ export async function aiPhotoTriage(base64, mime = 'image/jpeg', hint = '') {
     ],
     { maxTokens: 1500, timeoutMs: 45000, retryDelays: [0, 5000] }
   );
+  const raw = String(text || '').replace(/```json|```/g, '').trim();
+  // Ответ про чек и еду приходит JSON'ом, всё остальное - обычным текстом.
+  if (!raw.startsWith('{')) return raw ? { kind: 'other', text: raw } : null;
   try {
-    const raw = String(text || '').replace(/```json|```/g, '').trim();
     const j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
     const num = (v, max) => {
       const n = Math.round(Number(v));
@@ -548,7 +552,8 @@ export async function aiPhotoTriage(base64, mime = 'image/jpeg', hint = '') {
     const body = [j?.title, j?.text].filter(Boolean).join('\n').trim();
     return body ? { kind: 'other', text: body } : null;
   } catch {
-    return null; // не разобрали - вызывающий код откатится на отдельные вызовы
+    // JSON битый, но текст есть - лучше отдать его, чем терять поход к модели
+    return raw.length > 20 ? { kind: 'other', text: raw } : null;
   }
 }
 
