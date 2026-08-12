@@ -15,6 +15,7 @@ import { esc, hasFfmpeg, LK_TRIGGER_RE, STEP_EXPLAIN } from './telegram-helpers.
 import { parseRemember, rememberEcho } from './remember.mjs';
 import { getLessons, forgetLesson } from './lessons.mjs';
 import { todayWeather, weatherLine } from './weather.mjs';
+import { CINEMA_RE, cinemaToday, cinemaText, parseGenres, parseCity } from './cinema.mjs';
 
 // «какая погода», «что там с погодой», «дождь будет?» - вопрос к сервису,
 // а не к фантазии модели.
@@ -66,6 +67,16 @@ export function createMessageRouter(deps) {
     if (LK_TRIGGER_RE.test(text.trim().toLowerCase().replace(/ё/g, 'е'))) return lk.openSettings(id, user);
     // Продолжение многошагового сценария ЛК (добавить/изменить долг, вишлист, фитнес, календарь)
     if (await lk.consumeInput(id, user, text)) return;
+    // Кино: бот сочинял репертуар и тянул время («щас поищу», «сайты грузятся»).
+    // Теперь либо реальная афиша, либо честное «не смог» - но не выдумка.
+    if (CINEMA_RE.test(text)) {
+      const city = parseCity(text) || user?.city;
+      if (!city) return send(id, 'В каком городе смотреть? Напиши, например «кино в Зеленограде»');
+      const data = await withTyping(id, () => cinemaToday(city)).catch(() => null);
+      const out = data && cinemaText(data, parseGenres(text));
+      return send(id, out || `Не смог достать афишу по городу ${esc(city)}. Сайт мог не отдать данные - попробуй ещё раз попозже`);
+    }
+
     // Погода: бот её НЕ знает, но охотно сочинял («завтра +25, солнечно»).
     // Спрашивают - идём в реальный сервис, нет города - честно просим город.
     if (WEATHER_RE.test(text)) {

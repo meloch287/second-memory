@@ -33,8 +33,7 @@ export function audioEnabled() {
   return Boolean(AUDIO().key);
 }
 
-// Убираем служебные блоки размышлений reasoning-моделей,
-// включая незакрытый <think> при обрезке по лимиту токенов.
+// Служебные блоки размышлений, в т.ч. незакрытый <think> при обрезке.
 const stripThink = (s) =>
   s
     .replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -52,7 +51,7 @@ const stripThink = (s) =>
 import { userOffset, fmtUser, relDay, userDayBounds, DEFAULT_OFFSET } from './tz.mjs';
 import { capabilitiesLine, featureState, stylePref, toneBlock, questionHabit, stripTrailingQuestion, voiceStateLine, groupPersona } from './capabilities.mjs';
 import { membersBlock, membersRule, renameAuthors, sharedPeopleLine } from './members.mjs';
-import { lessonsBlock, openersRule, stripRepeatVocative, stripSerialQuestion, retryIfSelfExposed } from './lessons.mjs';
+import { lessonsBlock, openersRule, stripRepeatVocative, stripSerialQuestion, retryIfSelfExposed, retryIfStalling } from './lessons.mjs';
 
 // Фейковое «Сохранил заметку: ...» модель копирует из истории - срезаем.
 export function stripFakeSave(s) {
@@ -471,8 +470,7 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
     ],
     { maxTokens: 1800, onDelta, timeoutMs: 30000, retryDelays: [0, 5000] }
   );
-  // Гард: просили контент, а модель отговорилась/переспросила без сути - перегенерируем
-  // с жёстким требованием выдать готовый результат прямо сейчас (частый баг с «давай завтра»).
+  // Просили контент, а модель отговорилась - требуем результат сразу.
   if (isContentDeferral(text, reply)) {
     const forced = await ask(
       [
@@ -490,7 +488,10 @@ export async function aiFriendReply(store, chatId, text, now = new Date(), onDel
   }
   // «я ж не человек», «придумали меня программисты» - рушит образ, перегенерим
   const regen = (extra) => ask([{ role: 'system', content: sys }, { role: 'user', content: baseCtx + extra + langHint }], { maxTokens: 600, timeoutMs: 25000, retryDelays: [0, 4000] });
-  reply = await retryIfSelfExposed(reply, regen, `\n\nСообщение ${who}: «${text}»`, text);
+  // Самораскрытие и «динамо» («щас гляну», «сайты грузятся»): фонового «допишу
+  // потом» у бота нет - человек ждал три часа и написал «ты меня динамишь».
+  const head = `\n\nСообщение ${who}: «${text}»`;
+  reply = await retryIfStalling(await retryIfSelfExposed(reply, regen, head, text), regen, head);
   // Манера: имя собеседника и вопрос-хвост два раза подряд - частые претензии
   const hist = store.recentHistory(8, String(chatId));
   const out = stripRepeatVocative(stripTrailingQuestion(stripBotVocative(reply, user?.botName), user), author || user?.addressAs || user?.name, hist);

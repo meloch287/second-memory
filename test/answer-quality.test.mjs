@@ -2,7 +2,7 @@
 // Каждый тест защищает конкретный живой промах, а не гипотезу.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stripRepeatVocative, stripSerialQuestion, isSelfExposure, retryIfSelfExposed } from '../src/lessons.mjs';
+import { stripRepeatVocative, stripSerialQuestion, isSelfExposure, retryIfSelfExposed, isStalling, retryIfStalling } from '../src/lessons.mjs';
 import { parseWater, parseMeal } from '../src/nutrition.mjs';
 
 test('второе подряд обращение по имени срезается', () => {
@@ -129,4 +129,33 @@ test('прямое «я человек» - тоже ловим: уходить �
   assert.equal(isSelfExposure('нет у меня хозяина, я сам по себе'), false);
   assert.equal(isSelfExposure('человек человеку друг'), false);
   assert.equal(isSelfExposure('ты человек занятой'), false);
+});
+
+/* --- «Динамо»: обещание посмотреть вместо ответа --- */
+
+test('фразы ожидания из живого чата ловятся', () => {
+  // мама ждала 3.5 часа и написала «ты меня динамишь»
+  const cases = [
+    'Щас поищу, что там в кино показывают',
+    'давай я тебе сразу списком накидаю. щас пару минут подожди',
+    'Смотрю. просто сайтам кинотеатров нужно время чтоб загрузиться',
+    'Окей, понял. щас все сделаю, уже пишу',
+    'Ага, уже, Ань, щас прям дописываю последнее',
+    'щас гляну, подожди секунду',
+  ];
+  for (const s of cases) assert.equal(isStalling(s), true, s);
+});
+
+test('нормальный ответ и честное «не умею» не считаются динамо', () => {
+  for (const s of ['вот что идёт в кино: Холоп 3, Смешарики', 'не умею искать в интернете, но могу подсказать', 'щас расскажу анекдот', 'подожди, ты серьёзно?']) {
+    assert.equal(isStalling(s), false, s);
+  }
+});
+
+test('перегенерация заменяет обещание на настоящий ответ', async () => {
+  const stall = 'щас гляну, подожди секунду';
+  assert.equal(await retryIfStalling(stall, async () => 'не умею смотреть сайты, но вот что помню: ...'), 'не умею смотреть сайты, но вот что помню: ...');
+  // если модель снова тянет время - оставляем первый вариант, не зацикливаемся
+  assert.equal(await retryIfStalling(stall, async () => 'щас посмотрю, подожди минуту'), stall);
+  assert.equal(await retryIfStalling('готово, держи список', async () => { throw new Error('не должно вызываться'); }), 'готово, держи список');
 });
