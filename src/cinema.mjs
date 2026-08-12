@@ -40,18 +40,20 @@ export const scheduleUrl = (city) => {
 };
 
 // Строка карточки: «Холоп 3 2026, Приключение 7.6» -> разбираем на части.
-export function parseCard(raw) {
+export function parseCard(raw, knownTitle = '') {
   const s = String(raw || '').replace(/\s+/g, ' ').trim();
   if (!s || s.length < 3) return null;
-  const m = s.match(/^(.{2,80}?)\s+((?:19|20)\d{2}),\s*([А-ЯЁа-яё-]+)(?:\s+([\d.]+))?/);
+  // «Холоп 3 2026, Приключение 7.6» либо «7.6 до 20% Билеты Холоп 3 2026, Приключение»
+  const m = s.match(/([^|]{2,80}?)\s+((?:19|20)\d{2}),\s*([А-ЯЁа-яё-]+)/);
   if (!m) return null;
-  const [, title, year, genre, rating] = m;
-  if (/^(?:фильмотека|кино|билеты|подборк)/i.test(title)) return null;
+  const title = (knownTitle || m[1]).replace(/^(?:[\d.]+\s+)?(?:до\s+\d+%\s+)?(?:Билеты\s+)?/i, '').trim();
+  if (!title || /^(?:фильмотека|кино|билеты|подборк)/i.test(title)) return null;
+  const rating = s.match(/(?:^|\s)(\d(?:\.\d)?)\s+до\s+\d+%/) || s.match(/([А-Яа-яё]+)\s+(\d\.\d)$/);
   return {
-    title: title.trim(),
-    year: Number(year),
-    genre: genre.toLowerCase(),
-    rating: rating ? Number(rating) : null,
+    title: title.slice(0, 60),
+    year: Number(m[2]),
+    genre: m[3].toLowerCase(),
+    rating: rating ? Number(rating[rating.length - 1]) : null,
   };
 }
 
@@ -80,13 +82,28 @@ export async function cinemaToday(city, { launcher = null, limit = 10 } = {}) {
     const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     if (!res || res.status() >= 400) return null;
     await page.waitForTimeout(5000);
-    const cards = await page.evaluate(() =>
-      [...document.querySelectorAll('a[href*="/movie/"]')].map((a) => (a.innerText || '').replace(/\s+/g, ' ').trim())
-    );
+    // Год и жанр лежат НЕ внутри ссылки, а рядом в карточке - поэтому
+    // поднимаемся к ближайшему предку, где они уже есть.
+    const cards = await page.evaluate(() => {
+      const out = [];
+      for (const a of document.querySelectorAll('a[href*="/movie/"]')) {
+        const name = (a.innerText || '').replace(/\s+/g, ' ').trim();
+        if (!name) continue;
+        let node = a;
+        let text = name;
+        for (let i = 0; i < 4 && node.parentElement; i++) {
+          node = node.parentElement;
+          const t = (node.innerText || '').replace(/\s+/g, ' ').trim();
+          if (/(?:19|20)\d{2},/.test(t) && t.length < 200) { text = t; break; }
+        }
+        out.push({ name, text });
+      }
+      return out;
+    });
     const seen = new Set();
     const films = [];
     for (const c of cards) {
-      const f = parseCard(c);
+      const f = parseCard(c.text, c.name);
       if (!f || seen.has(f.title.toLowerCase())) continue;
       seen.add(f.title.toLowerCase());
       films.push(f);
