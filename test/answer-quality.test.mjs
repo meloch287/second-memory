@@ -159,3 +159,19 @@ test('перегенерация заменяет обещание на наст
   assert.equal(await retryIfStalling(stall, async () => 'щас посмотрю, подожди минуту'), stall);
   assert.equal(await retryIfStalling('готово, держи список', async () => { throw new Error('не должно вызываться'); }), 'готово, держи список');
 });
+
+/* --- Курс валют: реальные цифры вместо выдуманных --- */
+
+test('«посмотри курс доллара» уходит в котировки, а не в фантазию модели', async () => {
+  const { parseMessage } = await import('../src/parser.mjs');
+  for (const s of ['посмотри курс доллара', 'курс евро', 'а какой курс юаня сегодня', 'курсы валют']) {
+    assert.equal(parseMessage(s, new Date()).kind, 'currency', s);
+  }
+});
+
+test('«курс» без валюты котировками не считается', async () => {
+  const { parseMessage } = await import('../src/parser.mjs');
+  for (const s of ['я на курсе английского', 'записался на курс по питону']) {
+    assert.notEqual(parseMessage(s, new Date()).kind, 'currency', s);
+  }
+});
