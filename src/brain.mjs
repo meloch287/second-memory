@@ -3,12 +3,14 @@
 
 import { parseMessage } from './parser.mjs';
 import { normText } from './dates.mjs';
-import { aiEnabled, aiSummary, aiAnswer, aiSearch } from './ai.mjs';
+import { aiEnabled, aiAnswer, aiSearch } from './ai.mjs';
 import { balanceReport, expensesReport } from './finance.mjs';
-import { memoryStats, questionCoverage } from './ragmeter.mjs';
+import { questionCoverage } from './ragmeter.mjs';
 import { resolveWallDate, userOffset, fmtUser, DEFAULT_OFFSET } from './tz.mjs';
 
 import { money, pad } from './format.mjs';
+import { phrase } from './phrase.mjs';
+import { extractEntry } from './extract.mjs';
 
 const TYPE_LABEL = { debt: 'долг', meeting: 'встреча', task: 'задача', note: 'заметка' };
 const LIST_LABEL = { meeting: 'Встречи', task: 'Задачи', note: 'Заметки' };
@@ -26,7 +28,6 @@ const HELP = [
   'Спросить:',
   '• «покажи все долги», «сколько мне должны»',
   '• «что у меня завтра», «сводка»',
-  '• «итог» - умная сводка от ИИ',
   '• вопрос со знаком «?» - ответ ИИ по вашим данным',
   '',
   'Команды: «готово 3», «удали 5», «очистить чат».',
@@ -70,10 +71,11 @@ export async function handleMessage(store, text, now = new Date(), chatId = 'web
 // chatId привязывает запись к пользователю - /reset стирает и их.
 // offsetMin - часовой пояс пользователя: срок из фразы («в 15:00») считаем
 // в его времени и храним в реальном UTC.
-export function captureEntry(store, text, now = new Date(), chatId = 'web', offsetMin = 180) {
-  const p = parseMessage(text, now);
-  if (p.kind !== 'entry' || p.entry.type === 'note') return null;
-  const entry = { ...p.entry, chatId };
+// Приводит срок записи к настенному времени пользователя, а задаче-напоминанию
+// с датой без времени («напомни завтра оплатить») ставит полдень — иначе точное
+// напоминание не сработает (фильтры due требуют hasTime). Едина для бота
+// (captureEntry) и веба (route), чтобы напоминания вели себя одинаково.
+export function normalizeReminderDue(entry, text, now, offsetMin = DEFAULT_OFFSET) {
   if (entry.due) {
     const r = resolveWallDate(offsetMin, text, now); // срок в часовом поясе пользователя
     if (r.due) {
@@ -81,13 +83,18 @@ export function captureEntry(store, text, now = new Date(), chatId = 'web', offs
       entry.hasTime = r.hasTime;
     }
   }
-  // Задача-напоминание с датой, но без времени («напомни завтра оплатить») иначе
-  // никогда не сработает точным напоминанием - ставим полдень по поясу юзера.
   if (entry.type === 'task' && entry.due && !entry.hasTime) {
     const d = new Date(new Date(entry.due).getTime() + offsetMin * 60000); // настенное
     entry.due = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0) - offsetMin * 60000).toISOString();
     entry.hasTime = true;
   }
+  return entry;
+}
+
+export function captureEntry(store, text, now = new Date(), chatId = 'web', offsetMin = DEFAULT_OFFSET) {
+  const p = parseMessage(text, now);
+  if (p.kind !== 'entry' || p.entry.type === 'note') return null;
+  const entry = normalizeReminderDue({ ...p.entry, chatId }, text, now, offsetMin);
   return store.add(entry);
 }
 
@@ -121,36 +128,72 @@ async function route(store, text, now, chatId = 'web') {
   switch (p.kind) {
     case 'empty':
       return {
-        reply:
+        reply: await phrase(
+          store,
+          chatId,
+          'Человек прислал пустое сообщение. Подскажи, что можно записать или спросить, и упомяни команду «помощь».',
           'Напишите, что записать или показать. Пример: «клиент должен 50 000 до 20 июля». Команда «помощь» покажет всё.',
+        ),
       };
     case 'help':
       return { reply: HELP };
-    case 'summary': {
-      if (!aiEnabled()) {
-        return {
-          reply: 'ИИ-саммари не настроено. Задайте AI_API_KEY в файле .env. Инструкция в README.',
-        };
-      }
-      try {
-        const stats = memoryStats(store, chatId);
-        return { reply: await aiSummary(store, now, chatId), ai: true, rag: { score: stats.score, label: stats.label } };
-      } catch (e) {
-        return { reply: `Не получилось связаться с ИИ (${e.message}). Попробуйте ещё раз.` };
-      }
-    }
     case 'clearchat':
       store.clearHistory(chatId);
-      return { reply: 'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы стереть всё, скажи «очисти память».', cleared: true };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          'Переписка в этом чате очищена. Дела и факты в памяти остались; чтобы стереть всё, нужно сказать «очисти память».',
+          'Очистил переписку в этом чате. Дела и факты в памяти остались - чтобы стереть всё, скажи «очисти память».',
+        ),
+        cleared: true,
+      };
     case 'wipe': {
       const n = store.wipeMemory(chatId);
       const parts = [];
       if (n.facts) parts.push(`${n.facts} ${plural(n.facts, ['факт', 'факта', 'фактов'])}`);
       if (n.entries) parts.push(`${n.entries} ${plural(n.entries, ['запись', 'записи', 'записей'])}`);
       const what = parts.length ? `Удалил ${parts.join(' и ')}. ` : 'Память и так была пуста. ';
-      return { reply: `Стёр всю память по этому чату. ${what}Начинаем с чистого листа.`, cleared: true };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          `Вся память по этому чату стёрта. ${what}Начинаем с чистого листа.`,
+          `Стёр всю память по этому чату. ${what}Начинаем с чистого листа.`,
+        ),
+        cleared: true,
+      };
     }
     case 'entry': {
+      // СНАЧАЛА МОДЕЛЬ, правила — только если её нет.
+      //
+      // Раньше было наоборот: правила разбирали фразу, а модель звали лишь
+      // тогда, когда правила сдались и назвали всё «заметкой». Из-за этого
+      // модель никогда не видела как раз те фразы, которые правила понимали
+      // НЕВЕРНО. Живой пример из переписки: «созвон в 2:30» правила записали на
+      // 14:30, а через четыре дня «созвон в 3:30» — на 03:30, ночь. Одна и та
+      // же конструкция, разный разбор, и владельцу пришлось поправлять вручную.
+      //
+      // Правила не выкинуты: без ключа модели бот должен продолжать работать.
+      // Но теперь они запасной путь, а не основной.
+      if (aiEnabled() && !/\?\s*$/.test(String(text).trim())) {
+        try {
+          const умный = await extractEntry(text, now, off ?? DEFAULT_OFFSET);
+          if (умный && умный.isRecord && умный.type !== 'note') {
+            const собрано = normalizeReminderDue(
+              { ...p.entry, type: умный.type, title: умный.title, chatId },
+              text,
+              now,
+              off ?? DEFAULT_OFFSET,
+            );
+            Object.assign(собрано, await refineEntry(собрано, text, now, off));
+            store.addRaw(chatId, text);
+            return await saveEntry(store, собрано, off, chatId);
+          }
+        } catch {
+          // Модель молчит — идём по правилам ниже, как раньше.
+        }
+      }
       // Фраза со знаком «?» — это вопрос, а не запись: отдаём ИИ с контекстом
       // базы (иначе «у кого из должников горит срок?» станет мусорным долгом).
       if (aiEnabled() && /\?\s*$/.test(String(text).trim())) {
@@ -166,6 +209,22 @@ async function route(store, text, now, chatId = 'web') {
       // тихо кладём в raw - память соберётся фоном (как у бота). Долги, встречи
       // и задачи ниже сохраняются структурно с подтверждением.
       if (p.entry.type === 'note' && aiEnabled()) {
+        // Но сперва спрашиваем модель, точно ли это заметка. Правила зовут
+        // заметкой всё, что не подошло под их шаблоны, и так терялись настоящие
+        // дела: «Лена вернёт 15к в пятницу» - это долг, «в субботу утром забрать
+        // посылку» - задача. Раньше оба уходили в разговор и не сохранялись.
+        const умный = await extractEntry(text, now, off ?? DEFAULT_OFFSET);
+        if (умный && умный.type !== 'note' && умный.isRecord) {
+          const собрано = normalizeReminderDue(
+            { ...p.entry, type: умный.type, title: умный.title, chatId },
+            text,
+            now,
+            off ?? DEFAULT_OFFSET,
+          );
+          Object.assign(собрано, await refineEntry(собрано, text, now, off));
+          store.addRaw(chatId, text);
+          return await saveEntry(store, собрано, off, chatId);
+        }
         try {
           store.addRaw(chatId, text);
           const rag = questionCoverage(store, text, chatId);
@@ -174,12 +233,73 @@ async function route(store, text, now, chatId = 'web') {
           // ИИ недоступен — сохраняем заметку по-старому
         }
       }
-      return saveEntry(store, { ...p.entry, chatId }, off);
+      // Веб раньше сохранял срок «как распарсилось» (без полудня/пояса) → задачи
+      // без времени имели hasTime=false и НИКОГДА не напоминали. Нормализуем как бот.
+      // Поля записи уточняет модель: правила ловят «это запись», но плохо
+      // достают из живой речи тему, дату и время. Не ответила - остаются
+      // разобранные по правилам, как было.
+      // Срок сперва разбирают правила: часовой пояс и «послезавтра» они считают
+      // верно. Модель дополняет то, что им не даётся, - тему, тип и время суток.
+      const уточнение = await refineEntry(p.entry, text, now, off);
+
+      // Правила зовут задачей всё, где мелькнуло слово «задача» или «напомни».
+      // Так в дела попадали вопросы боту («Ты можешь решать задачи?»),
+      // благодарности («Спасибо, что напомнил») и пустышки («Напомнить»).
+      // Модель отвечает отдельно, просят ли это запомнить, - и если нет,
+      // разговор остаётся разговором.
+      // Пересланное и присланные файлы - чужая речь, а не поручение. Правила
+      // же ловят в них слово «должен» и заводят долг: в базе так и лежат
+      // «Долг: ПРОМТ- ТЗ копирайтеру.md» и «Долг: При». Для такого текста
+      // молчания модели недостаточно - нужно явное «да, это запись».
+      const чужаяРечь = /^\s*\[(?:Переслал|Прислал)/i.test(String(text));
+      const записывать = чужаяРечь ? уточнение.isRecord === true : уточнение.isRecord !== false;
+
+      if (!записывать && aiEnabled()) {
+        try {
+          store.addRaw(chatId, text);
+          return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) };
+        } catch {
+          // ИИ отвалился. Для своей речи запишем по старым правилам - лучше
+          // лишнее, чем потерянное. Для чужой не станем: там правила ошибаются
+          // чаще, чем угадывают.
+          if (чужаяРечь) return { reply: '' };
+        }
+      }
+      if (!записывать && чужаяРечь) {
+        store.addRaw(chatId, text);
+        return { reply: '' };
+      }
+
+      const по_правилам = normalizeReminderDue(
+        { ...p.entry, chatId },
+        text,
+        now,
+        off ?? DEFAULT_OFFSET,
+      );
+      // Уточняем от ИСХОДНОГО разбора, а не от нормализованного: задачам без
+      // времени правила проставляют полдень, и «утром» от модели уже не имело
+      // шанса - полдень выглядел как найденное время.
+      const { isRecord: _1, isCorrection: поправка, ...поля } = уточнение;
+      const готово = Object.assign(по_правилам, поля);
+
+      // Поправка меняет прошлую запись, а не заводит новую. Раньше на «не не
+      // в 15:30» появлялась вторая задача, а ошибочная оставалась жить и
+      // напоминала в свой срок - в базе так и лежат тройки про один созвон.
+      if (поправка || похожеНаПоправку(text)) {
+        const прошлая = последняяЗапись(store, chatId);
+        if (прошлая) {
+          store.patch(прошлая.id, поля);
+          const t = `Запись №${прошлая.id} исправлена: ${готово.title}.`;
+          return { reply: await phrase(store, chatId, t, t), entry: прошлая };
+        }
+      }
+
+      return await saveEntry(store, готово, off, chatId);
     }
     case 'done':
-      return markDone(store, p.target, chatId);
+      return await markDone(store, p.target, chatId);
     case 'delete':
-      return removeEntry(store, p.target, chatId);
+      return await removeEntry(store, p.target, chatId);
     case 'query':
       return runQuery(store, p, now, chatId, off);
     case 'digest':
@@ -190,48 +310,184 @@ async function route(store, text, now, chatId = 'web') {
       return { reply: expensesReport(store, chatId, off ?? DEFAULT_OFFSET) };
     case 'expense': {
       const e = store.add({ type: 'expense', amount: p.amount, category: p.category, title: p.category, text: p.text, chatId });
-      return { reply: `Записал трату: ${money(p.amount)} - ${e.category}.`, entry: e };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          `Записана трата ${money(p.amount)}, категория «${e.category}».`,
+          `Записал трату: ${money(p.amount)} - ${e.category}.`,
+        ),
+        entry: e,
+      };
     }
     case 'forget': {
       const n = store.removeFactsMatching(chatId, p.target);
-      return { reply: n ? `Забыл про «${p.target}».` : `Не нашёл в памяти «${p.target}», забывать нечего.` };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          n
+            ? `Из памяти убрано всё про «${p.target}».`
+            : `В памяти ничего про «${p.target}» не нашлось, забывать нечего.`,
+          n ? `Забыл про «${p.target}».` : `Не нашёл в памяти «${p.target}», забывать нечего.`,
+        ),
+      };
     }
     case 'search':
       if (aiEnabled()) {
         try { return { reply: await aiSearch(store, chatId, p.query, now), ai: true, rag: questionCoverage(store, p.query, chatId) }; } catch { /* ниже */ }
       }
-      return { reply: 'Поиск по памяти сейчас недоступен.' };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          'Поиск по памяти сейчас недоступен - ИИ не отвечает. Предложи повторить позже.',
+          'Поиск по памяти сейчас недоступен.',
+        ),
+      };
     default:
       // всё, что веб-роутинг не разбирает структурно, при живом ИИ - в разговор
       // (вместо «Не понял»): курс валют, опрос, график, повтор, ДР и т.п.
       if (aiEnabled()) {
         try { return { reply: await aiAnswer(store, text, now, chatId), ai: true, rag: questionCoverage(store, text, chatId) }; } catch { /* ниже */ }
       }
-      return { reply: 'Не понял. Напишите «помощь», чтобы увидеть примеры.' };
+      return {
+        reply: await phrase(
+          store,
+          chatId,
+          'Смысл сообщения непонятен. Переспроси и упомяни, что «помощь» покажет примеры.',
+          'Не понял. Напишите «помощь», чтобы увидеть примеры.',
+        ),
+      };
   }
 }
 
-function saveEntry(store, entry, off = null) {
-  const e = store.add(entry);
-  let reply;
+/**
+ * Уточнение полей записи моделью.
+ *
+ * Возвращает только те поля, которые модель определила уверенно. Пустые не
+ * отдаём: пусть лучше останется значение из правил, чем затрётся на null.
+ * Текст исходного сообщения не трогаем никогда - он единственный источник
+ * правды о том, что человек написал.
+ */
+async function refineEntry(base, text, now, off) {
+  const offsetMin = off ?? DEFAULT_OFFSET;
+  const умный = await extractEntry(text, now, offsetMin);
+  if (!умный) return {};
+
+  const патч = {
+    type: умный.type,
+    // Поправка приходит без темы - прежнюю не затираем.
+    ...(умный.title ? { title: умный.title } : {}),
+    // Служебные признаки: до самой записи они не доходят, их снимают ниже.
+    isRecord: умный.isRecord,
+    isCorrection: умный.isCorrection,
+  };
+  if (умный.amount != null) патч.amount = умный.amount;
+  if (умный.counterparty) патч.counterparty = умный.counterparty;
+  if (умный.direction) патч.direction = умный.direction;
+
+  // Со сроком осторожно. Правила знают часовой пояс и относительные дни лучше
+  // модели, поэтому спорить с ними не даём. Берём модель только там, где
+  // правила промолчали: срока нет вовсе или день найден, а время суток - нет.
+  // Это и был главный изъян календаря: «в половине четвёртого» превращалось
+  // в запись на весь день.
+  if (умный.due) {
+    const utc = localToUtc(умный.due, offsetMin);
+    if (utc) {
+      if (!base.due) {
+        патч.due = utc;
+        патч.hasTime = умный.hasTime;
+      } else if (!base.hasTime && умный.hasTime && sameDay(base.due, utc, offsetMin)) {
+        // День тот же, а время нашлось - дополняем, не сдвигая дату.
+        патч.due = utc;
+        патч.hasTime = true;
+      } else if (умный.hasTime && ночноеСомнительно(base, text, offsetMin) && sameDay(base.due, utc, offsetMin)) {
+        // «Созвон в 3:30» правила читают как полчетвёртого ночи. Человек почти
+        // никогда не имеет это в виду - и в переписке это видно: пришлось
+        // поправлять вручную. Если ночь не названа прямо, верим модели.
+        патч.due = utc;
+        патч.hasTime = true;
+      }
+    }
+  }
+  return патч;
+}
+
+/**
+ * Слова, которыми поправляют только что сказанное. Список короткий намеренно:
+ * широкий шаблон начнёт съедать новые дела, а это хуже дубля.
+ */
+function похожеНаПоправку(text) {
+  const t = String(text).toLowerCase().trim();
+  return /^(?:не[ ,]+не|нет[ ,]|неа|я имел в виду|имел в виду|не так|ошибся|поправка|перенеси|исправь)/.test(t);
+}
+
+/**
+ * Последняя запись этого чата - её и правит человек, когда говорит «не не, в
+ * 15:30». Берём самую свежую по времени создания, а не по сроку: поправляют
+ * всегда только что сказанное.
+ */
+function последняяЗапись(store, chatId) {
+  const свои = store.data.entries.filter((e) => String(e.chatId) === String(chatId));
+  if (!свои.length) return null;
+  const последняя = свои[свои.length - 1];
+  // Через час это уже не поправка, а новое дело: человек давно ушёл к другому.
+  const возраст = Date.now() - new Date(последняя.createdAt || последняя.ts || 0).getTime();
+  return Number.isFinite(возраст) && возраст < 60 * 60 * 1000 ? последняя : null;
+}
+
+/** Настенное «2026-08-27T15:30» в честный UTC, как хранит база. */
+function localToUtc(local, offsetMin) {
+  const t = Date.parse(`${local}:00Z`);
+  if (Number.isNaN(t)) return null;
+  return new Date(t - offsetMin * 60000).toISOString();
+}
+
+/**
+ * Похоже ли, что правила ошиблись с половиной суток. «В 3:30» без слова «ночи»
+ * почти всегда значит полчетвёртого дня: ночью люди не назначают созвоны.
+ */
+function ночноеСомнительно(base, text, offsetMin) {
+  if (!base.due || !base.hasTime) return false;
+  const час = new Date(new Date(base.due).getTime() + offsetMin * 60000).getUTCHours();
+  if (час >= 7) return false;
+  return !/ноч|утра|am\b|рано/i.test(String(text));
+}
+
+/** Один ли это день по часам пользователя, а не по Гринвичу. */
+function sameDay(a, b, offsetMin) {
+  const день = (iso) => new Date(new Date(iso).getTime() + offsetMin * 60000).toISOString().slice(0, 10);
+  return день(a) === день(b);
+}
+
+// Текст подтверждения для УЖЕ сохранённой записи (без повторного store.add).
+// Вынесено, чтобы бот мог подтвердить тихо пойманную запись при сбое ИИ.
+export function entryConfirmation(e, off = null) {
   if (e.type === 'debt') {
     const sum = e.amount != null ? money(e.amount) : 'сумма не указана';
     const till = e.due ? `, срок до ${fmtDate(e.due, false, off)}` : '';
     if (e.direction === 'out') {
-      reply = `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
-    } else if (e.counterparty) {
-      reply = `Записал долг №${e.id}: ${e.counterparty} должен вам ${sum}${till}.`;
-    } else {
-      reply = `Записал долг №${e.id}: вам должны ${sum}${till}.`;
+      return `Записал долг №${e.id}: вы должны${e.counterparty ? ' ' + e.counterparty : ''} ${sum}${till}.`;
     }
-  } else if (e.type === 'meeting') {
-    reply = `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime, off)}` : ', дата не указана'}.`;
-  } else if (e.type === 'task') {
-    reply = `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime, off)}` : ''}.`;
-  } else {
-    reply = `Сохранил заметку №${e.id}: «${e.title}».`;
+    if (e.counterparty) return `Записал долг №${e.id}: ${e.counterparty} должен вам ${sum}${till}.`;
+    return `Записал долг №${e.id}: вам должны ${sum}${till}.`;
   }
-  return { reply, entry: e };
+  if (e.type === 'meeting') {
+    return `Записал встречу №${e.id}: ${e.title}${e.due ? `, ${fmtDate(e.due, e.hasTime, off)}` : ', дата не указана'}.`;
+  }
+  if (e.type === 'task') {
+    return `Записал задачу №${e.id}: ${e.title}${e.due ? `, срок ${fmtDate(e.due, e.hasTime, off)}` : ''}.`;
+  }
+  return `Сохранил заметку №${e.id}: «${e.title}».`;
+}
+
+async function saveEntry(store, entry, off = null, chatId = 'web') {
+  const e = store.add(entry);
+  // entryConfirmation остаётся точным описанием факта и уходит откатом:
+  // подтверждение обязано прийти, даже если модель молчит.
+  const шаблон = entryConfirmation(e, off);
+  return { reply: await phrase(store, chatId, шаблон, шаблон), entry: e };
 }
 
 // Пользователь видит и закрывает только СВОИ записи (мультиюзер).
@@ -249,19 +505,30 @@ function findTarget(store, target, chatId = 'web') {
   );
 }
 
-function markDone(store, target, chatId = 'web') {
+async function markDone(store, target, chatId = 'web') {
   const e = findTarget(store, target, chatId);
-  if (!e) return { reply: `Не нашёл запись «${target}».` };
-  if (e.status === 'done') return { reply: `Запись №${e.id} уже закрыта.` };
+  if (!e) {
+    const t = `Запись «${target}» не найдена.`;
+    return { reply: await phrase(store, chatId, t, `Не нашёл запись «${target}».`) };
+  }
+  if (e.status === 'done') {
+    const t = `Запись №${e.id} уже была закрыта раньше.`;
+    return { reply: await phrase(store, chatId, t, `Запись №${e.id} уже закрыта.`) };
+  }
   store.setStatus(e.id, 'done');
-  return { reply: `Готово: ${TYPE_LABEL[e.type]} №${e.id} закрыта.`, entry: e };
+  const t = `${TYPE_LABEL[e.type]} №${e.id} закрыта.`;
+  return { reply: await phrase(store, chatId, t, `Готово: ${t}`), entry: e };
 }
 
-function removeEntry(store, target, chatId = 'web') {
+async function removeEntry(store, target, chatId = 'web') {
   const e = findTarget(store, target, chatId);
-  if (!e) return { reply: `Не нашёл запись «${target}».` };
+  if (!e) {
+    const t = `Запись «${target}» не найдена.`;
+    return { reply: await phrase(store, chatId, t, `Не нашёл запись «${target}».`) };
+  }
   store.remove(e.id);
-  return { reply: `Удалил: ${TYPE_LABEL[e.type]} №${e.id}.`, entry: e };
+  const t = `${TYPE_LABEL[e.type]} №${e.id} удалена.`;
+  return { reply: await phrase(store, chatId, t, `Удалил: ${t}`), entry: e };
 }
 
 function runQuery(store, q, now, chatId = 'web', off = null) {
